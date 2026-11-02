@@ -17,6 +17,8 @@ use Core\Config;
  */
 final class Auth {
     private static ?array $users = null;
+    private static ?string $lastGeneratedPassword = null;
+    private static bool $lastPasswordSaved = false;
 
     public static function dir(): string {
         $root = defined('__runtime__') ? __runtime__ : dirname(__DIR__) . '/runtime';
@@ -58,8 +60,13 @@ final class Auth {
             $password = self::randomPassword();
             $generated = true;
             $file = self::dir() . '/initial-password.txt';
-            @file_put_contents($file, $password . "\n", LOCK_EX);
-            @chmod($file, 0600);
+            $saved = \Core\Fs::write($file, $password . "\n");
+            if ($saved) {
+                @chmod($file, 0600);
+            }
+            // 文件写不进去时不能把密码吞掉，否则用户永远登不进来
+            self::$lastGeneratedPassword = $password;
+            self::$lastPasswordSaved = $saved;
         }
 
         $user = [
@@ -70,17 +77,22 @@ final class Auth {
         self::$users = ['admin' => $user];
         self::save();
 
-        return ['username' => 'admin', 'generated' => $generated, 'password_file' => $generated ? self::dir() . '/initial-password.txt' : null];
+        return [
+            'username'    => 'admin',
+            'generated'   => $generated,
+            'password'    => $generated ? self::$lastGeneratedPassword : null,
+            'password_saved' => self::$lastPasswordSaved,
+            'password_file'  => $generated && self::$lastPasswordSaved ? self::dir() . '/initial-password.txt' : null,
+        ];
     }
 
     public static function save(): bool {
         $file = self::usersFile();
-        $tmp = $file . '.tmp';
-        if (@file_put_contents($tmp, json_encode(self::$users, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)) === false) {
-            return false;
+        $ok = \Core\Fs::write($file, (string)json_encode(self::$users, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+        if ($ok) {
+            @chmod($file, 0600);
         }
-        @chmod($tmp, 0600);
-        return @rename($tmp, $file);
+        return $ok;
     }
 
     public static function verify(string $username, string $password): ?array {

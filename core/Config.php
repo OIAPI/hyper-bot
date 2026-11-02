@@ -153,8 +153,8 @@ final class Config {
             return false;
         }
         $inFile = self::fileKey($segments);
-        $current = file_get_contents($path);
-        if ($current === false) {
+        $current = Fs::read($path);
+        if ($current === '') {
             return false;
         }
         $encoded = self::encodeValue($value);
@@ -170,7 +170,7 @@ final class Config {
                 return false;
             }
         }
-        if (file_put_contents($path, $replaced) === false) {
+        if (!Fs::write($path, $replaced)) {
             return false;
         }
         self::refresh();

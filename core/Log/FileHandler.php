@@ -15,7 +15,7 @@ final class FileHandler implements Handler {
             return;
         }
         $line = json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
-        @file_put_contents($dir . '/' . $day . '.jsonl', $line, FILE_APPEND | LOCK_EX);
+        \Core\Fs::append($dir . '/' . $day . '.jsonl', $line);
     }
 
     /** 读取某天的记录（WebUI 日志页） */

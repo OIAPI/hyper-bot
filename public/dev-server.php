@@ -19,13 +19,29 @@ $request = \Core\Http\Request::fromSwoole((object)[
         'remote_addr'        => $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
         'request_time_float' => $_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true),
     ],
-    'header' => array_change_key_case(getallheaders() ?: [], CASE_LOWER),
+    'header' => array_change_key_case(function_exists('getallheaders') ? (getallheaders() ?: []) : [], CASE_LOWER),
     'get'    => $_GET,
     'post'   => $_POST,
     'cookie' => $_COOKIE,
     'files'  => $_FILES,
-    'rawContent' => fn() => (string)file_get_contents('php://input'),
+    'rawBody' => (string)file_get_contents('php://input'),
 ]);
+
+// 静态资源优先：/webui/ 下的文件直接由内置服务器返回
+$rel = ltrim($request->path, '/');
+$staticFile = __DIR__ . '/' . $rel;
+if ($request->method === 'GET' && is_file($staticFile) && str_starts_with($request->path, '/webui/')) {
+    $ext = strtolower(pathinfo($staticFile, PATHINFO_EXTENSION));
+    $types = ['css' => 'text/css; charset=utf-8', 'js' => 'text/javascript; charset=utf-8', 'html' => 'text/html; charset=utf-8', 'svg' => 'image/svg+xml', 'png' => 'image/png', 'ico' => 'image/x-icon', 'json' => 'application/json'];
+    header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
+    header('Cache-Control: no-cache');
+    readfile($staticFile);
+    return;
+}
+if ($request->path === '/webui' || $request->path === '/webui/') {
+    header('Location: /webui/index.html');
+    return;
+}
 
 $kernel = \Webui\Routes::kernel();
 $response = $kernel->handle($request);

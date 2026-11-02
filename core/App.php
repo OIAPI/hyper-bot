@@ -24,6 +24,13 @@ final class App {
         $this->container = $container ?? Container::instance();
         $root = defined('__root__') ? __root__ : dirname(__DIR__);
 
+        // 时区：Config 里显式配置优先，否则保持 PHP 默认（CLI 默认 UTC）。
+        // 不设置的话日志时间戳与用户本地时间会差 8 小时，排查问题极易误判。
+        $tz = Config::string('app.timezone');
+        if ($tz !== '' && in_array($tz, timezone_identifiers_list(), true)) {
+            date_default_timezone_set($tz);
+        }
+
         $this->config = Config::all(false);
         $this->logger = new Logger('app', Config::bool('app.debug', false) ? 10 : 20);
         $this->logger->pushHandler(new FileHandler(($root . '/runtime/log')));

@@ -148,7 +148,7 @@ final class FileStore implements Store {
     private function write(string $key, string $payload): bool {
         $path = $this->path($key);
         $dir = dirname($path);
-        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+        if (!\Core\Fs::ensureDir($dir)) {
             return false;
         }
         $record = json_decode($payload, true);
@@ -156,11 +156,7 @@ final class FileStore implements Store {
             $record['key'] = $key;
             $payload = json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }
-        $tmp = $path . '.tmp' . bin2hex(random_bytes(4));
-        if (@file_put_contents($tmp, $payload) === false) {
-            return false;
-        }
-        return @rename($tmp, $path);
+        return \Core\Fs::write($path, $payload);
     }
 
     /** @return list<string> */

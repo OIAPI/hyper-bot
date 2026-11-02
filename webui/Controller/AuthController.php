@@ -15,11 +15,24 @@ final class AuthController extends Base {
         parent::__construct($store, $metrics);
     }
 
-    /** 登录状态（前端用来决定是否跳登录页） */
+    /**
+     * 登录状态（前端用来决定是否跳登录页）。
+     *
+     * 这个端点是**公开**的（否则前端在未登录时无法判断该显示登录页还是控制台），
+     * 因此不能依赖 AuthMiddleware 注入的 session，必须自己按 token 查一次。
+     */
     public function status(Request $request): Response {
+        $token = $this->auth->token($request);
+        $session = null;
+        if ($token !== '') {
+            $session = $this->store->get('webui:session:' . $token);
+            if (!is_array($session) || ($session['expires'] ?? 0) < time()) {
+                $session = null;
+            }
+        }
         return $this->ok([
-            'authenticated' => $request->session !== null,
-            'user'          => $request->user(),
+            'authenticated' => $session !== null,
+            'user'          => $session['user'] ?? [],
             'needs_setup'   => Auth::needsSetup(),
         ]);
     }

@@ -66,11 +66,14 @@ class MessageLog
 			$logFilename = $dir . "/{$logType}.log";
 
 			// 5. 协程写入文件（追加模式）
-			return System::writeFile(
-				$logFilename,
-				$logData,
-				FILE_APPEND
-			);
+			// Swoole 协程写入在 Android FUSE 上也会因 flock 失败，统一走 Core\Fs
+			if (class_exists('\Swoole\Coroutine\System') && \Swoole\Coroutine::getCid() > 0) {
+				$ok = \Swoole\Coroutine\System::writeFile($logFilename, $logData, FILE_APPEND);
+				if ($ok !== false) {
+					return true;
+				}
+			}
+			return \Core\Fs::append($logFilename, $logData);
 		} catch (Exception $e) {
 			// 异常时写入错误日志（单独文件）
 			$errorLog = date('Y-m-d H:i:s') . " | 日志写入异常：" . $e->getMessage() . PHP_EOL;

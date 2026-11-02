@@ -26,8 +26,12 @@ echo "  配置   " . \Core\Config::path() . "\n";
 if ($created !== null) {
     echo "  账号   admin\n";
     if ($created['generated']) {
-        $password = trim((string)@file_get_contents($created['password_file']));
-        echo "  密码   {$password}（已写入 {$created['password_file']}）\n";
+        $password = (string)($created['password'] ?? '');
+        if (!empty($created['password_saved'])) {
+            echo "  密码   {$password}（已写入 {$created['password_file']}）\n";
+        } else {
+            echo "  密码   {$password}（无法写入文件，请立即记下并登录后修改）\n";
+        }
     } else {
         echo "  密码   使用 Config.ini 的 webui.password\n";
     }
@@ -36,8 +40,13 @@ if ($created !== null) {
 }
 echo "  ─────────────────────────────────────\n\n";
 
+// 部分环境里 opcache 的锁文件目录不可写（如 Termux 的 tmp 被清理），
+// 内置服务器不需要 opcache，显式关闭以免启动即崩。
+@mkdir(sys_get_temp_dir(), 0775, true);
+putenv('TMPDIR=' . sys_get_temp_dir());
+
 $cmd = sprintf(
-    '%s -S %s:%s -t %s %s',
+    '%s -d opcache.enable=0 -d opcache.enable_cli=0 -S %s:%s -t %s %s',
     escapeshellarg(PHP_BINARY),
     escapeshellarg($host),
     escapeshellarg($port),

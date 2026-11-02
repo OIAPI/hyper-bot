@@ -23,7 +23,12 @@ final class Request {
         foreach ((array)($req->header ?? []) as $k => $v) {
             $headers[strtolower((string)$k)] = (string)$v;
         }
-        $raw = (string)($req->rawContent() ?? '');
+        $raw = '';
+        if (method_exists($req, 'rawContent')) {
+            $raw = (string)($req->rawContent() ?? '');
+        } elseif (isset($req->rawBody)) {
+            $raw = (string)$req->rawBody;
+        }
         $query = (array)($req->get ?? []);
         $post = (array)($req->post ?? []);
 

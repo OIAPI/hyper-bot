@@ -29,9 +29,13 @@ class Adapter extends BaseAdapter {
 	}
 
 	public function call(string $action, array $params = [], string $method = 'POST'): object {
-		// 1) 优先走 WS（正向优先，其次反向会话）
-		if (WsHub::hasForward() || WsHub::reverseCount() > 0) {
-			$response = WsHub::callApi($action, $params);
+		/*
+		 * 优先使用「事件来源连接」回包：反向 WS 的每条连接各自持有会话，
+		 * 若把回复推到别的连接，实现端可能回错人或直接查不到上下文。
+		 * 没有来源 fd 时（HTTP 入口 / 定时任务）才退化为「正向优先，其次任选反向」。
+		 */
+		if ($this->fd !== null || WsHub::hasForward() || WsHub::hasReverse()) {
+			$response = WsHub::callApi($action, $params, 30.0, $this->fd);
 			if ($response !== null) {
 				return (object)$response;
 			}

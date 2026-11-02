@@ -105,7 +105,7 @@ class WsHub {
 			'fd'         => $fd,
 			'connected'  => time(),
 			'last'       => time(),
-			'self_id'    => 0,
+			'self_id'    => (int)\Protocol\Core\Config::string('onebot.self_id', '0'),
 			'remote'     => $request->server['remote_addr'] ?? '',
 			'path'       => $path,
 			'role'       => 'reverse',
@@ -135,6 +135,11 @@ class WsHub {
 
 	public static function onMessage(\Swoole\WebSocket\Server $server, $frame): void {
 		$fd = $frame->fd;
+		// Milky WS 端点只做事件推送，客户端上行帧一律忽略（Milky 没有 WS action 协议）
+		if ((self::$sessions[$fd]['role'] ?? '') === 'milky') {
+			Logger::debug("[Milky-WS] 忽略客户端上行帧 | fd={$fd}");
+			return;
+		}
 		$data = json_decode((string)$frame->data, true);
 		if (!is_array($data)) {
 			Logger::warning("[OneBot-WS] 收到非 JSON 帧，已忽略 | fd={$fd}");
@@ -360,6 +365,10 @@ class WsHub {
 
 	/** 处理入站事件（实现端 → 框架） */
 	private static function handleIncomingEvent(array $event, ?int $fd): void {
+		// 记录会话对应的机器人账号：实现端会在 lifecycle/heartbeat 里带 self_id
+		if ($fd !== null && isset(self::$sessions[$fd]) && !empty($event['self_id'])) {
+			self::$sessions[$fd]['self_id'] = (int)$event['self_id'];
+		}
 		$adapter = Adapter::currentAdapter($fd);
 		EventDispatcher::dispatch($event, $adapter);
 	}
@@ -385,7 +394,7 @@ class WsHub {
 	/**
 	 * 通过 WS 调用 OneBot API（优先正向连接，其次反向会话）
 	 */
-	public static function callApi(string $action, array $params = [], float $timeout = 30.0): ?array {
+	public static function callApi(string $action, array $params = [], float $timeout = 30.0, ?int $fd = null): ?array {
 		$payload = [
 			'action' => $action,
 			'params' => (object)$params,
@@ -396,7 +405,17 @@ class WsHub {
 		self::$pending[$echo] = $channel;
 
 		$sent = false;
-		if (self::$forward !== null && self::$outbound !== null) {
+
+		/*
+		 * 会话优先：事件来自哪个反向连接，API 就回哪个连接。
+		 * 反向 WS 的实现端可能只在自己那条连接上维护会话状态，
+		 * 把回复推到另一条连接会导致「消息发到了别人的会话里」。
+		 */
+		if ($fd !== null && isset(self::$sessions[$fd]) && (self::$sessions[$fd]['role'] ?? '') === 'reverse') {
+			$sent = self::push($fd, $payload);
+		}
+
+		if (!$sent && self::$forward !== null && self::$outbound !== null) {
 			// 入队，由 forwardLoop 所属协程真正写出
 			$sent = (bool)self::$outbound->push($payload, 1.0);
 			if (!$sent) {
@@ -404,9 +423,9 @@ class WsHub {
 			}
 		}
 		if (!$sent) {
-			$fd = self::pickReverseFd();
-			if ($fd !== null) {
-				$sent = self::push($fd, $payload);
+			$pickFd = self::pickReverseFd();
+			if ($pickFd !== null) {
+				$sent = self::push($pickFd, $payload);
 			}
 		}
 
@@ -436,6 +455,11 @@ class WsHub {
 
 	public static function hasForward(): bool {
 		return self::$forward !== null;
+	}
+
+	/** 当前是否存在反向 WS 会话 */
+	public static function hasReverse(): bool {
+		return self::reverseCount() > 0;
 	}
 
 	public static function forwardUrl(): ?string {

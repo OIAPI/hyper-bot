@@ -37,8 +37,8 @@ abstract class BaseApp {
 	 */
 	public function __construct(public $app) {
 		// 1. 初始化基础依赖（优先复用缓存中的实例）
-		$this->input = Cache::$param;
-		$this->api = Cache::$api;
+		$this->input = Cache::get('param');
+		$this->api = Cache::get('api');
 		$this->sender = $this->input->sender ?? new \stdClass();
 		$this->message_id = $this->input->message_id ?? 0;
 		$this->redisSelect = Env::get('Redis.select');

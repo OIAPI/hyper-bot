@@ -51,8 +51,8 @@ class Request {
 	 * @throws RuntimeException 依赖缺失/无效时抛出
 	 */
 	protected function initDependencies(): void {
-		$this->api = Cache::$api;
-		$this->server = Cache::$server;
+		$this->api = Cache::get('api');
+		$this->server = Cache::get('server');
 		$this->param = Cache::get('param');
 
 		// 依赖有效性校验

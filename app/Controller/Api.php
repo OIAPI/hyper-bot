@@ -17,7 +17,7 @@ class Api extends Common {
 	}
 	#[Route]
 	public function getInfo() {
-		$param = Cache::$param;
+		$param = Cache::get('param');
 		if(isset($param->group_id) && $param->group_id) {
 			$list = Router::getGroupInfo($param->group_id);
 			return $this->res(1, '获取成功', ($list ?? []));
@@ -26,7 +26,7 @@ class Api extends Common {
 	}
 	#[Route]
 	public function switch() {
-		$param = Cache::$param;
+		$param = Cache::get('param');
 		$group_id = $param->group_id ?? 0;
 		$plugin = $param->plugin ?? '';
 		if($group_id && $plugin) {

@@ -66,7 +66,7 @@ class Router {
 
 		// 2. 反射解析类与方法（逻辑复用原逻辑，仅数据源改为扫描结果）
 		// WS / 常驻事件可能没有 group_id（私聊、QQ 官方机器人、Milky 私聊），需容错
-		$param = Cache::$param;
+		$param = Cache::get('param');
 		$groupId = is_object($param) ? ($param->group_id ?? 0) : 0;
 		$info = self::getGroupInfo($groupId);
 

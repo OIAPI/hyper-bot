@@ -4,7 +4,6 @@ namespace Protocol\Core;
 use Utils\Cache;
 use Utils\Logger;
 use Utils\MessageLog;
-use Controller\Server\RequestHandler;
 use Utils\Env;
 
 /**
@@ -61,15 +60,17 @@ class EventDispatcher {
 			return self::accepted();
 		}
 
-		\Swoole\Coroutine::create(function () use ($class, $postType, $event, $adapter, $responder) {
+		// 子协程默认不继承父协程上下文，显式恢复 HTTP 请求级快照后再覆盖事件相关字段
+		$snapshot = Cache::snapshot();
+		\Swoole\Coroutine::create(function () use ($class, $postType, $event, $adapter, $responder, $snapshot) {
 			try {
+				Cache::restore($snapshot);
 				// 协程内隔离上下文：请求参数 + 事件来源适配器 + 响应器
 				Cache::set('param', (object)$event);
 				Cache::set('adapter', $adapter ?? new HttpAdapter());
-				// 复用调用方（Webhook 请求）的响应器；常驻事件没有 HTTP 响应对象，使用空响应器
-				if (!(Cache::$server instanceof \Controller\Server\RequestHandler)) {
-					Cache::$server = new NullResponder();
-				}
+				// 事件处理过程中没有 HTTP 响应对象（Webhook 的响应由路由回调直接返回），
+				// 因此统一使用空响应器，避免误用上一个请求残留的 RequestHandler。
+				Cache::set('server', new NullResponder());
 				$controller = new $class();
 				Logger::debug("[事件分发] 已处理 {$postType} 事件");
 			} catch (\Throwable $e) {

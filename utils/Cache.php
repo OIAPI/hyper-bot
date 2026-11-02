@@ -24,6 +24,8 @@ class Cache {
 
 	// ---------------------- 动态缓存区（支持过期、过滤）----------------------
 	private static array $dynamicCache = [];   // 动态缓存存储：key=缓存名，value=[value, expireTime]
+	/** 协程私有数据在上下文容器中的键名（与静态属性名区分，避免冲突） */
+	private const LOCAL_KEY = '__local';
 	/** 非协程环境的「协程私有」数据兜底存储 */
 	private static array $localFallback = [];
 	private static array $reservedKeys = ['param', 'server', 'http', 'api', 'replys', 'adapter']; // 静态属性预留键名
@@ -133,6 +135,50 @@ class Cache {
 
 
 	/**
+	 * 快照当前协程的静态核心属性
+	 *
+	 * 背景：Swoole 的 Coroutine::create() 创建的子协程**不会继承**父协程上下文，
+	 * 而 RequestHandler / EventDispatcher 都是在请求协程里读取参数、再开子协程处理业务。
+	 * 因此需要在创建子协程前 snapshot()，在子协程开头 restore()。
+	 *
+	 * @return array 属性名 => 值
+	 */
+	public static function snapshot(): array {
+		$snapshot = [];
+		$ctx = self::ctx();
+		foreach (self::$reservedKeys as $key) {
+			$value = $ctx !== null && $ctx->offsetExists($key) ? $ctx[$key] : (self::$$key ?? null);
+			if ($value !== null) {
+				$snapshot[$key] = $value;
+			}
+		}
+		// 协程私有数据（raw_body / headers）也要一起带过去，
+		// 否则 Webhook 验签在子协程里会读到空值。
+		$snapshot[self::LOCAL_KEY] = $ctx !== null
+			? ($ctx[self::LOCAL_KEY] ?? [])
+			: self::$localFallback;
+		return $snapshot;
+	}
+
+	/**
+	 * 把快照写回当前协程（子协程开头调用）
+	 * @param array $snapshot snapshot() 的返回值
+	 */
+	public static function restore(array $snapshot): void {
+		foreach ($snapshot as $key => $value) {
+			if ($key === self::LOCAL_KEY) {
+				foreach ((array)$value as $localKey => $localValue) {
+					self::setLocal((string)$localKey, $localValue);
+				}
+				continue;
+			}
+			if (in_array($key, self::$reservedKeys, true)) {
+				self::set($key, $value);
+			}
+		}
+	}
+
+	/**
 	 * 写入「协程私有」数据（不参与全局共享）
 	 *
 	 * 用途：HTTP 请求级数据（原始 body、请求头）。这些值每个请求各不相同，
@@ -145,9 +191,9 @@ class Cache {
 	public static function setLocal(string $name, mixed $value): void {
 		$ctx = self::ctx();
 		if ($ctx !== null) {
-			$local = $ctx['__local'] ?? [];
+			$local = $ctx[self::LOCAL_KEY] ?? [];
 			$local[$name] = $value;
-			$ctx['__local'] = $local;
+			$ctx[self::LOCAL_KEY] = $local;
 			return;
 		}
 		self::$localFallback[$name] = $value;
@@ -161,7 +207,7 @@ class Cache {
 	public static function getLocal(string $name, mixed $default = null): mixed {
 		$ctx = self::ctx();
 		if ($ctx !== null) {
-			$local = $ctx['__local'] ?? [];
+			$local = $ctx[self::LOCAL_KEY] ?? [];
 			return array_key_exists($name, $local) ? $local[$name] : $default;
 		}
 		return array_key_exists($name, self::$localFallback) ? self::$localFallback[$name] : $default;

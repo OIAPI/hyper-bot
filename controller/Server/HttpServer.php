@@ -450,10 +450,11 @@ HELP;
 			}
 			Cache::setLocal('headers', $headers);
 			$param = $this->mergeRequestParam($request);
-			Cache::$param = $param;
+			// 用 Cache::set 写入「协程私有」上下文，避免并发请求互相覆盖
+			Cache::set('param', $param);
 			$handler = new RequestHandler($request, $response);
 			$handler->registerType((array_keys(array_filter(Env::get('type'), fn($val) => $val === 1))));
-			Cache::$server = $handler;
+			Cache::set('server', $handler);
 
 			$handler->handle();
 		} catch (\Exception $e) {

@@ -30,7 +30,7 @@ class RequestHandler {
 		// Logger::success("[请求接收] {$method} {$path}");
 
 		if (Env::get('app.debug', false)) {
-			$paramJson = json_encode(Cache::$param, JSON_UNESCAPED_UNICODE);
+			$paramJson = json_encode(Cache::get('param'), JSON_UNESCAPED_UNICODE);
 			Logger::debug("[请求参数] {$paramJson}");
 		}
 		$this->initRoute();
@@ -99,7 +99,7 @@ class RequestHandler {
 				return;
 			}
 
-			$param = Cache::$param;
+			$param = Cache::get('param');
 	
 			// 匹配路由：获取 [回调函数, 路由参数]
 			$routeResult = Route::match($method, $path);
@@ -117,7 +117,10 @@ class RequestHandler {
 				throw new InvalidArgumentException("不支持的请求类型：{$this->currentPostType}", 400);
 			}
 			MessageLog::write($param, $this->currentPostType);
-			Coroutine::create(function () {
+			// 子协程不保证继承父协程上下文，先快照再在子协程内恢复
+			$snapshot = Cache::snapshot();
+			Coroutine::create(function () use ($snapshot) {
+				Cache::restore($snapshot);
 				try {
 					$this->completeUserId();
 					$controllerClass = "\\Controller\\Trigger\\{$this->currentPostType}";
@@ -143,14 +146,16 @@ class RequestHandler {
 	 * 处理路由回调（新增路由参数传递）
 	 */
 	private function handleRouteCallback(callable $callback, array $routeParams): void {
-		Coroutine::create(function () use ($callback, $routeParams) {
+		$snapshot = Cache::snapshot();
+		Coroutine::create(function () use ($callback, $routeParams, $snapshot) {
+			Cache::restore($snapshot);
 			try {
 				// 回调函数参数：请求对象、响应对象、全局参数、路由参数（顺序固定，便于使用）
 				$result = call_user_func(
 					$callback,
 					$this->request,
 					$this->response,
-					Cache::$param,
+					Cache::get('param'),
 					$routeParams // 新增：传递路由参数（如 ['id' => 123]）
 				);
 	
@@ -264,17 +269,17 @@ class RequestHandler {
 
 	// 以下方法均保留原逻辑，无修改
 	private function validateBaseParams(): void {
-		if (empty(Cache::$param)) {
+		if (empty(Cache::get('param'))) {
 			throw new RuntimeException("请求参数为空", 400);
 		}
-		if (!isset(Cache::$param->post_type) || empty(trim(Cache::$param->post_type))) {
+		if (!isset(Cache::get('param')->post_type) || empty(trim(Cache::get('param')->post_type))) {
 			throw new RuntimeException("缺少必要参数：post_type", 400);
 		}
 	}
 
 	private function completeUserId(): void {
 		return;
-		$param = Cache::$param;
+		$param = Cache::get('param');
 		if (!isset($param->user_id)) {
 			if (isset($param->operator_id) && !empty($param->operator_id)) {
 				$param->user_id = $param->operator_id;

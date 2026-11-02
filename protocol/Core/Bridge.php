@@ -37,8 +37,9 @@ class Bridge {
 		return self::$fallback;
 	}
 
-	/** 当前是否绑定了非 HTTP 适配器 */
+	/** 当前是否绑定了非 HTTP 适配器（协程安全：读的是协程上下文） */
 	public static function hasAdapter(): bool {
-		return Cache::$adapter !== null && Cache::$adapter->name() !== 'http';
+		$adapter = Cache::get('adapter');
+		return $adapter instanceof Adapter && $adapter->name() !== 'http';
 	}
 }

@@ -8,10 +8,10 @@ use Utils\Logger;
 trait Worker {
 	/**
 	 * 获取群信息（优化版：避免递归，支持插件）
-	 * @param float $group 群号
+	 * @param string|float|int $group 群号
 	 * @return object|bool 群信息（失败返回false）
 	 */
-	public function getGroupInfo(float $group): object|bool {
+	public function getGroupInfo(string|float|int $group): object|bool {
 		$redis = Cache::$api->redis;
 		$groupKey = "{$group}.info";
 		
@@ -40,21 +40,21 @@ trait Worker {
 
 	/**
 	 * 检测群状态：开启返回true，关闭返回false
-	 * @param float $group 群号
+	 * @param string|float|int $group 群号
 	 * @return bool 群状态
 	 */
-	public function groupStatus(float $group): bool {
+	public function groupStatus(string|float|int $group): bool {
 		$groupInfo = $this->getGroupInfo($group);
 		return $groupInfo->status === 1;
 	}
 
 	/**
 	 * 初始化群信息（兼容旧数据）
-	 * @param float $group 群号
+	 * @param string|float|int $group 群号
 	 * @param bool $isArray 是否返回数组
 	 * @return object|array|bool 群信息
 	 */
-	public function initGroupInfo(float $group, bool $isArray = false): object|array|bool {
+	public function initGroupInfo(string|float|int $group, bool $isArray = false): object|array|bool {
 		$groupKey = "{$group}.info";
 		$status = 0;
 		$worker = [];
@@ -90,11 +90,11 @@ trait Worker {
 
 	/**
 	 * 更新群信息
-	 * @param float $group 群号
+	 * @param string|float|int $group 群号
 	 * @param object|array $info 新群信息
 	 * @return bool 更新结果
 	 */
-	public function updateGroupInfo(float $group, object|array $info): bool {
+	public function updateGroupInfo(string|float|int $group, object|array $info): bool {
 		$groupKey = "{$group}.info";
 		$info = is_object($info) ? (array)$info : $info;
 

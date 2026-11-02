@@ -16,7 +16,7 @@ use RuntimeException;
  */
 class Message {
 	protected object $param;			   // 请求参数（提前校验，避免重复判断）
-	protected RequestHandler $server;	  // 响应处理器
+	protected ?RequestHandler $server;	  // 响应处理器（WS/常驻事件场景下可能为空）
 	protected ?\Redis $redis = null;	   // Redis实例（避免重复获取）
 	protected Api $api;					// API容器实例
 	protected const OFFICIAL_ROBOT_PREFIX = '3889'; // 官方机器人ID前缀（可配置化）
@@ -55,8 +55,9 @@ class Message {
 		if (!$this->api instanceof Api) {
 			throw new RuntimeException("API容器实例缺失", 500);
 		}
+		// WebSocket / 常驻事件没有 HTTP 响应对象，这里仅告警不中断
 		if (!$this->server instanceof RequestHandler) {
-			throw new RuntimeException("响应处理器实例缺失", 500);
+			\Utils\Logger::debug("[触发器] 无 HTTP 响应处理器（WS/常驻事件场景），继续以无响应模式处理");
 		}
 		if (empty($this->param) || !is_object($this->param)) {
 			throw new RuntimeException("请求参数无效（非对象或为空）", 400);

@@ -12,6 +12,7 @@
 			"App\\": "app/",
 			"Controller\\": "controller/",
 			"Games\\": "games/",
+			"Protocol\\": "protocol/",
 			"Public\\": "public/",
 			"Utils\\": "utils/"
 		}

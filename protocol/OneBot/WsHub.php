@@ -33,6 +33,8 @@ class WsHub {
 	private static int $echoSeq = 0;
 	/** @var callable|null 收到未知帧时的兜底处理 */
 	private static $frameHandler = null;
+	/** @var Channel|null 正向 WS 出站队列（保证同一连接只在一个协程内读写） */
+	private static ?Channel $outbound = null;
 
 	// ---------------------- 反向 WS（服务端） ----------------------
 
@@ -147,9 +149,10 @@ class WsHub {
 			Logger::warning('[OneBot-WS] 正向 WS 已在运行，忽略重复启动');
 			return;
 		}
-		self::$forwardUrl   = $url;
-		self::$forwardToken = $token;
+		self::$forwardUrl    = $url;
+		self::$forwardToken  = $token;
 		self::$forwardRunning = true;
+		self::$outbound ??= new Channel(128);
 
 		Coroutine::create(function () {
 			$retry = 1;
@@ -217,10 +220,26 @@ class WsHub {
 		return true;
 	}
 
+	/**
+	 * 正向 WS 收发循环
+	 *
+	 * Swoole 协程客户端要求「同一连接只在一个协程内读写」，因此这里由单一协程
+	 * 同时负责 recv 与出站队列出队，其它协程只往队列里塞数据。
+	 */
 	private static function forwardLoop(): void {
 		$client = self::$forward;
+		$queue  = self::$outbound;
 		while (self::$forwardRunning && $client !== null) {
-			$frame = $client->recv(1.0);
+			// 1) 优先处理出站请求（最多等待 50ms，避免长时间空转）
+			if ($queue !== null) {
+				$payload = $queue->pop(0.05);
+				if (is_array($payload)) {
+					$client->push(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+				}
+			}
+
+			// 2) 接收服务端帧（最多阻塞 50ms）
+			$frame = $client->recv(0.05);
 			if ($frame === false || $frame === null) {
 				if ($client->errCode) {
 					Logger::warning('[OneBot-WS] 正向 WS 连接回收 | errCode=' . $client->errCode);
@@ -229,6 +248,7 @@ class WsHub {
 				continue; // 空闲超时，继续等待
 			}
 			if (!$frame instanceof \Swoole\WebSocket\Frame) continue;
+			if ((int)$frame->opcode === \WEBSOCKET_OPCODE_PING) continue;
 			$data = json_decode((string)$frame->data, true);
 			if (!is_array($data)) continue;
 			self::handleFrame($data, null);
@@ -309,8 +329,12 @@ class WsHub {
 		self::$pending[$echo] = $channel;
 
 		$sent = false;
-		if (self::$forward !== null) {
-			$sent = self::sendRaw($payload);
+		if (self::$forward !== null && self::$outbound !== null) {
+			// 入队，由 forwardLoop 所属协程真正写出
+			$sent = (bool)self::$outbound->push($payload, 1.0);
+			if (!$sent) {
+				$sent = self::sendRaw($payload);
+			}
 		}
 		if (!$sent) {
 			$fd = self::pickReverseFd();

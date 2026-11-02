@@ -65,8 +65,10 @@ class Router {
 		if (empty($classList)) return self::$list;
 
 		// 2. 反射解析类与方法（逻辑复用原逻辑，仅数据源改为扫描结果）
-		$param = cache::$param;
-		$info = self::getGroupInfo($param->group_id);
+		// WS / 常驻事件可能没有 group_id（私聊、QQ 官方机器人、Milky 私聊），需容错
+		$param = Cache::$param;
+		$groupId = is_object($param) ? ($param->group_id ?? 0) : 0;
+		$info = self::getGroupInfo($groupId);
 
 		foreach ($classList as $appClass => $status) {
 			// 过滤未在group worker中的类（保留原业务逻辑）

@@ -9,7 +9,7 @@ class friend extends app {
 	/**
 	 * @access public
 	 * @desc 获取陌生人信息
-	 * @param float $qq QQ帐号
+	 * @param string|float|int $qq QQ帐号
 	 * @param bool $no_cache 是否无视缓存，无视可能更新不及时
 	 * @return object
 	 */
@@ -39,11 +39,11 @@ class friend extends app {
 	/**
 	 * @access public
 	 * @desc 删除好友
-	 * @param float $qq 账号
+	 * @param string|float|int $qq 账号
 	 * @param bool $block 是否拉黑
 	 * @return object
 	 */
-	public function deleteFriend(float $qq, bool $block = true) : object {
+	public function deleteFriend(string|float|int $qq, bool $block = true) : object {
 		$url = $this->api . '/delete_friend';
 		$data = ['user_id'=>$qq, 'block' => $block];
 		return $this->post($url, $data);
@@ -51,10 +51,10 @@ class friend extends app {
 	/**
 	 * @access public
 	 * @desc 删除单项好友
-	 * @param float $qq 账号
+	 * @param string|float|int $qq 账号
 	 * @return object
 	 */
-	public function deleteUnidirectionalFriend(float $qq) : object {
+	public function deleteUnidirectionalFriend(string|float|int $qq) : object {
 		$url = $this->api . '/delete_unidirectional_friend';
 		$data = ['user_id'=>$qq];
 		return $this->post($url, $data);

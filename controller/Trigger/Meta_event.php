@@ -9,12 +9,22 @@ class meta_event {
 	}
 	public function event() {
 		$param = Cache::get('param');
-		// {"app_initialized":true,"app_enabled":true,"app_good":true,"online":true,"good":true}
-		// {"interval":5000,"status":{"app_initialized":true,"app_enabled":true,"app_good":true,"online":true,"good":true},"meta_event_type":"heartbeat","time":1770472483,"self_id":2830877581,"post_type":"meta_event"}
-		$enabled = $param->status->app_enabled === true ? 'true' : 'false';
-		$app = $param->status->app_good === true ? 'true' : 'false';
-		$online = $param->status->online === true ? 'true' : 'false';
-		$good = $param->status->good === true ? 'true' : 'false';
-		Logger::info("收到客户端发来的心跳 || 应用启动：{$enabled} || 在线状态：{$online}");
+		$metaType = strtolower((string)($param->meta_event_type ?? ''));
+
+		// 生命周期事件（OneBot: enable/disable/connect；Milky: bot_offline；QQ官方: READY/RESUMED）
+		if ($metaType === 'lifecycle') {
+			$sub  = (string)($param->sub_type ?? '');
+			$self = (string)($param->self_id ?? '');
+			Logger::success("生命周期事件 | self_id：{$self} | sub_type：{$sub}");
+			return;
+		}
+
+		// 心跳事件（部分协议端不推送 status，需容错）
+		$status = $param->status ?? null;
+		$enabled = (is_object($status) && ($status->app_enabled ?? null) === true) ? 'true' : 'false';
+		$app     = (is_object($status) && ($status->app_good ?? null) === true) ? 'true' : 'false';
+		$online  = (is_object($status) && ($status->online ?? null) === true) ? 'true' : 'false';
+		$good    = (is_object($status) && ($status->good ?? null) === true) ? 'true' : 'false';
+		Logger::debug("收到客户端发来的心跳 || 应用启动：{$enabled} || 在线状态：{$online} || 运行良好：{$good}");
 	}
 }

@@ -19,7 +19,7 @@ use RuntimeException;
  * @help 可通过注解的getAttributes方法获取注解类信息
  */
 class Request {
-	protected RequestHandler $server;	  // 响应处理器
+	protected ?RequestHandler $server;	  // 响应处理器（WS/常驻事件场景下可能为空）
 	protected string $groupId;			 // 群ID（提前提取，避免重复调用）
 	protected Api $api;					// API容器实例
 	protected object $param;			   // 请求参数（提前校验，避免重复判断）
@@ -59,8 +59,9 @@ class Request {
 		if (!$this->api instanceof Api) {
 			throw new RuntimeException("API容器实例缺失（需初始化Cache::\$api）", 500);
 		}
+		// WebSocket / 常驻事件没有 HTTP 响应对象，这里仅告警不中断
 		if (!$this->server instanceof RequestHandler) {
-			throw new RuntimeException("响应处理器实例缺失（需初始化Cache::\$server）", 500);
+			\Utils\Logger::debug("[触发器] 无 HTTP 响应处理器（WS/常驻事件场景），继续以无响应模式处理");
 		}
 		if (empty($this->param) || !is_object($this->param)) {
 			throw new RuntimeException("请求参数无效（非对象或为空）", 400);

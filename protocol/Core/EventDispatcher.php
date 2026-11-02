@@ -4,6 +4,7 @@ namespace Protocol\Core;
 use Utils\Cache;
 use Utils\Logger;
 use Utils\MessageLog;
+use Controller\Server\RequestHandler;
 use Utils\Env;
 
 /**
@@ -51,8 +52,6 @@ class EventDispatcher {
 			return self::accepted();
 		}
 
-		Cache::set('param', (object)$event);
-		Cache::$adapter = $adapter;
 		MessageLog::write($event, $postType);
 
 		// 触发控制器
@@ -62,10 +61,15 @@ class EventDispatcher {
 			return self::accepted();
 		}
 
-		\Swoole\Coroutine::create(function () use ($class, $postType, $event, $responder) {
+		\Swoole\Coroutine::create(function () use ($class, $postType, $event, $adapter, $responder) {
 			try {
-				// 通过协程上下文隔离请求参数
+				// 协程内隔离上下文：请求参数 + 事件来源适配器 + 响应器
 				Cache::set('param', (object)$event);
+				Cache::set('adapter', $adapter ?? new HttpAdapter());
+				// 复用调用方（Webhook 请求）的响应器；常驻事件没有 HTTP 响应对象，使用空响应器
+				if (!(Cache::$server instanceof \Controller\Server\RequestHandler)) {
+					Cache::$server = new NullResponder();
+				}
 				$controller = new $class();
 				Logger::debug("[事件分发] 已处理 {$postType} 事件");
 			} catch (\Throwable $e) {

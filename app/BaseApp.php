@@ -19,13 +19,14 @@ abstract class BaseApp {
 	protected Redis $redis;		  // Redis实例（确保非null）
 	protected object $input;		 // 输入参数（缓存的请求参数）
 	protected Api $api;			  // 外部API实例
-	protected float $qq = 0;		 // 当前用户QQ
-	protected float $group = 0;	  // 当前群号
+	// ID 使用 string|float|int：QQ 号/群号是数字，QQ 官方机器人则是 OpenID 字符串
+	protected string|float|int $qq = 0;		 // 当前用户 QQ / OpenID
+	protected string|float|int $group = 0;	  // 当前群号 / group_openid
 	protected ?string $nickname = '';// 当前用户昵称
 	protected ?string $raw = '';	 // 原始消息（已转义）
 	protected object $sender;		// 发送者信息
 	protected string $redisSelect;	 // Redis数据库编号（避免重复读取配置）
-	protected float $message_id = 0;
+	protected string|float|int $message_id = 0; // 消息 ID（Milky 为 message_seq，官方机器人为字符串）
 	protected int $reaction = 66;
 	use \Controller\Traits\Worker;
 
@@ -169,10 +170,10 @@ abstract class BaseApp {
 
 	/**
 	 * 获取用户权限（从Redis缓存读取）
-	 * @param float $userQQ 用户QQ
+	 * @param string|float|int $userQQ 用户QQ / OpenID
 	 * @return string|int 权限（名称/数字）
 	 */
-	public function getUserPermission(float $userQQ): PermRule {
+	public function getUserPermission(string|float|int $userQQ): PermRule {
 		$permKey = "memberPermission.{$userQQ}";
 		return PermRule::getByPerm($this->redis->exists($permKey) ? $this->redis->get($permKey) : 'default');
 	}
@@ -181,10 +182,10 @@ abstract class BaseApp {
 	// ---------------------- 工具方法 ----------------------
 	/**
 	 * 延迟删除消息（基于Swoole Timer）
-	 * @param float $msgId 消息ID
+	 * @param string|float|int $msgId 消息ID
 	 * @param float $delay 延迟时间（秒，默认2秒）
 	 */
-	protected function del(float $msgId, float $delay = 2): void {
+	protected function del(string|float|int $msgId, float $delay = 2): void {
 		Timer::after((int)($delay * 1000), function () use ($msgId) {
 			try {
 				$this->api->message->deleteMsg($msgId);
@@ -201,7 +202,7 @@ abstract class BaseApp {
 	 * @param float|null $qq 目标QQ（默认当前用户）
 	 * @return bool 是否为好友
 	 */
-	protected function isFriend(?float $qq = null): bool {
+	protected function isFriend(string|float|int|null $qq = null): bool {
 		$qq = $qq ?? $this->qq;
 		if ($qq <= 0) return false;
 

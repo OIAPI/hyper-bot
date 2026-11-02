@@ -6,7 +6,7 @@ use Utils\Cache;
 use Utils\Logger;
 
 trait staticWorker {
-	public static function getGroupInfo(float $group) {
+	public static function getGroupInfo(string|float|int $group) {
 		$redis = Cache::$api->redis;
 		
 		// 先检查是否存在，避免递归

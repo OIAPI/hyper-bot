@@ -385,9 +385,17 @@ class EventClient {
 		} else {
 			return;
 		}
+		// event_id 用于被动回复（官方文档：message_scene.ext 在部分场景下携带事件 ID）
+		$eventId = '';
+		$sceneExt = $d['message_scene']['ext'] ?? '';
+		if (is_string($sceneExt) && $sceneExt !== '') {
+			$eventId = $sceneExt;
+		} elseif (is_array($sceneExt)) {
+			$eventId = (string)($sceneExt['event_id'] ?? ($sceneExt['ext'] ?? ''));
+		}
 		self::$passive[$key] = [
 			'msg_id'   => $msgId,
-			'event_id' => (string)($d['message_scene']['ext'] ?? '') === '' ? '' : (string)($d['message_scene']['ext'] ?? ''),
+			'event_id' => $eventId,
 			'expires'  => time() + $ttl,
 			'seq'      => 1,
 			'kind'     => $t,

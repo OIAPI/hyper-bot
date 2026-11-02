@@ -36,7 +36,13 @@ class RequestHandler {
 		$this->initRoute();
 	}
 	private function initRoute() {
-		Route::registerByAnnotation(robot::class);
+		// 注意：registerByAnnotation 内部有 self::$init 一次性开关，
+		// 多次调用时只有第一次生效，因此所有控制器必须一次性传入。
+		$controllers = [robot::class];
+		if (class_exists(\App\Controller\Protocol::class)) {
+			$controllers[] = \App\Controller\Protocol::class;
+		}
+		Route::registerByAnnotation($controllers);
 	}
 
 	// 保留原registerType方法（兼容旧的post_type逻辑）
@@ -189,11 +195,7 @@ class RequestHandler {
 				$this->response->end('unauthorized');
 				return;
 			}
-			$ok = \Swoole\Http\Server::upgrade($this->request, $this->response);
-			if (!$ok) {
-				$this->response->status(400);
-				$this->response->end('websocket upgrade failed');
-			}
+			$this->upgradeNow();
 			return;
 		}
 
@@ -207,12 +209,33 @@ class RequestHandler {
 				$this->response->end('unauthorized');
 				return;
 			}
-			\Swoole\Http\Server::upgrade($this->request, $this->response);
+			$this->upgradeNow();
 			return;
 		}
 
 		$this->response->status(404);
 		$this->response->end('not a websocket endpoint');
+	}
+
+	/**
+	 * 完成 WebSocket 握手
+	 *
+	 * 说明：Swoole 开启 open_websocket_protocol 后有两种握手方式
+	 *  - 4.x/5.x 均可：request 回调里不写响应，Swoole 在回调结束后自动完成握手；
+	 *  - 5.x 起额外提供 Response::upgrade()，可显式握手。
+	 * 这里优先用显式升级，失败/不支持时回退到「不写响应」的自动握手。
+	 */
+	private function upgradeNow(): void {
+		if (method_exists($this->response, 'upgrade')) {
+			try {
+				$this->response->upgrade();
+				return;
+			} catch (\Throwable $e) {
+				Logger::warning('[WS] 显式 upgrade 失败，回退自动握手：' . $e->getMessage());
+			}
+		}
+		// 不发送任何响应，交由 Swoole 自动完成握手
+		Logger::debug('[WS] 交由 Swoole 自动完成 WebSocket 握手');
 	}
 
 	/**

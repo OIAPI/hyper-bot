@@ -9,13 +9,13 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 发送私聊消息
-	 * @param float $qq 账号
-	 * @param float $group 群号
+	 * @param string|float|int $qq 账号
+	 * @param string|float|int $group 群号
 	 * @param string|array $message 消息内容
 	 * @param bool $auto_escape 发送内容是否是纯文本(不解析CQ码)
 	 * @return object
 	 */
-	public function sendPrivateMsg(float $qq, float $group = 0, string|array $message = '', bool $auto_escape = false) : object {
+	public function sendPrivateMsg(string|float|int $qq, string|float|int $group = 0, string|array $message = '', bool $auto_escape = false) : object {
 		$data = [
 			'user_id'=>$qq,
 			'message'=>(is_array($message) ? (isset($message[0]) ? $message : [$message]) : $message),
@@ -28,12 +28,12 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 发送群消息
-	 * @param float $group 群号
+	 * @param string|float|int $group 群号
 	 * @param string|array $message 消息内容
 	 * @param bool $auto_escape 发送内容是否是纯文本(不解析CQ码)
 	 * @return object
 	 */
-	public function sendGroupMsg(float $group = 0, string|array $message = '', bool $auto_escape = false) : object {
+	public function sendGroupMsg(string|float|int $group = 0, string|array $message = '', bool $auto_escape = false) : object {
 		$data = [
 			'group_id'=>$group,
 			'message'=>(is_array($message) ? (isset($message[0]) ? $message : [$message]) : $message),
@@ -46,13 +46,13 @@ class message extends app {
 	 * @access public
 	 * @desc 发送消息
 	 * @param string $message_type 类型(group/private)
-	 * @param float $qq 账号
-	 * @param float $group 群号
+	 * @param string|float|int $qq 账号
+	 * @param string|float|int $group 群号
 	 * @param string|array $message 消息内容
 	 * @param bool $auto_escape 发送内容是否是纯文本(不解析CQ码)
 	 * @return object
 	 */
-	public function sendMsg(string $message_type = 'group', float $qq = 0, float $group = 0, string|array|object $message = '', bool $auto_escape = false) : object {
+	public function sendMsg(string $message_type = 'group', string|float|int $qq = 0, string|float|int $group = 0, string|array|object $message = '', bool $auto_escape = false) : object {
 		$message = json_decode(json_encode((is_array($message) ? (isset($message[0]) ? $message : [$message]) : $message)), true);
 		$data = [
 			'message'=>$message,
@@ -124,11 +124,11 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 发送群聊合并转发
-	 * @param float $group 群号
+	 * @param string|float|int $group 群号
 	 * @param object|array $message 消息内容
 	 * @return object
 	 */
-	public function sendGroupForwardMsg(float $group, array|object $message) : object {
+	public function sendGroupForwardMsg(string|float|int $group, array|object $message) : object {
 		$url = $this->api . '/send_group_forward_msg';
 		$data = ['group_id'=>$group, 'messages'=>(is_array($message) ? (isset($message[0]) ? $message : [$message]) : $message)];
 		return $this->post($url, $data);
@@ -136,11 +136,11 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 发送好友合并转发
-	 * @param float $qq 账号
+	 * @param string|float|int $qq 账号
 	 * @param object|array $message 消息内容
 	 * @return object
 	 */
-	public function sendPrivateForwardMsg(float $qq, array|object $message) : object {
+	public function sendPrivateForwardMsg(string|float|int $qq, array|object $message) : object {
 		$url = $this->api . '/send_private_forward_msg';
 		$data = ['user_id'=>$qq, 'messages'=>(is_array($message) ? (isset($message[0]) ? $message : [$message]) : $message)];
 		return $this->post($url, $data);
@@ -148,11 +148,11 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 发送点赞
-	 * @param float $qq 账号
+	 * @param string|float|int $qq 账号
 	 * @param int $times 点赞数量
 	 * @return object
 	 */
-	public function sendLike(float $qq, int $times = 1) : object {
+	public function sendLike(string|float|int $qq, int $times = 1) : object {
 		$url = $this->api . '/send_like';
 		$data = ['user_id'=>$qq, 'times'=>$times];
 		return $this->post($url, $data);
@@ -160,12 +160,12 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 获取消息历史记录
-	 * @param float $group 群号
-	 * @param float $message_id 起始消息id
+	 * @param string|float|int $group 群号
+	 * @param string|float|int $message_id 起始消息id
 	 * @param int $count 消息数量
 	 * @return object
 	 */
-	public function getGroupMsgHistory(float $group, float $message_id, int $count = 20) : object {
+	public function getGroupMsgHistory(string|float|int $group, string|float|int $message_id, int $count = 20) : object {
 		$url = $this->api . '/get_group_msg_history';
 		$data = ['group_id'=>$group, 'message_id'=>$message_id, 'count' => $count];
 		return $this->post($url, $data);
@@ -173,12 +173,12 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 加入群聊表情接龙
-	 * @param float $group 群聊账号
-	 * @param float $message_id 期望加入表情接龙的消息id
+	 * @param string|float|int $group 群聊账号
+	 * @param string|float|int $message_id 期望加入表情接龙的消息id
 	 * @param float $emoji_id 表情id
 	 * @return object
 	 */
-	public function joinGroupEmojiChain(float $group, float $message_id, int $emoji_id) : object {
+	public function joinGroupEmojiChain(string|float|int $group, string|float|int $message_id, int $emoji_id) : object {
 		$url = $this->api . '/.join_group_emoji_chain';
 		$data = ['group_id'=>$group, 'message_id' => $message_id, 'emoji_id' => $emoji_id];
 		return $this->post($url, $data);
@@ -186,12 +186,12 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 加入好友表情接龙
-	 * @param float $qq 账号
-	 * @param float $message_id 期望加入表情接龙的消息id
+	 * @param string|float|int $qq 账号
+	 * @param string|float|int $message_id 期望加入表情接龙的消息id
 	 * @param float $emoji_id 表情id
 	 * @return object
 	 */
-	public function joinFriendEmojiChain(float $qq, float $message_id, float $emoji_id) : object {
+	public function joinFriendEmojiChain(string|float|int $qq, string|float|int $message_id, float $emoji_id) : object {
 		$url = $this->api . '/.join_friend_emoji_chain';
 		$data = ['user_id'=>$qq, 'message_id' => $message_id, 'emoji_id' => $emoji_id];
 		return $this->post($url, $data);
@@ -208,13 +208,13 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 调用群机器人回调
-	 * @param float $group 群号
-	 * @param float $bot 机器人账号
+	 * @param string|float|int $group 群号
+	 * @param string|float|int $bot 机器人账号
 	 * @param string $data1 数据1
 	 * @param string $data2 数据2
 	 * @return object
 	 */
-	public function sendGroupBotCallback(float $group, float $bot, string $data1 = '', string $data2 = '') : object {
+	public function sendGroupBotCallback(string|float|int $group, string|float|int $bot, string $data1 = '', string $data2 = '') : object {
 		$url = $this->api . '/send_group_bot_callback';
 		$data = ['group_id' => $group, 'bot_id' => $bot, 'data_1' => $data1, 'data_2' => $data2];
 		return $this->post($url, $data);
@@ -222,10 +222,10 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 删除群精华消息
-	 * @param float $message_id 消息id
+	 * @param string|float|int $message_id 消息id
 	 * @return object
 	 */
-	public function deleteEssenceMsg(float $message_id) : object {
+	public function deleteEssenceMsg(string|float|int $message_id) : object {
 		$url = $this->api . '/delete_essence_msg';
 		$data = ['message_id' => $message_id, ];
 		return $this->post($url, $data);
@@ -233,10 +233,10 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 设置群精华消息
-	 * @param float $message_id 消息id
+	 * @param string|float|int $message_id 消息id
 	 * @return object
 	 */
-	public function setEssenceMsg(float $message_id) : object {
+	public function setEssenceMsg(string|float|int $message_id) : object {
 		$url = $this->api . '/set_essence_msg';
 		$data = ['message_id' => $message_id, ];
 		return $this->post($url, $data);
@@ -244,10 +244,10 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 获取群聊精华消息
-	 * @param float $group 群聊账号
+	 * @param string|float|int $group 群聊账号
 	 * @return object
 	 */
-	public function getEssenceMsgList(float $group) : object {
+	public function getEssenceMsgList(string|float|int $group) : object {
 		$url = $this->api . '/get_essence_msg_list';
 		$data = ['group_id' => $group, ];
 		return $this->post($url, $data);
@@ -255,10 +255,10 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 私聊戳一戳
-	 * @param float $qq 账号
+	 * @param string|float|int $qq 账号
 	 * @return object
 	 */
-	public function friendPokr(float $qq) : object {
+	public function friendPokr(string|float|int $qq) : object {
 		$url = $this->api . '/friend_poke';
 		$data = ['user_id' => $qq, ];
 		return $this->post($url, $data);
@@ -266,11 +266,11 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 群聊戳一戳
-	 * @param float $group 群聊账号
-	 * @param float $qq 账号
+	 * @param string|float|int $group 群聊账号
+	 * @param string|float|int $qq 账号
 	 * @return object
 	 */
-	public function groupPokr(float $group, float $qq) : object {
+	public function groupPokr(string|float|int $group, string|float|int $qq) : object {
 		$url = $this->api . '/group_poke';
 		$data = ['group_id' => $group, 'user_id' => $qq];
 		return $this->post($url, $data);
@@ -278,12 +278,12 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 获取好友历史消息
-	 * @param float $qq 好友账号
-	 * @param float $message_id 消息id
+	 * @param string|float|int $qq 好友账号
+	 * @param string|float|int $message_id 消息id
 	 * @param int $count 数量，默认20
 	 * @return object
 	 */
-	public function getFriendMsgHistory(float $qq, float $message_id, int $count = 20) : object {
+	public function getFriendMsgHistory(string|float|int $qq, string|float|int $message_id, int $count = 20) : object {
 		$url = $this->api . '/get_friend_msg_history';
 		$data = ['user_id' => $qq, 'message_id' => $message_id, 'count' => $count];
 		return $this->post($url, $data);
@@ -291,13 +291,13 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 设置群表情回复
-	 * @param float $group 群号
-	 * @param float $message_id 消息id
+	 * @param string|float|int $group 群号
+	 * @param string|float|int $message_id 消息id
 	 * @param string $code 表情代码
 	 * @param bool $is_add 是否添加，默认true
 	 * @return object
 	 */
-	public function setGroupReaction(float $group, float $message_id, string $code = '', bool $is_add = true) : object {
+	public function setGroupReaction(string|float|int $group, string|float|int $message_id, string $code = '', bool $is_add = true) : object {
 		return $this->setMsgEmojiLike($message_id, intval($code));
 		$url = $this->api . '/set_group_reaction';
 		$data = ['group_id'=>$group, 'message_id' => $message_id, 'code'=>$code, 'is_add' => $is_add];
@@ -306,11 +306,11 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 设置表情回复 llbot
-	 * @param float $message_id 消息id
+	 * @param string|float|int $message_id 消息id
 	 * @param string $code 表情代码
 	 * @return object
 	 */
-	public function setMsgEmojiLike(float $message_id, int $emoji_id = 66) : object {
+	public function setMsgEmojiLike(string|float|int $message_id, int $emoji_id = 66) : object {
 		$url = $this->api . '/set_msg_emoji_like';
 		$data = ['message_id' => $message_id, 'emoji_id' => $emoji_id];
 		return $this->post($url, $data);
@@ -466,12 +466,12 @@ class message extends app {
 	/**
 	 * @access public
 	 * @构造礼物消息
-	 * @param float $qq 账号
+	 * @param string|float|int $qq 账号
 	 * @param int $id 0	甜 Wink，1	快乐肥宅水，2	幸运手链，3	卡布奇诺，4	猫咪手表，5	绒绒手套，6	彩虹糖果，7	坚强，8	告白话筒，9	牵你的手，10	可爱猫咪，11	神秘面具，12	我超忙的，13	爱心口罩
 	 * @param bool $escape 是否用cq码输出，默认不是，魔法表情无法使用cq码
 	 * @return array|string
 	 */
-	public function structureGift(float $qq, int $id = 0, bool $escape = false) : array|string {
+	public function structureGift(string|float|int $qq, int $id = 0, bool $escape = false) : array|string {
 		
 		return ($escape === false ? [
 			'type'=>'gift',
@@ -484,11 +484,11 @@ class message extends app {
 	/**
 	 * @access public
 	 * @构造戳一戳消息
-	 * @param float $qq 账号
+	 * @param string|float|int $qq 账号
 	 * @param bool $escape 是否用cq码输出，默认不是，魔法表情无法使用cq码
 	 * @return array|string
 	 */
-	public function structurePoke(float $qq, bool $escape = false) : array|string {
+	public function structurePoke(string|float|int $qq, bool $escape = false) : array|string {
 		
 		return ($escape === false ? [
 			'type'=>'poke',
@@ -522,11 +522,11 @@ class message extends app {
 	 * @access public
 	 * @构造分享好友/群消息
 	 * @param string $type qq为好友，group为群
-	 * @param float $id 标题
+	 * @param string|float|int $id 标题
 	 * @param bool $escape 是否用cq码输出，默认不是，魔法表情无法使用cq码
 	 * @return array|string
 	 */
-	public function structureContact(string $type, float $id, bool $escape = false) : array|string {
+	public function structureContact(string $type, string|float|int $id, bool $escape = false) : array|string {
 		
 		return ($escape === false ? [
 			'type'=>'contact',
@@ -591,13 +591,13 @@ class message extends app {
 	 * @构造回复消息
 	 * @param ?int $id 引用的消息id，如果有自定义，自定义优先
 	 * @param ?string $text 自定义消息内容
-	 * @param ?float $qq 自定义回复时的自定义QQ, 如果使用自定义信息必须指定.
+	 * @param ?string|float|int $qq 自定义回复时的自定义QQ, 如果使用自定义信息必须指定.
 	 * @param ?float $time 时间戳
 	 * @param ?float $seq 起始消息序号, 可通过 get_msg 获得
 	 * @param bool $escape 是否用cq码输出，默认不是，魔法表情无法使用cq码
 	 * @return array|string
 	 */
-	public function structureReply(?int $id = null, ?string $text = null, ?float $qq = null, ?float $time = null, ?float $seq = null, bool $escape = false) : array|string {
+	public function structureReply(?int $id = null, ?string $text = null, string|float|int|null $qq = null, ?float $time = null, ?float $seq = null, bool $escape = false) : array|string {
 		$time = $time ?: time();
 		// $text = 
 		return ($escape === false ? [
@@ -616,13 +616,13 @@ class message extends app {
 	 * @构造合并转发消息
 	 * @param ?string $id 直接引用他人的消息合并转发, 实际查看顺序为原消息发送顺序 与下面的自定义消息二选一
 	 * @param ?string $name 用于自定义消息 (自定义消息并合并转发, 实际查看顺序为自定义消息段顺序)
-	 * @param ?float $uin 用于自定义消息中的账号
+	 * @param ?string|float|int $uin 用于自定义消息中的账号
 	 * @param string|array|null $content 用于自定义消息 不支持转发，message消息组或者cq码
 	 * @param ?float $seq 起始消息序号, 可通过 get_msg 获得 用于自定义消息
 	 * @param bool $escape 是否用cq码输出，默认不是，魔法表情无法使用cq码
 	 * @return array|string
 	 */
-	public function structureNode(?string $id = null, ?string $name = null, ?float $uin = null, string|array|null $content = null, ?float $seq = null, bool $escape = false) : array|string {
+	public function structureNode(?string $id = null, ?string $name = null, string|float|int|null $uin = null, string|array|null $content = null, ?float $seq = null, bool $escape = false) : array|string {
 		$node = [
 			'type'=>'node',
 			'data'=>[
@@ -711,7 +711,7 @@ class message extends app {
 	/**
 	 * @access public
 	 * @构建艾特消息
-	 * @param float $qq 账号
+	 * @param string|float|int $qq 账号
 	 * @param string $name 当在群中找不到此QQ号的名称时才会生效
 	 * @param bool $escape 是否用cq码输出，默认不是。
 	 * @return array|string
@@ -762,11 +762,11 @@ class message extends app {
 	/**
 	 * @access public
 	 * @构建longmsg消息
-	 * @param string|float $id 消息id
+	 * @param string|float|int $id 消息id
 	 * @param bool $escape 是否用cq码输出，默认不是。
 	 * @return array|string
 	 */
-	public function structureLongMsg(string|float $id, bool $escape = false) : string|array {
+	public function structureLongMsg(string|float|int $id, bool $escape = false) : string|array {
 		return ($escape === false ? [
 			'type'=>'longmsg',
 			'data'=>[

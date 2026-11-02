@@ -25,11 +25,11 @@ class ai extends app {
 	 * @access public
 	 * @desc 获取ai语音
 	 * @param string $character 语音声音，可通过getAiCharacter获取
-	 * @param float $group 群号
+	 * @param string|float|int $group 群号
 	 * @param string $content 音频内容
 	 * @return Object
 	 */
-	public function getAiRecord(string $character = 'lucy-voice-laibixiaoxin', float $group = 0, string $content = '你好') : Object|null {
+	public function getAiRecord(string $character = 'lucy-voice-laibixiaoxin', string|float|int $group = 0, string $content = '你好') : Object|null {
 		$url = $this->api . '/get_ai_record';
 		$data = [
 			'character' => $character,
@@ -43,12 +43,12 @@ class ai extends app {
 	 * @access public
 	 * @desc 发送ai语音
 	 * @param string $character 语音声音，可通过getAiCharacter获取
-	 * @param float $group 群号
+	 * @param string|float|int $group 群号
 	 * @param string $content 音频内容
 	 * @param Enum::GroupAiRecord<int> $chat_type 语音类型，1朗读，2说唱
 	 * @return Object
 	 */
-	public function sendGroupAiRecord(string $character = 'lucy-voice-laibixiaoxin', float $group = 0, string $content = '你好', GroupAiRecord $chat_type = GroupAiRecord::READ) : Object|null {
+	public function sendGroupAiRecord(string $character = 'lucy-voice-laibixiaoxin', string|float|int $group = 0, string $content = '你好', GroupAiRecord $chat_type = GroupAiRecord::READ) : Object|null {
 		$url = $this->api . '/send_group_ai_record';
 		$data = [
 			'character' => $character,

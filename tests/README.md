@@ -22,6 +22,19 @@ php tests/webui_api_test.php     # WebUI 全部路由的端到端行为（内存
 php tests/webui_bridge_test.php  # Swoole 桥接：分流、401、Cookie、重定向（用桩对象）
 ```
 
+### 前端端到端（真实 DOM）
+
+```bash
+npm i jsdom     # 一次性依赖
+php bin/webui-serve.php --port=8095 &
+WB_PASS=$(cat runtime/webui/initial-password.txt) node tests/webui_dom_test.mjs
+```
+
+用 jsdom 加载真实的视图模块并直连运行中的服务，覆盖「前端渲染 + 真实 API」整条链路：
+登录、8 个视图渲染、登记群、关闭插件后 `plugins_on` 与 `worker` 是否正确变化。
+
+可用环境变量：`WB_BASE`（服务地址）、`WB_PASS`（登录密码，必填）、`WB_ASSETS`（前端目录）。
+
 `webui_api_test.php` 使用内存存储并注入测试账号，不会污染 `runtime/`。
 
 全部通过时退出码为 0；任一失败退出码为 1，可直接接入 CI。

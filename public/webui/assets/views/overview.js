@@ -2,7 +2,7 @@ import { h, mount, clear } from '../lib/dom.js';
 import { api } from '../lib/api.js';
 import { statCard, badge, time, duration, bytes, emptyState, reportError } from '../lib/ui.js';
 
-export async function render(container) {
+export async function render(container, ctx = {}) {
   mount(h('div.col', {}, h('div.skeleton', { style: { height: '80px' } })), container);
 
   let data;

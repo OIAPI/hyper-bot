@@ -2,6 +2,45 @@ import { h, mount } from '../lib/dom.js';
 import { api } from '../lib/api.js';
 import { badge, emptyState, reportError, ok, modal } from '../lib/ui.js';
 
+async function renderAccount(container) {
+  try {
+    const me = await api.get('/webui/api/auth/me');
+    const user = me.user ?? {};
+    const oldPass = h('input.input', { type: 'password', placeholder: '当前密码', autocomplete: 'current-password' });
+    const newPass = h('input.input', { type: 'password', placeholder: '新密码（至少 8 位）', autocomplete: 'new-password' });
+    const confirm = h('input.input', { type: 'password', placeholder: '确认新密码' });
+
+    mount(h('div.card', {},
+      h('div.card-head', {}, h('div.grow', {}, h('h2', {}, '账号')),
+        badge(String(user.username ?? '—'), 'accent')),
+      h('div.card-body.col', {},
+        h('div.kv', {},
+          [['用户名', user.username ?? '—'], ['角色', user.role ?? 'admin']]
+            .flatMap(([k, v]) => [h('div.kv-key', {}, k), h('div.kv-val', {}, String(v))]),
+        ),
+        h('div.field', {}, h('div.field-label', {}, '修改密码'),
+          h('div.col', { style: { gap: '8px', maxWidth: '380px' } }, oldPass, newPass, confirm),
+          h('div.row.mt-8', {},
+            h('button.btn.btn-primary', {
+              onclick: async () => {
+                if (newPass.value !== confirm.value) { reportError(new Error('两次输入的新密码不一致')); return; }
+                if (newPass.value.length < 8) { reportError(new Error('新密码至少 8 位')); return; }
+                try {
+                  await api.post('/webui/api/auth/password', {
+                    old_password: oldPass.value, new_password: newPass.value,
+                  });
+                  ok('密码已更新，请用新密码重新登录');
+                  oldPass.value = newPass.value = confirm.value = '';
+                } catch (e) { reportError(e); }
+              },
+            }, '更新密码'),
+          ),
+        ),
+      ),
+    ), container);
+  } catch (e) { reportError(e, '加载账号信息失败'); }
+}
+
 export async function render(container) {
   const treeWrap = h('div.card');
   const rawWrap = h('div.card');
@@ -89,6 +128,8 @@ export async function render(container) {
     } catch (e) { reportError(e, '读取配置原文失败'); }
   }
 
+  const accountWrap = h('div');
+
   const btnTree = h('button.btn.btn-sm.btn-primary', { onclick: () => { mode = 'tree'; markMode(); } }, '表单视图');
   const btnRaw = h('button.btn.btn-sm', { onclick: () => { mode = 'raw'; markMode(); loadRaw(); } }, '原文');
   function markMode() {
@@ -111,7 +152,10 @@ export async function render(container) {
     ),
     treeWrap,
     rawWrap,
+    accountWrap,
   ), container);
+
+  await renderAccount(accountWrap);
 
   rawWrap.style.display = 'none';
   await loadTree();

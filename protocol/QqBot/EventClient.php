@@ -158,23 +158,35 @@ class EventClient {
 		$deadline = time() + 10;
 		while (time() < $deadline && self::$ws !== null) {
 			$frame = self::$ws->recv(1.0);
-			if (!$frame instanceof \Swoole\WebSocket\Frame) continue;
+			if (!$frame instanceof \Swoole\WebSocket\Frame) {
+				if (self::$ws !== null && self::$ws->errCode) return -1;
+				continue;
+			}
 			$payload = json_decode((string)$frame->data, true);
 			if (!is_array($payload)) continue;
 			if ((int)($payload['op'] ?? -1) === 10) {
-				return (int)($payload['d']['heartbeat_interval'] ?? 45000);
+				$interval = (int)($payload['d']['heartbeat_interval'] ?? 45000);
+				return $interval > 0 ? $interval : 45000;
 			}
 			// 其它包（如错误）也处理一下
 			self::handlePayload($payload, 'gateway');
 		}
-		return 45000;
+		return -1;
 	}
 
 	private static function gatewayLoop(): void {
 		$interval = self::waitHello();
+		if ($interval <= 0) {
+			Logger::error('[QqBot] 未收到 Hello，放弃本次连接');
+			self::reconnect();
+			return;
+		}
 
-		// 鉴权（或恢复）
-		self::identify();
+		// 鉴权（或恢复）；失败时不要继续空转，直接断开触发重连
+		if (!self::identify()) {
+			self::reconnect();
+			return;
+		}
 
 		// 心跳
 		self::$heartbeatTimer = Timer::tick(max(10, (int)($interval * 0.9)), function () {
@@ -197,11 +209,11 @@ class EventClient {
 		}
 	}
 
-	private static function identify(): void {
+	private static function identify(): bool {
 		$token = Token::identifyToken();
 		if ($token === null) {
 			Logger::error('[QqBot] Identify 缺少 token');
-			return;
+			return false;
 		}
 
 		// 断线重连优先 Resume（4006/4007/op=9 时改回 Identify）
@@ -228,17 +240,21 @@ class EventClient {
 				],
 			];
 
-		self::sendPayload($payload);
+		if (!self::sendPayload($payload)) {
+			Logger::error('[QqBot] 发送 ' . ($useResume ? 'Resume' : 'Identify') . ' 失败');
+			return false;
+		}
 		Logger::success('[QqBot] 已发送 ' . ($useResume ? 'Resume' : 'Identify'));
+		return true;
 	}
 
 	private static function heartbeat(): void {
 		self::sendPayload(['op' => 1, 'd' => self::$lastSeq > 0 ? self::$lastSeq : null]);
 	}
 
-	private static function sendPayload(array $payload): void {
-		if (self::$ws === null) return;
-		self::$ws->push(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+	private static function sendPayload(array $payload): bool {
+		if (self::$ws === null) return false;
+		return (bool)self::$ws->push(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 	}
 
 	/** intents 计算：支持整型或事件名数组 */
@@ -311,14 +327,20 @@ class EventClient {
 				return;
 
 			case 7: // Reconnect
-				Logger::warning('[QqBot] 服务端要求重连（op=7）');
+				Logger::warning('[QqBot] 服务端要求重连（op=7），保留 session 以便 Resume');
 				self::reconnect();
 				return;
 
 			case 9: // Invalid Session
-				Logger::warning('[QqBot] 会话失效（op=9），将重新 Identify');
+				/*
+				 * 官方文档：op=9 表示 session 不可恢复，必须先断开再用 Identify 重新登录。
+				 * 只清空 session_id 但不断开的话，连接会卡在「已连接但未鉴权」的状态，
+				 * 永远收不到事件，因此这里主动关闭连接让外层重连循环走 Identify。
+				 */
+				Logger::warning('[QqBot] 会话失效（op=9），将断开并用 Identify 重新登录');
 				self::$sessionId = '';
 				self::$lastSeq = 0;
+				self::reconnect();
 				return;
 
 			default:

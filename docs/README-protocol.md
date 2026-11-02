@@ -170,13 +170,41 @@ gateway.resume = true
 | `send_group_msg` / `send_private_msg` | `POST /v2/groups/{openid}/messages` / `POST /v2/users/{openid}/messages` |
 | `delete_msg` | `DELETE /v2/groups|users/{openid}/messages/{id}` |
 | `get_group_member_list` | `GET /v2/groups/{openid}/members` |
+| `get_group_member_info` | `GET /v2/groups/{openid}/members/{member_openid}` |
+| `get_group_info` | `GET /v2/groups/{openid}/info` |
 | `get_login_info` | `GET /users/@me` |
-| `get_group_list` / `get_friend_list` | **不支持**（官方未开放接口，返回 -501） |
+| `set_group_kick` | `POST /v2/groups/{openid}/batch_remove_members`（单次 ≤20） |
+| `set_group_ban` | `POST /v2/groups/{openid}/restrict_chat_setting`（`duration` 秒 → `mute_expire_at`） |
+| `get_group_system_msg` | `GET /v2/groups/{openid}/join_request_list` |
+| `set_group_add_request` | `POST /v2/groups/{openid}/approval_join_request/{member}` |
+| `get_group_member_blacklist` / `set_group_member_blacklist` | `GET`/`POST /v2/groups/{openid}/member_blacklist` |
+| `get_group_bot_state` | `GET /v2/groups/{openid}/bot_state` |
+| `get_menu` / `set_menu` | `GET`/`PUT /v2/menu`（仅单聊场景） |
+| `generate_url_link` | `POST /v2/generate_url_link` |
 | `interaction_reply` | `PUT /interactions/{interaction_id}` |
+| `get_group_list` / `get_friend_list` / `*_msg_history` / `set_group_whole_ban` | **不支持**（官方未开放，返回 -501） |
 | 富媒体 | `POST /v2/groups|users/{openid}/files` → 以 `msg_type=7` 发送 |
 
 **被动回复**：官方要求回复必须带 `msg_id + msg_seq`。框架在收到消息事件时自动登记上下文
 （群聊 5 分钟 / 5 次，单聊 60 分钟 / 4 次），发送时自动填充并递增 `msg_seq`。
+
+**已转换的事件**：
+
+| 官方事件 | OneBot 事件 |
+|---|---|
+| `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE` | `message` / `group` |
+| `C2C_MESSAGE_CREATE` | `message` / `private` |
+| `AT_MESSAGE_CREATE` / `MESSAGE_CREATE` / `DIRECT_MESSAGE_CREATE` | `message` / `channel`（频道场景） |
+| `GROUP_ADD_ROBOT` | `notice` / `group_increase` / `invite`（`user_id` 是机器人自己） |
+| `GROUP_DEL_ROBOT` | `notice` / `group_decrease` / `kick_me` |
+| `GROUP_MEMBER_ADD` / `GROUP_MEMBER_REMOVE` | `notice` / `group_increase`·`group_decrease` |
+| `GROUP_JOIN_REQUEST` | `request` / `group` / `add`（`flag` = `join_request_id`） |
+| `FRIEND_ADD` / `FRIEND_DEL` | `request` / `friend` · `notice` |
+| `C2C_MSG_RECEIVE` / `C2C_MSG_REJECT` | `notice` / `private_msg_receive` / `enable`·`disable` |
+| `GROUP_MSG_RECEIVE` / `GROUP_MSG_REJECT` | `notice` / `group_msg_receive` / `enable`·`disable` |
+| `SUBSCRIBE_MESSAGE_STATUS` | `notice` / `subscribe_message_status` |
+| `INTERACTION_CREATE` | `notice` / `interaction`（用 `interaction_reply` 回应） |
+| `READY` / `RESUMED` | `meta_event` / `lifecycle` / `enable`·`resume` |
 
 ---
 

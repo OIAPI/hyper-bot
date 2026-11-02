@@ -199,12 +199,14 @@ abstract class BaseApp {
 
 	/**
 	 * 检测是否为好友（优化：优先读缓存，无缓存再调用API）
-	 * @param float|null $qq 目标QQ（默认当前用户）
+	 * @param string|float|int|null $qq 目标账号（QQ 号或 QQ 官方 OpenID，默认当前用户）
 	 * @return bool 是否为好友
 	 */
 	protected function isFriend(string|float|int|null $qq = null): bool {
 		$qq = $qq ?? $this->qq;
-		if ($qq <= 0) return false;
+		// 仅对数字 ID 做「<= 0」合法性判断（OpenID 是字符串，不能参与数值比较）
+		if (is_numeric($qq) && (float)$qq <= 0) return false;
+		if ($qq === '' || $qq === null) return false;
 
 		// 1. 优先读取缓存的好友列表
 		$friendCacheKey = "{$this->input->self_id}.friend.list";

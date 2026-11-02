@@ -20,6 +20,23 @@ class Adapter extends BaseAdapter {
 	protected string $name = 'qqbot';
 	protected string $title = 'QQ 官方机器人 (QQ Bot API v2)';
 
+	/** 官方确实未开放能力（WebUI 能力矩阵用） */
+	public const UNSUPPORTED = [
+		'get_group_list'         => '官方未提供群列表接口',
+		'get_friend_list'        => '官方未提供好友列表接口',
+		'get_friend_msg_history' => '官方未提供历史消息接口',
+		'get_group_msg_history'  => '官方未提供历史消息接口',
+		'set_group_whole_ban'    => '官方不支持全员禁言',
+	];
+
+	public static function unsupportedList(): array {
+		$out = [];
+		foreach (self::UNSUPPORTED as $action => $reason) {
+			$out[] = ['action' => $action, 'reason' => $reason];
+		}
+		return $out;
+	}
+
 	public function handles(string $action): bool {
 		return true;
 	}

@@ -1,25 +1,30 @@
 {
-	"name": "oiapi/bot",
-	"authors": [
-		{
-			"name": "OIAPI",
-			"email": "admin@oiapi.net"
-		}
-	],
-	"autoload": {
-		"psr-4": {
-			"Api\\": "api/",
-			"App\\": "app/",
-			"Controller\\": "controller/",
-			"Games\\": "games/",
-			"Protocol\\": "protocol/",
-			"Public\\": "public/",
-			"Utils\\": "utils/"
-		}
-	},
-	"require": {
-		"php": ">=8.0",
-		"composer/composer": "^2.8",
-		"ext-swoole": ">=4.8"
-	}
+  "name": "oiapi/bot",
+  "authors": [
+    {
+      "name": "OIAPI",
+      "email": "admin@oiapi.net"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "Api\\": "api/",
+      "App\\": "app/",
+      "Controller\\": "controller/",
+      "Core\\": "core/",
+      "Games\\": "games/",
+      "Protocol\\": "protocol/",
+      "Public\\": "public/",
+      "Utils\\": "utils/",
+      "Webui\\": "webui/"
+    }
+  },
+  "require": {
+    "php": ">=8.0",
+    "composer/composer": "^2.8",
+    "ext-swoole": ">=4.8"
+  },
+  "config": {
+    "optimize-autoloader": false
+  }
 }

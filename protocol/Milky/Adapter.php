@@ -54,6 +54,32 @@ class Adapter extends BaseAdapter {
 		'set_restart'               => '不允许应用侧重启协议端',
 	];
 
+	/** WebUI：不支持的动作及原因 */
+	public static function unsupportedList(): array {
+		$out = [];
+		foreach (self::UNSUPPORTED as $action => $reason) {
+			$out[] = ['action' => $action, 'reason' => $reason];
+		}
+		return $out;
+	}
+
+	/**
+	 * WebUI：已映射的动作清单。
+	 * mapAction 是 switch 实现，这里用反射列出全部 case 分支，避免手工维护两份列表。
+	 */
+	public static function supportedList(): array {
+		$source = (string)file_get_contents(__FILE__);
+		$start = strpos($source, 'private function mapAction');
+		$body = $start === false ? $source : substr($source, $start);
+		preg_match_all("/case '([a-zA-Z0-9_]+)'/", $body, $m);
+		$actions = array_values(array_unique($m[1] ?? []));
+		$out = [];
+		foreach ($actions as $action) {
+			$out[] = ['action' => $action];
+		}
+		return $out;
+	}
+
 	public function handles(string $action): bool {
 		// Milky 是当前事件来源，所有动作都由这里应答：
 		// 已映射的转成 Milky API，未映射的给出明确原因，

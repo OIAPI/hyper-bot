@@ -167,6 +167,11 @@ class WsHub {
 		return self::push($fd, $event);
 	}
 
+	/** 已连接的 Milky WS 会话数（本框架作为 Milky 协议端时的对外订阅连接） */
+	public static function milkyCount(): int {
+		return count(array_filter(self::$sessions, fn($info) => ($info['role'] ?? '') === 'milky'));
+	}
+
 	public static function push(int $fd, array $payload): bool {
 		$server = self::$server;
 		if (!$server instanceof \Swoole\WebSocket\Server) {

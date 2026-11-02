@@ -107,12 +107,13 @@ class Protocol extends Common {
 			'onebot' => [
 				'enable'   => Config::bool('onebot.enable', false),
 				'forward'  => ['running' => WsHub::hasForward(), 'url' => WsHub::forwardUrl()],
-				'reverse'  => ['sessions' => count(WsHub::sessions())],
+				'reverse'  => ['sessions' => WsHub::reverseCount()],
 			],
 			'milky' => [
 				'enable' => Config::bool('milky.enable', false),
 				'api'    => Config::string('milky.api', ''),
 				'event'  => MilkyClient::status(),
+				'ws_in'  => ['sessions' => WsHub::milkyCount()],
 			],
 			'qqbot' => [
 				'enable'  => Config::bool('qqbot.enable', false),

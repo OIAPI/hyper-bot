@@ -106,6 +106,8 @@ $ok('protocol 段存在', \Utils\Env::get('protocol.default', '') === 'http');
 $ok('onebot 正向地址读取', \Protocol\Core\Config::string('onebot.forward.url') === 'ws://127.0.0.1:3001');
 $ok('qqbot api 默认域名', \Protocol\Core\Config::string('qqbot.api') === 'https://api.bot.qq.com');
 $ok('milky ws 服务路径', \Protocol\Core\Config::string('milky.ws.server_path') === '/milky/event');
+$ok('带 protocol. 前缀也能读到', \Protocol\Core\Config::string('protocol.qqbot.api') === 'https://api.bot.qq.com');
+$ok('不带前缀同名等价', \Protocol\Core\Config::string('protocol.default') === 'http');
 
 echo $fail === 0 ? "\n全部通过\n" : "\n失败 {$fail} 项\n";
 exit($fail === 0 ? 0 : 1);

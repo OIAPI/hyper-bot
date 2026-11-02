@@ -37,6 +37,14 @@ class Config {
 	 * @param mixed $default 默认值
 	 */
 	public static function get(string $key, mixed $default = null): mixed {
+		// 允许带/不带 protocol. 前缀：protocol.qqbot.api 与 qqbot.api 等价
+		$key = trim($key);
+		if (str_starts_with($key, 'protocol.')) {
+			$key = substr($key, strlen('protocol.'));
+		}
+		if ($key === '') {
+			return $default;
+		}
 		$segments = explode('.', $key);
 		$total = count($segments);
 		$sections = self::sections();

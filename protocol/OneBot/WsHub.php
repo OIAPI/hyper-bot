@@ -92,21 +92,28 @@ class WsHub {
 	}
 
 	public static function onClose(\Swoole\Http\Server $server, int $fd): void {
+		$role = self::$sessions[$fd]['role'] ?? 'reverse';
 		unset(self::$sessions[$fd]);
-		Logger::warning("[OneBot-WS] 反向 WS 客户端断开 | fd={$fd}");
+		Logger::warning(($role === 'milky' ? '[Milky-WS] 客户端断开' : '[OneBot-WS] 反向 WS 客户端断开') . " | fd={$fd}");
 	}
 
-	/** 已连接的反向 WS 会话数 */
+	/** 已连接的反向 WS 会话数（不包含 Milky 等仅推送端点） */
 	public static function reverseCount(): int {
-		return count(self::$sessions);
+		return count(self::reverseSessions());
+	}
+
+	/** 过滤出 OneBot 反向 WS 会话 */
+	private static function reverseSessions(): array {
+		return array_filter(self::$sessions, fn($info) => ($info['role'] ?? '') === 'reverse');
 	}
 
 	/** 取一个可用于下发 API 调用的反向会话 fd */
 	public static function pickReverseFd(): ?int {
-		if (empty(self::$sessions)) return null;
+		$sessions = self::reverseSessions();
+		if ($sessions === []) return null;
 		$best = null;
-		foreach (self::$sessions as $fd => $info) {
-			if ($best === null || $info['last'] > self::$sessions[$best]['last']) {
+		foreach ($sessions as $fd => $info) {
+			if ($best === null || $info['last'] > $sessions[$best]['last']) {
 				$best = $fd;
 			}
 		}

@@ -70,15 +70,17 @@ class EventClient {
 			return ['status' => 'ok', 'retcode' => 0, 'data' => new \stdClass()];
 		}
 
-		// 幂等去重
+		// 幂等去重：WebHook 可能向多个地址重复投递，WS+WebHook 双开时也会收到同一事件
 		$key = self::dedupeKey($event);
-	 if ($key !== '' && isset(self::$seen[$key])) {
-			Logger::debug("[Milky] 重复事件已跳过 | {$eventType} | {$key}");
-			return ['status' => 'ok', 'retcode' => 0, 'data' => new \stdClass()];
-		}
-		self::$seen[$key] = time();
-		if (count(self::$seen) > 500) {
-			self::$seen = array_slice(self::$seen, -300, null, true);
+		if ($key !== '') {
+			if (isset(self::$seen[$key])) {
+				Logger::debug("[Milky] 重复事件已跳过 | {$eventType} | {$key}");
+				return ['status' => 'ok', 'retcode' => 0, 'data' => new \stdClass()];
+			}
+			self::$seen[$key] = time();
+			if (count(self::$seen) > 500) {
+				self::$seen = array_slice(self::$seen, -300, null, true);
+			}
 		}
 
 		$converted = Converter::toOneBot($event);
@@ -184,6 +186,7 @@ class EventClient {
 				continue;
 			}
 			if (!$frame instanceof \Swoole\WebSocket\Frame) continue;
+			if ((int)$frame->opcode === \WEBSOCKET_OPCODE_PING) continue;
 			$data = json_decode((string)$frame->data, true);
 			if (is_array($data)) {
 				self::handleEvent($data, 'ws');
@@ -219,7 +222,8 @@ class EventClient {
 	}
 
 	private static function deriveSseUrl(): string {
-		return preg_replace('/^http/i', 'http', Config::string('milky.api', 'http://127.0.0.1:3010')) . '/event';
+		// 与 deriveWsUrl 同理：API 地址的主机/端口就是事件端点所在位置
+		return rtrim(Config::string('milky.api', 'http://127.0.0.1:3010'), '/') . '/event';
 	}
 
 	private static function runSse(string $url, string $token): bool {

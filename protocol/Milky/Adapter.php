@@ -22,14 +22,53 @@ class Adapter extends BaseAdapter {
 		$this->api = new Api($config);
 	}
 
+	/**
+	 * Milky 协议中确实不存在对应能力的 OneBot 操作
+	 *
+	 * 这里列出来是为了给出可读的错误原因，而不是一律 "not found"。
+	 */
+	private const UNSUPPORTED = [
+		'_get_model_show'           => '无资料卡展示接口',
+		'_set_model_show'           => '无资料卡展示接口',
+		'delete_unidirectional_friend' => '无单向好友接口',
+		'get_unidirectional_friend_list' => '无单向好友接口',
+		'download_file'             => '无通用下载接口，请改用 get_resource_temp_url 取链接',
+		'fetch_mface_key'           => '无表情包密钥接口',
+		'get_ai_characters'         => '无 AI 角色接口',
+		'get_ai_record'             => '无 AI 语音接口',
+		'send_group_ai_record'      => '无 AI 语音接口',
+		'get_clientkey'             => '无 clientkey 接口',
+		'get_credentials'           => '无凭证接口',
+		'get_rkey'                  => '无 rkey 接口',
+		'get_skey'                  => '无 skey 接口',
+		'get_group_at_all_remain'   => '无 @全体成员额度接口',
+		'get_group_file_system_info'=> '无群文件系统信息接口',
+		'get_group_honor_info'      => '无群荣誉接口',
+		'ocr_image'                 => '无 OCR 接口',
+		'send_group_bot_callback'   => '无机器人回调接口',
+		'send_group_sign'           => '无群签到接口',
+		'send_pb'                   => '无 protobuf 直发接口',
+		'set_group_anonymous'       => '无匿名聊天接口',
+		'set_group_anonymous_ban'   => '无匿名禁言接口',
+		'set_group_bot_status'      => '无机器人状态管理接口',
+		'set_restart'               => '不允许应用侧重启协议端',
+	];
+
 	public function handles(string $action): bool {
+		// Milky 是当前事件来源，所有动作都由这里应答：
+		// 已映射的转成 Milky API，未映射的给出明确原因，
+		// 避免 Bridge 悄悄回落到 HTTP 协议端（那可能是另一个账号）。
 		return true;
 	}
 
 	public function call(string $action, array $params = [], string $method = 'POST'): object {
 		$mapped = $this->mapAction($action, $params);
 		if ($mapped === null) {
-			return $this->fail(-404, "Milky 不支持该操作：{$action}");
+			// 这些是协议差异导致「Milky 侧无对应接口」的操作，
+			// 明确提示而不是笼统报错，方便业务侧判断是否需要降级逻辑。
+			$reason = self::UNSUPPORTED[$action] ?? 'Milky 协议无对应接口';
+			$this->logWarning("[Milky] 不支持的操作 {$action}：{$reason}");
+			return $this->fail(-404, "Milky 不支持该操作：{$action}（{$reason}）");
 		}
 		[$api, $payload, $transformer] = $mapped;
 
@@ -95,22 +134,19 @@ class Adapter extends BaseAdapter {
 				], fn($d) => $d];
 
 			case 'get_group_msg_history':
+			case 'get_friend_msg_history':
+				$isGroup = $action === 'get_group_msg_history';
 				$body = [
-					'message_scene' => 'group',
-					'peer_id'       => (int)($p['group_id'] ?? 0),
+					'message_scene' => $isGroup ? 'group' : 'friend',
+					'peer_id'       => (int)($isGroup ? ($p['group_id'] ?? 0) : ($p['user_id'] ?? 0)),
 					'limit'         => (int)($p['count'] ?? 20),
 				];
-				if ((int)($p['message_id'] ?? 0) > 0) $body['start_message_seq'] = (int)$p['message_id'];
+				$startSeq = $p['message_seq'] ?? ($p['message_id'] ?? 0);
+				if ((int)$startSeq > 0) $body['start_message_seq'] = (int)$startSeq;
 				return ['get_history_messages', $body, fn($d) => ['messages' => $d->messages ?? [], 'next_message_seq' => $d->next_message_seq ?? null]];
 
-			case 'get_friend_msg_history':
-				$body = [
-					'message_scene' => 'friend',
-					'peer_id'       => (int)($p['user_id'] ?? 0),
-					'limit'         => (int)($p['count'] ?? 20),
-				];
-				if ((int)($p['message_id'] ?? 0) > 0) $body['start_message_seq'] = (int)$p['message_id'];
-				return ['get_history_messages', $body, fn($d) => ['messages' => $d->messages ?? [], 'next_message_seq' => $d->next_message_seq ?? null]];
+			case 'get_custom_face_url_list':
+				return ['get_custom_face_url_list', [], fn($d) => $d];
 
 			case 'send_forward_msg':
 			case 'send_group_forward_msg':
@@ -148,7 +184,9 @@ class Adapter extends BaseAdapter {
 			case 'get_friend_list':
 				return ['get_friend_list', ['no_cache' => (bool)($p['no_cache'] ?? false)], fn($d) => $d->friends ?? []];
 			case 'get_stranger_info':
-				return ['get_user_profile', ['user_id' => (int)($p['user_id'] ?? 0)], fn($d) => $d];
+				return ['get_user_profile', ['user_id' => (int)($p['user_id'] ?? 0), 'no_cache' => (bool)($p['no_cache'] ?? false)], fn($d) => $d];
+			case 'get_friend_info':
+				return ['get_friend_info', ['user_id' => (int)($p['user_id'] ?? 0), 'no_cache' => (bool)($p['no_cache'] ?? false)], fn($d) => $d->friend ?? $d];
 			case 'delete_friend':
 				return ['delete_friend', ['user_id' => (int)($p['user_id'] ?? 0)], $empty];
 			case 'set_friend_add_request':
@@ -216,6 +254,25 @@ class Adapter extends BaseAdapter {
 				return ['get_group_file_download_url', ['group_id' => (int)($p['group_id'] ?? 0), 'file_id' => (string)($p['file_id'] ?? '')], fn($d) => $d];
 			case 'delete_group_file':
 				return ['delete_group_file', ['group_id' => (int)($p['group_id'] ?? 0), 'file_id' => (string)($p['file_id'] ?? '')], $empty];
+			case 'get_private_file_url':
+				return ['get_private_file_download_url', [
+					'user_id'        => (int)($p['user_id'] ?? 0),
+					'file_id'        => (string)($p['file_id'] ?? ''),
+					'file_hash'      => (string)($p['file_hash'] ?? ''),
+					'is_self_send'   => (bool)($p['is_self_send'] ?? false),
+				], fn($d) => $d];
+			case 'rename_group_file_folder':
+				return ['rename_group_folder', [
+					'group_id'       => (int)($p['group_id'] ?? 0),
+					'folder_id'      => (string)($p['folder_id'] ?? '/'),
+					'new_folder_name' => (string)($p['name'] ?? ''),
+				], $empty];
+			case 'delete_group_file_folder':
+			case 'delete_group_folder':
+				return ['delete_group_folder', [
+					'group_id'  => (int)($p['group_id'] ?? 0),
+					'folder_id' => (string)($p['folder_id'] ?? '/'),
+				], $empty];
 			case 'get_group_root_files':
 			case 'get_group_files_by_folder':
 				return ['get_group_files', [
@@ -233,7 +290,102 @@ class Adapter extends BaseAdapter {
 					'target_folder_id' => (string)($p['target_directory'] ?? '/'),
 				], $empty];
 
+			// ================= 群管理扩展 =================
+			case 'set_group_leave':
+			case 'quit_group':
+				return ['quit_group', ['group_id' => (int)($p['group_id'] ?? 0)], $empty];
+			case 'set_essence_msg':
+			case 'set_group_essence_message':
+				return ['set_group_essence_message', [
+					'group_id'    => (int)($p['group_id'] ?? 0),
+					'message_seq' => (int)($p['message_id'] ?? 0),
+				], $empty];
+			case 'delete_essence_msg':
+			case 'delete_group_essence_message':
+				return ['set_group_essence_message', [
+					'group_id'    => (int)($p['group_id'] ?? 0),
+					'message_seq' => (int)($p['message_id'] ?? 0),
+				], $empty];
+			case 'get_group_essence_msg_list':
+			case 'get_essence_msg_list':
+				// 规范字段是 page_index / page_size，不是 limit
+				return ['get_group_essence_messages', [
+					'group_id'   => (int)($p['group_id'] ?? 0),
+					'page_index' => (int)($p['page'] ?? 0),
+					'page_size'  => (int)($p['count'] ?? 20),
+				], fn($d) => $d->messages ?? []];
+			case '_get_group_notice':
+			case 'get_group_notice':
+			case 'get_group_announcements':
+			case 'get_group_announcement_list':
+				return ['get_group_announcements', ['group_id' => (int)($p['group_id'] ?? 0)], fn($d) => $d->announcements ?? []];
+			case '_send_group_notice':
+			case 'send_group_notice':
+			case 'send_group_announcement':
+				return ['send_group_announcement', [
+					'group_id'  => (int)($p['group_id'] ?? 0),
+					'content'   => (string)($p['content'] ?? ''),
+					'image_uri' => (string)($p['image'] ?? ''),
+				], fn($d) => $d];
+			case '_del_group_notice':
+			case 'delete_group_notice':
+			case 'delete_group_announcement':
+				return ['delete_group_announcement', [
+					'group_id'       => (int)($p['group_id'] ?? 0),
+					'announcement_id' => (string)($p['notice_id'] ?? ($p['announcement_id'] ?? '')),
+				], $empty];
+			case 'set_group_invitation':
+			case 'accept_group_invitation':
+				return ['accept_group_invitation', [
+					'group_id'   => (int)($p['group_id'] ?? 0),
+					'invitation_id' => (string)($p['flag'] ?? ($p['invitation_id'] ?? '')),
+				], $empty];
+
+			// ================= 资源 =================
+			case 'get_resource_temp_url':
+			case 'get_image':
+			case 'get_record':
+				return ['get_resource_temp_url', ['resource_id' => (string)($p['file'] ?? ($p['resource_id'] ?? ''))], fn($d) => ['url' => (string)($d->url ?? '')]];
+			case 'get_cookies':
+				return ['get_cookies', ['domain' => (string)($p['domain'] ?? '')], fn($d) => $d];
+			case 'get_csrf_token':
+				return ['get_csrf_token', [], fn($d) => $d];
+
 			// ================= 机器人 =================
+			case 'set_qq_profile':
+			case 'set_self_nickname':
+				return ['set_nickname', ['nickname' => (string)($p['nickname'] ?? '')], $empty];
+			case 'set_qq_avatar':
+			case 'set_avatar':
+				return ['set_avatar', ['uri' => (string)($p['file'] ?? ($p['uri'] ?? ''))], $empty];
+			case 'set_group_portrait':
+			case 'set_group_avatar':
+				return ['set_group_avatar', [
+					'group_id'  => (int)($p['group_id'] ?? 0),
+					'image_uri' => (string)($p['file'] ?? ($p['image_uri'] ?? '')),
+				], $empty];
+			case 'fetch_custom_face':
+				return ['get_custom_face_url_list', [], fn($d) => $d->urls ?? []];
+			case 'get_group_system_msg':
+				return ['get_group_notifications', [
+					'is_filtered' => false,
+					'limit'       => (int)($p['count'] ?? 20),
+				], fn($d) => $d];
+			case 'can_send_image':
+			case 'can_send_record':
+				// Milky 协议端没有「能力探测」接口，按协议能力恒为 true
+				return ['get_impl_info', [], fn($d) => ['yes' => true]];
+			case 'check_url_safely':
+				// 无对应接口，按安全放行（具体风险由业务侧自行判断）
+				return ['get_impl_info', [], fn($d) => ['level' => 1]];
+			case 'clean_cache':
+			case 'reload_event_filter':
+				// 无对应接口，视为本地 no-op（返回成功避免业务侧报错）
+				return ['get_impl_info', [], fn($d) => new \stdClass()];
+			case 'get_online_clients':
+				return ['get_impl_info', [], fn($d) => []];
+			case 'set_bio':
+				return ['set_bio', ['bio' => (string)($p['bio'] ?? '')], $empty];
 			case 'get_login_info':
 				return ['get_login_info', [], fn($d) => ['user_id' => (int)($d->user_id ?? ($d->uin ?? 0)), 'nickname' => (string)($d->nickname ?? '')]];
 			case 'get_version_info':

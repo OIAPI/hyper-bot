@@ -8,6 +8,7 @@ php tests/protocol_test.php   # Milky 事件/消息段转换、QQ 官方事件�
 php tests/qqbot_sign.php      # QQ 官方 Webhook Ed25519 签名（需要 ext-sodium）
 php tests/event_flow.php      # Milky 幂等去重、QQ 官方被动回复 msg_seq 状态机
 php tests/local.php           # Cache 协程私有存储（raw_body / headers）
+php tests/milky_actions.php   # OneBot action → Milky API 映射覆盖率与参数细节
 ```
 
 全部通过时退出码为 0；任一失败退出码为 1，可直接接入 CI。

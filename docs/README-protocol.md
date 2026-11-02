@@ -144,8 +144,24 @@ gateway.resume = true
 | `set_group_kick` / `set_group_ban` / `set_group_whole_ban` | `kick_group_member` / `set_group_member_mute` / `set_group_whole_mute` |
 | `set_group_card` / `set_group_name` / `set_group_admin` | `set_group_member_card` / `set_group_name` / `set_group_member_admin` |
 | `upload_group_file` / `upload_private_file` | 同名 |
+| `get_group_essence_msg_list` / `get_essence_msg_list` | `get_group_essence_messages`（注意用 `page_index`/`page_size`） |
+| `set_essence_msg` / `delete_essence_msg` | `set_group_essence_message`（`is_set` 由动作名决定） |
+| `_get_group_notice` / `_send_group_notice` / `_del_group_notice` | `get_group_announcements` / `send_group_announcement` / `delete_group_announcement` |
+| `set_group_leave` / `quit_group` | `quit_group` |
+| `set_qq_profile` / `set_qq_avatar` / `set_group_portrait` | `set_nickname` / `set_avatar` / `set_group_avatar` |
+| `get_friend_info` / `get_stranger_info` | `get_friend_info` / `get_user_profile` |
+| `get_group_root_files` / `get_group_files_by_folder` | `get_group_files` |
+| `get_private_file_url` / `get_group_file_url` | `get_private_file_download_url` / `get_group_file_download_url` |
+| `fetch_custom_face` | `get_custom_face_url_list` |
+| `get_image` / `get_record` | `get_resource_temp_url`（临时链接会过期，长期请存 `resource_id`） |
 
-未覆盖的 action 返回 `retcode = -404`。
+**Milky 协议确实没有对应能力的操作**（返回 `retcode = -404` 并附带具体原因，而不是笼统的 not found）：
+`_get_model_show`、`_set_model_show`、`get_ai_characters`、`get_ai_record`、`send_group_ai_record`、
+`delete_unidirectional_friend`、`get_unidirectional_friend_list`、`ocr_image`、`send_group_sign`、
+`set_group_anonymous`、`set_group_anonymous_ban`、`set_restart` 等。
+
+> 作为对照：`api/*.php` 里一共用到 94 个 action，其中 70 个可以映射到 Milky；
+> 剩余 24 个属于「Milky 没有该接口」或「协议端私有能力」，已在 `Milky\Adapter::UNSUPPORTED` 里逐条列出原因。
 
 ### 5.2 QQ 官方机器人
 
@@ -155,6 +171,8 @@ gateway.resume = true
 | `delete_msg` | `DELETE /v2/groups|users/{openid}/messages/{id}` |
 | `get_group_member_list` | `GET /v2/groups/{openid}/members` |
 | `get_login_info` | `GET /users/@me` |
+| `get_group_list` / `get_friend_list` | **不支持**（官方未开放接口，返回 -501） |
+| `interaction_reply` | `PUT /interactions/{interaction_id}` |
 | 富媒体 | `POST /v2/groups|users/{openid}/files` → 以 `msg_type=7` 发送 |
 
 **被动回复**：官方要求回复必须带 `msg_id + msg_seq`。框架在收到消息事件时自动登记上下文
@@ -205,8 +223,11 @@ forward.url = ws://127.0.0.1:8081
 # 语法检查（全项目）
 for f in $(find . -path ./vendor -prune -o -name '*.php' -print); do php -l "$f"; done
 
-# 协议转换单测（不依赖 Swoole）
-php runtime/tests/protocol_test.php 2>/dev/null || true
+# 协议自检（不依赖 Swoole / Redis）
+php tests/protocol_test.php   # Milky 事件/消息段转换、QQ 官方事件转换、配置读取
+php tests/qqbot_sign.php      # QQ 官方 Webhook Ed25519 签名（需要 ext-sodium）
+php tests/event_flow.php      # Milky 幂等去重、QQ 官方被动回复 msg_seq 状态机
+php tests/local.php           # Cache 协程私有存储（raw_body / headers）
 ```
 
-本仓库内的自检脚本位于 `.phpext/tests/`（开发机专用，不随生产部署）。
+全部通过时退出码为 0，可直接接入 CI；详见 [tests/README.md](../tests/README.md)。

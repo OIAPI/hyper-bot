@@ -179,7 +179,7 @@ class message extends app {
 	 * @return object
 	 */
 	public function joinGroupEmojiChain(string|float|int $group, string|float|int $message_id, int $emoji_id) : object {
-		$url = $this->api . '/.join_group_emoji_chain';
+		$url = $this->api . '/join_group_emoji_chain';
 		$data = ['group_id'=>$group, 'message_id' => $message_id, 'emoji_id' => $emoji_id];
 		return $this->post($url, $data);
 	}
@@ -192,7 +192,7 @@ class message extends app {
 	 * @return object
 	 */
 	public function joinFriendEmojiChain(string|float|int $qq, string|float|int $message_id, float $emoji_id) : object {
-		$url = $this->api . '/.join_friend_emoji_chain';
+		$url = $this->api . '/join_friend_emoji_chain';
 		$data = ['user_id'=>$qq, 'message_id' => $message_id, 'emoji_id' => $emoji_id];
 		return $this->post($url, $data);
 	}

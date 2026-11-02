@@ -36,12 +36,17 @@ class Adapter extends BaseAdapter {
 		 */
 		if ($this->fd !== null || WsHub::hasForward() || WsHub::hasReverse()) {
 			$response = WsHub::callApi($action, $params, 30.0, $this->fd);
-			if ($response !== null) {
+			if (is_array($response)) {
 				return (object)$response;
+			}
+			if ($response === false) {
+				// 已经发到 WS 上了，只是等不到 echo：不能再回落 HTTP，
+				// 否则 send_* 会被投递两次（协议端可能已经发出去了）。
+				return $this->fail(-1, "OneBot WS 调用超时：{$action}（已发出，未收到 echo，请勿重试以避免重复发送）");
 			}
 		}
 
-		// 2) 无 WS 连接：回落 HTTP
+		// 2) 确实没有 WS 连接：回落 HTTP
 		$this->http ??= new HttpAdapter();
 		return $this->http->call($action, $params, $method);
 	}

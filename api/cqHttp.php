@@ -22,7 +22,7 @@ class cqHttp extends app {
 	 * @desc 获取Client
 	 * @return object
 	 */
-	public function getClientKey() : object {
+	public function getClientKey(?string $domain = null) : object {
 		$url = $this->api . '/get_clientkey';
 		$data = ['domain'=>$domain];
 		return $this->post($url, $data);

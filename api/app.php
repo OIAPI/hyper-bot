@@ -15,11 +15,12 @@ class app {
 		$this->curl->addheaders('content-type', 'application/json');
 	}
 	/**
-	 * 统一入口：若当前事件来自 OneBot-WS / Milky / QQ 官方机器人，
-	 * 则通过协议桥转发给对应适配器；否则回落原有 HTTP 协议端。
+	 * 统一入口：若 URL 指向协议端、且当前有事件来源适配器
+	 * （或默认后端本身就不是 HTTP），则通过协议桥转发；
+	 * 否则保持原有直连行为（第三方接口必须直连，不能被当成 OneBot action）。
 	 */
 	protected function get($url, ?array $data = []) : object {
-		if (\Protocol\Core\Bridge::hasAdapter()) {
+		if (\Protocol\Core\Bridge::routes($url)) {
 			return \Protocol\Core\Bridge::call($this->actionOf($url), $data ?: [], 'GET');
 		}
 		if($data) {
@@ -33,12 +34,11 @@ class app {
 		return ($this->curl->error ? $this->curl : $this->curl->object()) ?? new \stdClass();
 	}
 	protected function post($url, ?array $data = []) : object {
-		if (\Protocol\Core\Bridge::hasAdapter()) {
+		if (\Protocol\Core\Bridge::routes($url)) {
 			return \Protocol\Core\Bridge::call($this->actionOf($url), is_array($data) ? $data : [], 'POST');
 		}
 		$data = is_array($data) || is_object($data) ? json_encode($data, 320) : '{}';
 		$this->curl->post($url, $data);
-		// print_r($this->curl);
 		return ($this->curl->error ? $this->curl : $this->curl->object()) ?? new \stdClass();
 	}
 

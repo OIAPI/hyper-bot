@@ -220,7 +220,15 @@ class Notice {
 		$routeClass = trim($route['class']);
 		$routeFunc = trim($route['func']);
 
-		Coroutine::create(function () use ($route, $routeClass, $routeFunc) {
+		/*
+		 * 子协程不继承父协程上下文（Swoole Coroutine::create 的语义），
+		 * 因此必须显式快照/恢复：adapter 决定「插件里发消息时转发到哪个协议端」，
+		 * api / param / server 决定业务能读到什么。
+		 * 不恢复会导致插件里的 sendMsg 静默回落到旧 HTTP 协议端（消息出现在另一个账号）。
+		 */
+		$snapshot = \Utils\Cache::snapshot();
+		Coroutine::create(function () use ($route, $routeClass, $routeFunc, $snapshot) {
+			\Utils\Cache::restore($snapshot);
 			try {
 				// 1. 检查控制器类是否存在
 				if (!class_exists($routeClass)) {

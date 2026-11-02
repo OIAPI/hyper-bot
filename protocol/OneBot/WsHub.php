@@ -393,8 +393,16 @@ class WsHub {
 
 	/**
 	 * 通过 WS 调用 OneBot API（优先正向连接，其次反向会话）
+	 *
+	 * 返回值三态，调用方必须区分：
+	 *  - array：收到协议端响应
+	 *  - null ：**没有可用连接**（可以安全回落 HTTP）
+	 *  - false：**已发出但等不到响应（超时）**，此时绝不能回落 HTTP 重发，
+	 *            send_* 这类非幂等操作会变成「发两条」。
+	 *
+	 * @return array|false|null
 	 */
-	public static function callApi(string $action, array $params = [], float $timeout = 30.0, ?int $fd = null): ?array {
+	public static function callApi(string $action, array $params = [], float $timeout = 30.0, ?int $fd = null): array|false|null {
 		$payload = [
 			'action' => $action,
 			'params' => (object)$params,
@@ -437,10 +445,10 @@ class WsHub {
 		$response = $channel->pop($timeout);
 		unset(self::$pending[$echo]);
 		if ($response === false) {
-			Logger::warning("[OneBot-WS] API 调用超时：{$action}（{$timeout}s）");
-			return null;
+			Logger::warning("[OneBot-WS] API 调用超时：{$action}（{$timeout}s），不回落 HTTP 以免重复发送");
+			return false;
 		}
-		return is_array($response) ? $response : null;
+		return is_array($response) ? $response : false;
 	}
 
 	private static function sendRaw(array $payload): bool {

@@ -40,6 +40,8 @@ class Converter {
 			'friend_file_upload'       => self::friendFileUpload($data, $time, $self),
 			'group_name_change'        => self::groupNameChange($data, $time, $self),
 			'group_essence_message_change' => self::essenceChange($data, $time, $self),
+			'group_disband'            => self::groupDisband($data, $time, $self),
+			'peer_pin_change'          => self::peerPinChange($data, $time, $self),
 			'bot_offline'              => self::offline($data, $time, $self),
 			default                    => null,
 		};
@@ -437,6 +439,33 @@ class Converter {
 			'message_id'  => $d['message_seq'] ?? 0,
 			'operator_id' => (int)($d['operator_id'] ?? 0),
 			'is_set'      => (bool)($d['is_set'] ?? false),
+		];
+	}
+
+	/** 群解散（Milky 独有，OneBot11 无对应类型，用 notice/group_disband 承载） */
+	private static function groupDisband(array $d, int $time, int $self): array {
+		return [
+			'post_type'    => 'notice',
+			'notice_type'  => 'group_disband',
+			'sub_type'     => 'disband',
+			'time'         => $time,
+			'self_id'      => $self,
+			'group_id'     => (int)($d['group_id'] ?? 0),
+			'operator_id'  => (int)($d['operator_id'] ?? 0),
+		];
+	}
+
+	/** 会话置顶变更（Milky 独有） */
+	private static function peerPinChange(array $d, int $time, int $self): array {
+		return [
+			'post_type'     => 'notice',
+			'notice_type'   => 'peer_pin_change',
+			'sub_type'      => 'update',
+			'time'          => $time,
+			'self_id'       => $self,
+			'message_scene' => (string)($d['message_scene'] ?? ''),
+			'peer_id'       => (int)($d['peer_id'] ?? 0),
+			'is_pinned'     => (bool)($d['is_pinned'] ?? false),
 		];
 	}
 

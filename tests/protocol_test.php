@@ -51,7 +51,11 @@ $recall = \Protocol\Milky\Converter::toOneBot(['time' => 1, 'self_id' => 2, 'eve
 $ok('撤回 → group_recall', ($recall['notice_type'] ?? '') === 'group_recall' && ($recall['group_id'] ?? 0) === 100);
 $inc = \Protocol\Milky\Converter::toOneBot(['time' => 1, 'self_id' => 2, 'event_type' => 'group_member_increase', 'data' => ['group_id' => 100, 'user_id' => 8, 'operator_id' => 9]]);
 $ok('入群 → group_increase/approve', ($inc['notice_type'] ?? '') === 'group_increase' && ($inc['sub_type'] ?? '') === 'approve');
-$unknown = \Protocol\Milky\Converter::toOneBot(['event_type' => 'peer_pin_change', 'time' => 1, 'self_id' => 2, 'data' => []]);
+$pin = \Protocol\Milky\Converter::toOneBot(['event_type' => 'peer_pin_change', 'time' => 1, 'self_id' => 2, 'data' => ['message_scene' => 'friend', 'peer_id' => 5, 'is_pinned' => true]]);
+$ok('会话置顶变更可转换', ($pin['notice_type'] ?? '') === 'peer_pin_change' && ($pin['is_pinned'] ?? false) === true);
+$disband = \Protocol\Milky\Converter::toOneBot(['event_type' => 'group_disband', 'time' => 1, 'self_id' => 2, 'data' => ['group_id' => 100, 'operator_id' => 9]]);
+$ok('群解散可转换', ($disband['notice_type'] ?? '') === 'group_disband');
+$unknown = \Protocol\Milky\Converter::toOneBot(['event_type' => 'totally_unknown_event', 'time' => 1, 'self_id' => 2, 'data' => []]);
 $ok('未知事件返回 null（忽略）', $unknown === null);
 
 echo "== Milky CQ 解析 ==\n";

@@ -142,7 +142,15 @@ final class Config {
         return $maskSecrets ? self::mask($tree) : $tree;
     }
 
-    /** 写入配置项（WebUI 配置页使用），成功返回 true */
+    /**
+     * 写入配置项（WebUI 配置页使用），成功返回 true。
+     *
+     * 这里必须**按小节定位**后替换，不能只用键名做全文正则：
+     * 1) 同名键会散落在多个小节（例如 `debug` 可能同时出现在 [app] 与 [http]），
+     *    只按键名替换会改错小节；
+     * 2) 替换串里不能用字面量数字做前缀（那会把 `debug = true` 变成 `1false`），
+     *    必须用反向引用 \$1 保留「键 = 」前缀。
+     */
     public static function set(string $key, mixed $value): bool {
         $path = self::path();
         if (!is_writable($path)) {
@@ -152,29 +160,95 @@ final class Config {
         if ($segments === []) {
             return false;
         }
-        $inFile = self::fileKey($segments);
         $current = Fs::read($path);
         if ($current === '') {
             return false;
         }
+
         $encoded = self::encodeValue($value);
-        $pattern = '/^(' . preg_quote($inFile, '/') . '[ \t]*[=:][ \t]*).*$/m';
-        $replaced = preg_replace($pattern, '1' . str_replace(['\\', '$'], ['\\\\', '\\$'], $encoded), $current, 1, $count);
-        if ($replaced === null) {
+        [$section, $rest] = self::splitSection($segments);
+        $inFile = implode('.', $rest);
+        if ($inFile === '') {
             return false;
         }
-        if ($count === 0) {
-            // 键不存在：追加到对应小节末尾
-            $replaced = self::appendKey($current, $segments, $inFile, $encoded);
-            if ($replaced === null) {
-                return false;
+
+        $lines = preg_split('/\R/', $current);
+        if ($lines === false) {
+            return false;
+        }
+
+        $currentSection = '';
+        $replacedLine = null;
+        $sectionStart = null;
+        $sectionEnd = count($lines);
+
+        foreach ($lines as $index => $line) {
+            $trimmed = trim($line);
+            if ($trimmed !== '' && $trimmed[0] === '[' && str_ends_with($trimmed, ']')) {
+                // 离开上一个小节前，记录它的结束位置
+                if ($currentSection === $section && $sectionStart !== null && $sectionEnd === count($lines)) {
+                    $sectionEnd = $index;
+                }
+                $currentSection = trim(substr($trimmed, 1, -1));
+                if ($currentSection === $section && $sectionStart === null) {
+                    $sectionStart = $index;
+                }
+                continue;
+            }
+            // 只在目标小节内匹配，避免改到别处的同名键
+            if ($sectionStart === null || $currentSection !== $section) {
+                continue;
+            }
+            // 被注释掉的键不算命中
+            if ($trimmed === '' || $trimmed[0] === ';' || $trimmed[0] === '#') {
+                continue;
+            }
+            if (preg_match('/^\s*' . preg_quote($inFile, '/') . '\s*[=:]\s*/', $line)) {
+                $replacedLine = $encoded === '' ? $inFile . ' =' : $inFile . ' = ' . $encoded;
+                $lines[$index] = $replacedLine;
+                break;
             }
         }
-        if (!Fs::write($path, $replaced)) {
+
+        if ($replacedLine === null) {
+            // 键不存在：追加到该小节末尾（小节不存在则在文件末尾新建）
+            $lines = self::appendLine($lines, $section, $inFile . ' = ' . $encoded, $sectionStart, $sectionEnd);
+        }
+
+        $output = implode("\n", $lines);
+        if (!Fs::write($path, $output)) {
             return false;
         }
         self::refresh();
         return true;
+    }
+
+    /**
+     * 把 `app.debug` 拆成 `[小节, 小节内的键]`。
+     * 有 `[protocol.qqbot]` 这类带点小节时，长小节优先匹配。
+     */
+    private static function splitSection(array $segments): array {
+        foreach (self::sectionNames() as $candidate) {
+            $candidatePath = array_values(array_filter(explode('.', $candidate), fn($v) => $v !== ''));
+            $count = count($candidatePath);
+            if ($count > 0 && $count < count($segments) && array_slice($segments, 0, $count) === $candidatePath) {
+                return [$candidate, array_slice($segments, $count)];
+            }
+        }
+        // 没有对应小节：按顶层小节处理
+        return [$segments[0], array_slice($segments, 1)];
+    }
+
+    /** 在小节末尾插入一行；小节不存在时在文件末尾追加小节 */
+    private static function appendLine(array $lines, string $section, string $line, ?int $sectionStart, int $sectionEnd): array {
+        if ($sectionStart === null) {
+            $lines[] = '';
+            $lines[] = '[' . $section . ']';
+            $lines[] = $line;
+            return $lines;
+        }
+        array_splice($lines, $sectionEnd, 0, [$line]);
+        return $lines;
     }
 
     // ---------------- 内部实现 ----------------

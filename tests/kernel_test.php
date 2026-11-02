@@ -107,5 +107,40 @@ $ok('bind', $c->get('x') === 1);
 $c->singleton('y', fn() => new \stdClass());
 $ok('singleton 同一实例', $c->get('y') === $c->get('y'));
 
+
+echo "== Store: 通配匹配（回归） ==
+";
+// 回归：*.info 曾被当成前缀 ".info" 处理，导致群配置全部读不到。
+$g = new \Core\Store\FileStore($dir = sys_get_temp_dir() . '/wb-glob-' . bin2hex(random_bytes(4)));
+$g->set('123456.info', ['status' => 1]);
+$g->set('abc.info', ['status' => 0]);
+$g->set('webui:groups', ['1' => ['name' => 'x']]);
+$ok('后缀通配 *.info', count($g->keys('*.info')) === 2);
+$ok('后缀通配结果正确', in_array('123456.info', $g->keys('*.info'), true));
+$ok('前缀通配 123*', $g->keys('123*') === ['123456.info']);
+$ok('中间通配 webui:*', in_array('webui:groups', $g->keys('webui:*'), true));
+$ok('全通配不遗漏', count($g->keys('*')) === 3);
+@unlink($dir . '/probe');
+
+echo "== Config: 写回（回归） ==\n";
+// 回归 1：替换串用了字面量前缀，把 "debug = true" 写成了 "1false"。
+// 回归 2：只按键名替换，会改到同名键所在的其它小节。
+$cfg = \Core\Config::path();
+$backup = is_file($cfg) ? \Core\Fs::read($cfg) : null;
+try {
+    $src = "\n[app]\ndebug = true\nname = app1\n\n[probe]\ndebug = keep\n";
+    \Core\Fs::write($cfg, $src);
+    \Core\Config::refresh();
+    $ok('写入返回 true', \Core\Config::set('app.debug', false) === true);
+    \Core\Config::refresh();
+    $ok('布尔值被读回为 false', \Core\Config::bool('app.debug') === false);
+    $ok('同名键未被误改', \Core\Config::string('probe.debug') === 'keep');
+    $head = \Core\Fs::read($cfg);
+    $ok('未被写成 "1false"', !str_contains($head, '1false'));
+    $ok('行格式保持 "键 = 值"', (bool)preg_match('/^debug = false$/m', $head));
+} finally {
+    if ($backup !== null) { \Core\Fs::write($cfg, $backup); \Core\Config::refresh(); }
+}
+
 echo $fail === 0 ? "\n全部通过\n" : "\n失败 {$fail} 项\n";
 exit($fail === 0 ? 0 : 1);

@@ -57,7 +57,7 @@ final class FileStore implements Store {
                 continue;
             }
             $key = $record['key'] ?? null;
-            if (is_string($key) && ($prefix === '*' || $prefix === '' || str_starts_with($key, rtrim($prefix, '*')))) {
+            if (is_string($key) && $this->match($key, $prefix)) {
                 $out[] = $key;
             }
         }
@@ -122,6 +122,23 @@ final class FileStore implements Store {
     private function zset(string $key): array {
         $set = $this->get($key . ':z');
         return is_array($set) ? $set : [];
+    }
+
+    /**
+     * 通配匹配：`*` 可出现在任意位置（前缀 / 后缀 / 中间）。
+     *
+     * 早期实现把 `*.info` 当成前缀 `.info` 做 str_starts_with，
+     * 于是 `123456.info` 永远匹配不上 —— 群列表因此一直是空的。
+     */
+    private function match(string $key, string $pattern): bool {
+        if ($pattern === '' || $pattern === '*') {
+            return true;
+        }
+        if (!str_contains($pattern, '*')) {
+            return $key === $pattern || str_starts_with($key, $pattern);
+        }
+        $regex = '/^' . str_replace('\\*', '.*', preg_quote($pattern, '/')) . '$/u';
+        return (bool)preg_match($regex, $key);
     }
 
     private function path(string $key): string {

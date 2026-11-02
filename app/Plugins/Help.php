@@ -9,7 +9,6 @@ use App\BaseApp;
 use Controller\Router;
 use Controller\Attr\Rule;
 use Utils\CoroutineCurl as curl;
-use function Swoole\Coroutine\go;
 
 /**
  * @name help

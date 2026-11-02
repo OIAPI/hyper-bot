@@ -76,6 +76,25 @@ final class Container {
         $this->instances[$id] = $value;
     }
 
+    /** 移除单个绑定（含已解析的实例/工厂） */
+    public function forget(string $id): void {
+        unset($this->bindings[$id], $this->factories[$id], $this->instances[$id], $this->resolved[$id]);
+    }
+
+    /** 移除某个前缀下的全部绑定（用于「清空 API 实例缓存」这类批量操作） */
+    public function forgetPrefix(string $prefix): int {
+        $count = 0;
+        foreach (['bindings', 'factories', 'instances', 'resolved'] as $bucket) {
+            foreach (array_keys($this->{$bucket}) as $id) {
+                if (str_starts_with((string)$id, $prefix)) {
+                    unset($this->{$bucket}[$id]);
+                    $count++;
+                }
+            }
+        }
+        return $count;
+    }
+
     public function reset(): void {
         $this->bindings = [];
         $this->factories = [];

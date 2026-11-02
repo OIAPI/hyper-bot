@@ -1,7 +1,6 @@
 <?php
 namespace App\Plugins;
 
-use Swoole\Timer;
 use Utils\Logger;
 use Utils\Utils;
 use Utils\Cache;

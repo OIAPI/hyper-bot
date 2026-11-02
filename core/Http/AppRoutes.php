@@ -1,0 +1,146 @@
+<?php
+namespace Core\Http;
+
+use Core\Bot\Subscription;
+use Core\Config;
+use Core\Http\Request;
+use Core\Http\Response;
+use Core\Runtime;
+use Core\Version;
+use Protocol\Milky\EventClient as MilkyClient;
+use Protocol\QqBot\Webhook as QqBotWebhook;
+use Protocol\QqBot\EventClient as QqBotClient;
+use Protocol\OneBot\WsHub;
+
+/**
+ * 应用 HTTP 路由（v2）：统一挂载 WebUI、协议 Webhook、公开状态端点。
+ *
+ * v1 有两套互不相通的路由体系：
+ *   - `Utils\Route`（注解扫描，给旧业务用，靠全局 Cache 传参）
+ *   - `Core\Http\Router`（内核路由，只有 WebUI 用）
+ * 结果是协议 Webhook 端点长在旧体系里（`App\Controller\Protocol`，靠注解 + 全局 Cache），
+ * 而 WebUI 长在新体系里；同一台服务器上两套中间件、两套错误处理。
+ *
+ * v2 把协议端点也迁到内核路由上，旧注解体系保留作为「用户自己的 API」的兼容层。
+ * 协议端点全部走显式签名（Request → Response），不再依赖 Cache::get('param')。
+ */
+final class AppRoutes
+{
+    /**
+     * @param bool $acceptEvents 是否接受协议事件。
+     *   webui-only 架构必须传 false：这时连路由都不该注册，
+     *   否则请求会命中路由（返回 200 accepted），协议端会以为投递成功，
+     *   而实际上没有任何业务被执行 —— 这是最坏的静默失败。
+     */
+    public static function register(Router $router, bool $acceptEvents = true): void
+    {
+        // ---- 协议接入端点（仅在有事件处理能力时注册）----
+        if ($acceptEvents) {
+            $router->post('/api/protocol/webhook', static fn(Request $req): Response => self::oneBotWebhook($req), 'protocol.onebot.webhook');
+            $router->post('/api/protocol/milky/webhook', static fn(Request $req): Response => self::milkyWebhook($req), 'protocol.milky.webhook');
+            $router->post('/api/protocol/qqbot/webhook', static fn(Request $req): Response => self::qqbotWebhook($req), 'protocol.qqbot.webhook');
+        }
+        $router->get('/api/protocol/status', static fn(Request $req): Response => self::protocolStatus($req), 'protocol.status');
+        $router->get('/api/health', static fn(Request $req): Response => self::health($req), 'api.health');
+    }
+
+    // ---------------- OneBot11 HTTP 推送 ----------------
+
+    private static function oneBotWebhook(Request $req): Response
+    {
+        $event = $req->params();
+        if (!isset($event['post_type'])) {
+            return Response::fail('缺少 post_type', -1, 400);
+        }
+        \Protocol\Core\EventDispatcher::dispatch($event, new \Protocol\OneBot\Adapter());
+        return Response::json(['status' => 'ok', 'retcode' => 0, 'data' => ['status' => 'accepted']]);
+    }
+
+    // ---------------- Milky Webhook ----------------
+
+    private static function milkyWebhook(Request $req): Response
+    {
+        $expect = Config::string('protocol.milky.token', '');
+        if ($expect !== '') {
+            $auth = $req->header('authorization');
+            $token = str_starts_with(strtolower($auth), 'bearer ') ? trim(substr($auth, 7)) : '';
+            if ($token === '' || !hash_equals($expect, $token)) {
+                return Response::fail('unauthorized', -1, 401);
+            }
+        }
+
+        $result = MilkyClient::handleEvent($req->params(), 'webhook');
+        return Response::json($result);
+    }
+
+    // ---------------- QQ 官方机器人 Webhook ----------------
+
+    private static function qqbotWebhook(Request $req): Response
+    {
+        $payload = $req->params();
+
+        // op=13：回调地址验证（协议端要求原样返回 plain_token + signature）
+        if ((int)($payload['op'] ?? -1) === 13) {
+            return Response::json(QqBotWebhook::validation($payload));
+        }
+
+        if (Config::bool('protocol.qqbot.webhook.verify', true)) {
+            $secret = Config::string('protocol.qqbot.client_secret', '');
+            if ($secret === '') {
+                return Response::json(['code' => -1, 'message' => 'client_secret 未配置，无法校验签名']);
+            }
+            if (!function_exists('sodium_crypto_sign_verify_detached')) {
+                return Response::json(['code' => -1, 'message' => '缺少 ext-sodium 扩展，无法校验签名']);
+            }
+            if (!QqBotWebhook::verify($req->headers, $req->rawBody)) {
+                return Response::fail('signature verification failed', -1, 401);
+            }
+        }
+
+        QqBotClient::handlePayload($payload, 'webhook');
+        return Response::json(['op' => 12, 'd' => new \stdClass()]);
+    }
+
+    // ---------------- 状态 ---------------- ------------------------------------------------------------------
+
+    private static function protocolStatus(Request $req): Response
+    {
+        $runtime = \Core\App::boot()->runtime;
+        return Response::json([
+            'runtime' => [
+                'mode'       => $runtime->mode,
+                'label'      => $runtime->label(),
+                'degraded'   => $runtime->degraded,
+                'reason'     => $runtime->reason,
+                'limitations'=> $runtime->limitations(),
+            ],
+            'onebot' => [
+                'enable'   => Config::bool('protocol.onebot.enable', false),
+                'forward'  => ['running' => WsHub::hasForward(), 'url' => WsHub::forwardUrl()],
+                'reverse'  => ['sessions' => WsHub::reverseCount()],
+            ],
+            'milky' => [
+                'enable' => Config::bool('protocol.milky.enable', false),
+                'api'    => Config::string('protocol.milky.api', ''),
+                'event'  => MilkyClient::status(),
+            ],
+            'qqbot' => [
+                'enable'  => Config::bool('protocol.qqbot.enable', false),
+                'api'     => Config::string('protocol.qqbot.api', ''),
+                'gateway' => QqBotClient::status(),
+            ],
+        ]);
+    }
+
+    private static function health(Request $req): Response
+    {
+        $app = \Core\App::boot();
+        return Response::json([
+            'ok'       => true,
+            'version'  => Version::current(),
+            'runtime'  => $app->runtime->mode,
+            'store'    => get_class($app->store),
+            'time'     => date('c'),
+        ]);
+    }
+}

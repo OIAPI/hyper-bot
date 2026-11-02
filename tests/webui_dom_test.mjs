@@ -105,7 +105,7 @@ ok('登录 API 成功', res.status === 200 && payload.code === 1, JSON.stringify
 ok('下发了会话 Cookie', cookieJar.startsWith('wb_session='), cookieJar.slice(0, 40));
 
 // ---------- 3. 每个视图在真实 DOM 中渲染 ----------
-const views = ['overview','groups','plugins','protocols','logs','messages','settings','system'];
+const views = ['overview','groups','plugins','protocols','subscription','runtime','logs','messages','settings','system'];
 for (const name of views) {
   const mod = await loadModule('assets/views/' + name + '.js');
   const box = window.document.createElement('div');
@@ -125,6 +125,16 @@ for (const name of views) {
     }
     if (name === 'protocols') {
       ok('协议页三个协议', ['OneBot11','Milky','QQ'].every(s => text.includes(s)), text.slice(0, 80));
+    }
+    if (name === 'runtime') {
+      // 三个架构都必须出现在页面上，且当前架构被标记
+      ok('架构页列出三种架构', ['swoole','php','webui'].every(s => text.includes(s)), text.slice(0, 90));
+      ok('架构页标注当前', /当前/.test(text));
+    }
+    if (name === 'subscription') {
+      ok('订阅页有事件类型', ['消息事件','通知事件','请求事件'].every(s => text.includes(s)), text.slice(0, 90));
+      ok('订阅页有消息范围', /消息范围/.test(text));
+      ok('订阅页有保存按钮', /保存订阅/.test(text));
     }
   } catch (e) {
     ok('视图 ' + name + ' 渲染', false, String(e && e.message || e));

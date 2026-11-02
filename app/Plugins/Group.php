@@ -9,8 +9,8 @@ use Utils\Logger;
 use Utils\Utils;
 
 /**
- * @name help
- * @description 群的一些操作
+ * @name group
+ * @description 群的一些操作（入群欢迎、退群通知、同意/拒绝请求）
  * @author oiapi
  * @lastUpdate 2025-01-01
  * @cover 图标

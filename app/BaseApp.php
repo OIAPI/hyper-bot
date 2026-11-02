@@ -1,230 +1,265 @@
 <?php
 namespace App;
 
-use Swoole\Timer;
-use Utils\Env;
-use Utils\Logger;
-use Utils\Cache;
+use Core\Bot\Context;
+use Core\Bot\Event;
+use Core\Store\StoreBridge;
 use Controller\Api;
-use Controller\Router;
 use Controller\Enum\PermRule;
-use Redis;
+use Core\Log\Logger;
 
 /**
- * 插件统一基础类
- * 优化Redis连接、初始化逻辑及性能
+ * 插件基类（v2）：插件作者唯一需要接触的父类。
+ *
+ * 和老版本相比，插件**写法完全不变**：
+ *
+ *   class demo extends \App\BaseApp {
+ *       #[\Controller\Attr\Rule('/^hello$/')]
+ *       public function hello() {
+ *           return $this->api->message->sendMsg(group: $this->group, message: 'hi');
+ *       }
+ *   }
+ *
+ * 变的是这些属性的来源：
+ *
+ *   $this->input    ← Context 里的 Event（不再是 Cache::get('param') 的裸 stdClass）
+ *   $this->api      ← Controller\Api（容器委托，支持无 Redis 环境）
+ *   $this->Redis    ← StoreBridge（长得像 Redis，实际是 Core\Store）
+ *   $this->qq/group ← Event 的类型化访问器（官方机器人的 OpenID 是字符串，v1 会崩）
+ *
+ * v1 的致命点：
+ *   - 构造函数里 `new \Redis(); pconnect()` → 没装扩展直接 fatal；
+ *   - `$this->redisSelect = Env::get('Redis.select')` 但没 select，读写落到 0 库；
+ *   - `$this->input = Cache::get('param')` 在定时任务里为 null，随后 `->sender` 就报错；
+ *   - ID 用 `string|float|int` 但处处于 0 / 数字比较，OpenID 字符串会被当成 0。
  */
 abstract class BaseApp {
-	// 核心属性：统一管理公共资源
-	protected Redis $redis;		  // Redis实例（确保非null）
-	protected object $input;		 // 输入参数（缓存的请求参数）
-	protected Api $api;			  // 外部API实例
-	// ID 使用 string|float|int：QQ 号/群号是数字，QQ 官方机器人则是 OpenID 字符串
-	protected string|float|int $qq = 0;		 // 当前用户 QQ / OpenID
-	protected string|float|int $group = 0;	  // 当前群号 / group_openid
-	protected ?string $nickname = '';// 当前用户昵称
-	protected ?string $raw = '';	 // 原始消息（已转义）
-	protected object $sender;		// 发送者信息
-	protected string $redisSelect;	 // Redis数据库编号（避免重复读取配置）
-	protected string|float|int $message_id = 0; // 消息 ID（Milky 为 message_seq，官方机器人为字符串）
+	/** 存储门面（Redis 风格） */
+	protected StoreBridge $redis;
+	/** 当前事件 */
+	protected Event $input;
+	/** API 容器 */
+	protected Api $api;
+
+	/** 当前用户 QQ / OpenID */
+	protected string|float|int $qq = 0;
+	/** 当前群号 / group_openid（私聊事件为 0） */
+	protected string|float|int $group = 0;
+	protected ?string $nickname = '';
+	protected ?string $raw = '';
+	protected object $sender;
+	protected string|float|int $message_id = 0;
 	protected int $reaction = 66;
-	use \Controller\Traits\Worker;
 
+	public function __construct(public mixed $app = null)
+	{
+		$store = \Core\App::boot()->container->get(\Core\Store\Store::class);
+		$this->redis = new StoreBridge($store);
+		$this->api = Api::getInstance();
 
-	/**
-	 * 构造函数：统一初始化所有基础资源
-	 * @param mixed $app 业务应用实例（兼容原app类参数）
-	 */
-	public function __construct(public $app) {
-		// 1. 初始化基础依赖（优先复用缓存中的实例）
-		$this->input = Cache::get('param');
-		$this->api = Cache::get('api');
-		$this->sender = $this->input->sender ?? new \stdClass();
-		$this->message_id = $this->input->message_id ?? 0;
-		$this->redisSelect = Env::get('Redis.select');
+		$context = Context::current();
+		$this->input = $context?->event ?? Event::fromArray(['post_type' => '']);
+		$this->sender = (object)$this->input->sender();
 
-		// 2. 初始化Redis（单例复用，避免重复连接）
-		$this->initRedis();
+		// 消息 ID：Milky 给 message_seq、官方机器人给字符串，统一按标量存
+		$messageId = $this->input->get('message_id') ?? $this->input->get('message_seq') ?? 0;
+		$this->message_id = is_scalar($messageId) ? $messageId : 0;
 
-		// 3. 初始化用户/群相关信息
 		$this->initUserInfo();
-		// $this->initGroupInfoIfNeed();
-
-		// 4. 初始化用户权限（延迟到首次使用时执行，提升性能）
 		$this->lazyInitUserPermission();
-		
-		$this->initSetGroupReaction();
 	}
 
-
 	/**
-	 * Redis初始化：复用缓存实例+单例连接，避免重复auth/select
+	 * 初始化用户/群/原始消息
 	 */
-	protected function initRedis(): void {
-		// 优先复用Cache中的Redis实例
-		if (Cache::$api->Redis instanceof Redis && Cache::$api->Redis->isConnected()) {
-			$this->redis = Cache::$api->Redis;
-		} else {
-			// 新建连接（使用pconnect长连接，提升性能）
-			$this->redis = new Redis();
-			$this->redis->pconnect(
-				Env::get('Redis.host'),
-				Env::get('Redis.port'),
-				3 // 连接超时时间（秒）
-			);
-			// 仅当有密码时执行auth（避免无效操作）
-			$auth = Env::get('Redis.auth');
-			if (!empty($auth)) {
-				$this->redis->auth($auth);
-			}
-			Cache::$api->Redis = $this->redis; // 存入缓存，供后续复用
-		}
+	protected function initUserInfo(): void
+	{
+		$this->qq = $this->input->userId() ?: 0;
+		$this->group = $this->input->groupId() ?: 0;
+		$this->nickname = $this->input->nickname();
 
-		// 切换到指定数据库（仅当当前库不匹配时执行）
-		if ($this->redis->getDbNum() != $this->redisSelect) {
-			$this->redis->select($this->redisSelect);
+		// 原始消息：走 Api\message::escape，但该能力不可用时不能拖垮插件
+		$raw = $this->input->get('raw_message', '');
+		$raw = is_string($raw) ? $raw : '';
+		try {
+			$this->raw = $this->api->message->escape($raw, false);
+		} catch (\Throwable $e) {
+			$this->raw = $raw;
+			Logger::debug('[插件] escape 不可用，使用原始消息：' . $e->getMessage());
 		}
 	}
 
-
 	/**
-	 * 初始化用户信息（QQ、昵称、原始消息）
+	 * 首次使用时把用户角色写入存储（v1 语义：群成员角色即默认权限）
 	 */
-	protected function initUserInfo(): void {
-		$this->qq = $this->input->user_id ?? 0;
-		$this->group = $this->input->group_id ?? 0;
-
-		// 昵称优先级：群名片 > 好友昵称 > 空字符串
-		$this->nickname = $this->sender->card ?? $this->sender->nickname ?? '';
-
-		// 原始消息转义（兼容空消息场景）
-		$rawMsg = $this->input->raw_message ?? '';
-		$this->raw = $this->api->message->escape($rawMsg, false);
-	}
-
-
-	/**
-	 * 延迟初始化用户权限：仅当用户存在时执行，避免无效Redis操作
-	 */
-	protected function lazyInitUserPermission(): void {
-		// 无用户ID时跳过初始化
-		if (empty($this->qq) || !isset($this->sender->role)) {
+	protected function lazyInitUserPermission(): void
+	{
+		$qq = (string)$this->qq;
+		$role = $this->input->role();
+		if ($qq === '' || $role === '') {
 			return;
 		}
-
-		$permKey = "memberPermission.{$this->qq}";
-		// 仅当Redis中无权限记录时，初始化并缓存
-		if (!$this->redis->exists($permKey)) {
-			$this->redis->set($permKey, $this->sender->role);
-			Logger::success("[权限初始化] 用户{$this->qq}角色：{$this->sender->role}");
+		$key = "memberPermission.{$qq}";
+		if (!$this->redis->exists($key)) {
+			$this->redis->set($key, $role);
 		}
 	}
 
+	// ---------------------- 权限 ----------------------
 
-	/**
-	 * 按需初始化群信息：仅当群号有效时执行
-	 */
-	protected function initGroupInfoIfNeed(): void {
-		if ($this->group > 0) {
-			$this->initGroupInfo($this->group);
-		}
-	}
-	
-	protected function initSetGroupReaction() {
-	}
-
-
-	// ---------------------- 权限相关方法 ----------------------
-	/**
-	 * 权限比较：判断用户权限是否满足要求
-	 * @param string|int|PermRule $userPerm 用户当前权限
-	 * @param string|int|PermRule $requiredPerm 所需权限
-	 * @return bool 满足返回true，否则false
-	 */
-	public function comparePermission(string|int|PermRule $userPerm, string|int|PermRule $requiredPerm): bool {
+	public function comparePermission(string|int|PermRule $userPerm, string|int|PermRule $requiredPerm): bool
+	{
 		$userPerm = $this->PermRule($userPerm);
-		
-		if($userPerm === PermRule::SUPER) return true;
-		
-		$requiredPerm = $this->PermRule($requiredPerm);
-		$userPermValue = $userPerm->getValue();
-		$requiredPermValue = $requiredPerm->getValue();
-		// 位运算逻辑：(用户权限 & 所需权限) === 所需权限 → 表示用户权限包含所需权限
-		return ($userPermValue & $requiredPermValue) === $requiredPermValue;
+		if ($userPerm === PermRule::SUPER) {
+			return true;
+		}
+		$required = $this->PermRule($requiredPerm);
+		$userValue = $userPerm->getValue();
+		$requiredValue = $required->getValue();
+		return ($userValue & $requiredValue) === $requiredValue;
 	}
 
-
-	/**
-	 * 权限名称转数字（基于PermRule枚举，统一格式）
-	 * @param string|int|PermRule $perm 权限（名称/数字）
-	 * @return PermRule 权限角色
-	 */
 	public function PermRule(string|int|PermRule $perm): PermRule
 	{
-		if($perm instanceof PermRule) return $perm;
-		if (is_string($perm)) {
-			$perm = strtolower(trim($perm));
+		if ($perm instanceof PermRule) {
+			return $perm;
 		}
-		return PermRule::getByPerm($perm);
+		return PermRule::getByPerm(is_string($perm) ? strtolower(trim($perm)) : $perm);
 	}
 
-	/**
-	 * 获取用户权限（从Redis缓存读取）
-	 * @param string|float|int $userQQ 用户QQ / OpenID
-	 * @return string|int 权限（名称/数字）
-	 */
-	public function getUserPermission(string|float|int $userQQ): PermRule {
-		$permKey = "memberPermission.{$userQQ}";
-		return PermRule::getByPerm($this->redis->exists($permKey) ? $this->redis->get($permKey) : 'default');
+	public function getUserPermission(string|float|int $userQQ): PermRule
+	{
+		$key = "memberPermission.{$userQQ}";
+		$value = $this->redis->exists($key) ? $this->redis->get($key) : 'default';
+		return PermRule::getByPerm((string)$value);
 	}
 
+	// ---------------------- 群信息 ----------------------
 
-	// ---------------------- 工具方法 ----------------------
+	/** 群是否开启（status === 1） */
+	public function groupStatus(string|float|int $group): bool
+	{
+		return ($this->getGroupInfo($group)->status ?? 0) === 1;
+	}
+
+	/** 读取群配置（worker 列表 = 各插件是否启用） */
+	public function getGroupInfo(string|float|int $group): object
+	{
+		$key = "{$group}.info";
+		$raw = $this->redis->get($key);
+		if ($raw !== false) {
+			$data = json_decode((string)$raw);
+			if (is_object($data)) {
+				if (empty($data->worker)) {
+					$data->worker = $this->scanWorkerList();
+					$this->redis->set($key, json_encode($data, 320));
+				}
+				return $data;
+			}
+		}
+
+		$data = (object)['status' => 0, 'worker' => $this->scanWorkerList()];
+		$this->redis->set($key, json_encode($data, 320));
+		return $data;
+	}
+
+	public function initGroupInfo(string|float|int $group, bool $isArray = false): object|array
+	{
+		$key = "{$group}.info";
+		$status = 0;
+		$worker = [];
+
+		$raw = $this->redis->get($key);
+		if ($raw !== false) {
+			$old = json_decode((string)$raw, true);
+			if (is_array($old)) {
+				$status = $old['status'] ?? 0;
+				$worker = (array)($old['worker'] ?? []);
+			}
+		}
+
+		$workerMap = $this->scanWorkerList();
+		foreach ($worker as $name => $enabled) {
+			if (array_key_exists($name, $workerMap)) {
+				$workerMap[$name] = $enabled;
+			}
+		}
+
+		$info = ['status' => $status, 'worker' => $workerMap];
+		$this->redis->set($key, json_encode($info, JSON_UNESCAPED_UNICODE));
+		return $isArray ? $info : (object)$info;
+	}
+
+	public function updateGroupInfo(string|float|int $group, object|array $info): bool
+	{
+		$key = "{$group}.info";
+		$info = is_object($info) ? (array)$info : $info;
+		$info['status'] = $info['status'] ?? 0;
+		$info['worker'] = $info['worker'] ?? [];
+		$ok = $this->redis->set($key, json_encode($info, JSON_UNESCAPED_UNICODE));
+		// 群配置变了：让插件注册表失效
+		\Core\App::boot()->container->get(\Core\Bot\Registry::class)->invalidate();
+		return (bool)$ok;
+	}
+
+	/** 全部可用的插件类（v1 的 Router::scanAppClasses 替代品） */
+	public function scanWorkerList(): array
+	{
+		$registry = \Core\App::boot()->container->get(\Core\Bot\Registry::class);
+		$list = [];
+		foreach ($registry->plugins() as $plugin) {
+			$list[$plugin['class']] = true;
+		}
+		return $list;
+	}
+
+	// ---------------------- 工具 ----------------------
+
 	/**
-	 * 延迟删除消息（基于Swoole Timer）
-	 * @param string|float|int $msgId 消息ID
-	 * @param float $delay 延迟时间（秒，默认2秒）
+	 * 延迟删除消息。
+	 *
+	 * v1 用 `Swoole\Timer::after`，没有 Swoole 时直接抛错。
+	 * v2 交给 Core\Scheduler：Swoole 下就是 Timer::after，
+	 * PHP 模式下降级为「注册到延迟队列，由轮询 worker 到点执行」。
 	 */
-	protected function del(string|float|int $msgId, float $delay = 2): void {
-		Timer::after((int)($delay * 1000), function () use ($msgId) {
+	protected function del(string|float|int $msgId, float $delay = 2): void
+	{
+		\Core\Scheduler::after($delay, function () use ($msgId): void {
 			try {
 				$this->api->message->deleteMsg($msgId);
-				Logger::success("[消息删除] 延迟{$delay}秒删除消息ID：{$msgId}");
-			} catch (\Exception $e) {
+				Logger::success("[消息删除] 延迟后删除消息ID：{$msgId}");
+			} catch (\Throwable $e) {
 				Logger::error("[消息删除失败] ID:{$msgId}，原因：{$e->getMessage()}");
 			}
 		});
 	}
 
-
-	/**
-	 * 检测是否为好友（优化：优先读缓存，无缓存再调用API）
-	 * @param string|float|int|null $qq 目标账号（QQ 号或 QQ 官方 OpenID，默认当前用户）
-	 * @return bool 是否为好友
-	 */
-	protected function isFriend(string|float|int|null $qq = null): bool {
+	/** 是否好友（优先读缓存） */
+	protected function isFriend(string|float|int|null $qq = null): bool
+	{
 		$qq = $qq ?? $this->qq;
-		// 仅对数字 ID 做「<= 0」合法性判断（OpenID 是字符串，不能参与数值比较）
-		if (is_numeric($qq) && (float)$qq <= 0) return false;
-		if ($qq === '' || $qq === null) return false;
-
-		// 1. 优先读取缓存的好友列表
-		$friendCacheKey = "{$this->input->self_id}.friend.list";
-		if ($this->redis->exists($friendCacheKey)) {
-			$friendList = json_decode($this->redis->get($friendCacheKey), true);
-			return in_array($qq, $friendList, true); // 严格匹配类型
+		if ($qq === '' || $qq === null) {
+			return false;
 		}
-		// 2. 缓存不存在，调用API获取并缓存
-		$res = $this->api->friend->getFriendList();
-		if (empty($res->data)) return false;
 
-		$friendList = array_column($res->data, 'user_id');
-		$this->redis->set($friendCacheKey, json_encode($friendList));
-		return in_array($qq, $friendList, true);
+		$key = "{$this->input->selfId()}.friend.list";
+		$cached = $this->redis->get($key);
+		if ($cached !== false) {
+			$list = json_decode((string)$cached, true);
+			return is_array($list) && in_array($qq, $list, false);
+		}
+
+		$res = $this->api->friend->getFriendList();
+		$list = array_column((array)($res->data ?? []), 'user_id');
+		$this->redis->set($key, json_encode($list));
+		return in_array($qq, $list, false);
 	}
-	public function __get($key) {
-		return match($key) {
-			'Redis' => $this->redis
+
+	public function __get(string $key): mixed
+	{
+		return match ($key) {
+			'Redis' => $this->redis,
+			default => null,
 		};
 	}
 }

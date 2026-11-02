@@ -11,6 +11,8 @@ import * as overviewView from './views/overview.js';
 import * as groupsView from './views/groups.js';
 import * as pluginsView from './views/plugins.js';
 import * as protocolsView from './views/protocols.js';
+import * as runtimeView from './views/runtime.js';
+import * as subscriptionView from './views/subscription.js';
 import * as messagesView from './views/messages.js';
 import * as logsView from './views/logs.js';
 import * as settingsView from './views/settings.js';
@@ -23,6 +25,8 @@ const ROUTES = [
   { path: '/plugins',   title: '插件',     group: '业务', icon: '◈', view: pluginsView },
   { path: '/messages',  title: '消息记录', group: '业务', icon: '✉', view: messagesView },
   { path: '/protocols', title: '协议接入', group: '接入', icon: '⇄', view: protocolsView },
+  { path: '/subscription', title: '消息订阅', group: '接入', icon: '◫', view: subscriptionView },
+  { path: '/runtime',   title: '运行架构', group: '接入', icon: '⧉', view: runtimeView },
   { path: '/logs',      title: '日志',     group: '运维', icon: '☰', view: logsView },
   { path: '/settings',  title: '配置',     group: '运维', icon: '⚙', view: settingsView },
   { path: '/system',    title: '系统',     group: '运维', icon: '⌗', view: systemView },

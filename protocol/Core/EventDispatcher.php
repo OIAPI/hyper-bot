@@ -1,108 +1,92 @@
 <?php
 namespace Protocol\Core;
 
-use Utils\Cache;
+use Core\App;
+use Core\Bot\Event;
 use Utils\Logger;
 use Utils\MessageLog;
-use Utils\Env;
 
 /**
- * 统一事件分发器：把「标准 OneBot11 事件数组」分发给既有 Trigger 控制器。
+ * 协议层事件入口（v2）：把各协议送来的一事件转交给 `Core\Bot\Dispatcher`。
  *
- * 使用场景：
- *  - Webhook 入站（Milky / QQ 官方机器人）——协议端推送 JSON，本类构造上下文并分发；
- *  - WebSocket 入站（OneBot 正向/反向、Milky WS、QQ 官方 Gateway）——同上。
+ * 这个类保留下来只是为了**不动 5 个调用点**：
+ *   app/Controller/Protocol.php::webhook
+ *   protocol/Milky/EventClient.php
+ *   protocol/OneBot/WsHub.php
+ *   protocol/QqBot/EventClient.php（两处）
  *
- * 注意：一切事件最终都会被转换成 OneBot11 事件结构，以保证既有插件零改动可用。
+ * v1 的实现在这里做了四件事（现在全部下移到 v2 内核）：
+ *   1. 读 Config.ini [type] 过滤      → Core\Bot\Subscription
+ *   2. 写 MessageLog 落库             → 这里保留（属于审计，不是业务）
+ *   3. 开子协程 + Cache::set 上下文   → Core\Bot\Context::run（自动压栈出栈）
+ *   4. new \Controller\Trigger\*   → Core\Bot\Dispatcher（注册表匹配 + 权限）
+ *
+ * 返回值仍是 OneBot11 的 {"status":"ok","retcode":0,...}，因为调用方会把它
+ * 直接回给协议端（Webhook 需要立即 200，否则协议端会重投）。
  */
-class EventDispatcher {
-	/** 允许处理的触发类型（与 Config.ini [type] 保持一致） */
-	private static function allowedTypes(): array {
-		$types = Env::get('type', []);
-		$allowed = [];
-		foreach ((array)$types as $key => $value) {
-			if ($value === true || (is_numeric($value) && (int)$value === 1) || $value === '1') {
-				$allowed[] = ucwords(strtolower((string)$key));
-			}
-		}
-		return $allowed;
-	}
+class EventDispatcher
+{
+    /**
+     * 分发一条标准 OneBot11 事件。
+     *
+     * @param array $event 标准事件
+     * @param Adapter|null $adapter 事件来源（决定插件发消息的去向）
+     * @param callable|null $responder 处理完成后的回调（Webhook 用它写响应）
+     * @return array OneBot11 风格的成功应答
+     */
+    public static function dispatch(array $event, ?Adapter $adapter = null, ?callable $responder = null): array
+    {
+        $event = self::normalize($event);
+        $postType = ucwords(strtolower((string)($event['post_type'] ?? '')));
 
-	/**
-	 * 分发一条标准 OneBot11 事件
-	 * @param array $event 标准事件
-	 * @param Adapter|null $adapter 事件来源适配器（决定后续 API 转发去向）
-	 * @param callable|null $responder 可选：事件处理完成后的回调（参数：响应数组）
-	 * @return array 响应数组（成功 {"status":"ok","retcode":0,...}）
-	 */
-	public static function dispatch(array $event, ?Adapter $adapter = null, ?callable $responder = null): array {
-		$event = self::normalize($event);
-		$postType = ucwords(strtolower((string)($event['post_type'] ?? '')));
+        if ($postType === '') {
+            Logger::warning('[事件分发] 缺少 post_type，已忽略：' . substr(json_encode($event, JSON_UNESCAPED_UNICODE), 0, 200));
+            return self::accepted();
+        }
 
-		if ($postType === '') {
-			Logger::warning('[事件分发] 缺少 post_type，已忽略：' . substr(json_encode($event, JSON_UNESCAPED_UNICODE), 0, 200));
-			return self::accepted();
-		}
+        // 审计落库：在订阅过滤之前写，保证「被丢弃的事件」也能在 WebUI 里查到，
+        // 这是排查「为什么我的插件没触发」最直接的证据。
+        try {
+            MessageLog::write($event, strtolower($postType));
+        } catch (\Throwable $e) {
+            Logger::error('[事件分发] 消息落库失败：' . $e->getMessage());
+        }
 
-		// 订阅类型过滤（[type] 段）
-		$allowed = self::allowedTypes();
-		if ($allowed !== [] && !in_array($postType, $allowed, true)) {
-			Logger::debug("[事件分发] 类型 {$postType} 未订阅，已忽略");
-			return self::accepted();
-		}
+        try {
+            $app = App::boot();
+            $result = $app->dispatcher->dispatch(Event::fromArray($event), $adapter);
+            Logger::debug('[事件分发] ' . json_encode($result, JSON_UNESCAPED_UNICODE));
+        } catch (\Throwable $e) {
+            Logger::error("[事件分发] {$postType} 处理异常：{$e->getMessage()} | {$e->getFile()}:{$e->getLine()}");
+        } finally {
+            if ($responder !== null) {
+                try {
+                    $responder(self::accepted());
+                } catch (\Throwable $e) {
+                    Logger::error('[事件分发] 响应回调异常：' . $e->getMessage());
+                }
+            }
+        }
 
-		MessageLog::write($event, $postType);
+        return self::accepted();
+    }
 
-		// 触发控制器
-		$class = "\\Controller\\Trigger\\{$postType}";
-		if (!class_exists($class)) {
-			Logger::warning("[事件分发] 控制器不存在：{$class}");
-			return self::accepted();
-		}
+    /** 补齐公共字段（协议端不一定都带） */
+    public static function normalize(array $event): array
+    {
+        $event['time']        ??= time();
+        $event['self_id']     ??= 0;
+        $event['post_type']   ??= '';
+        $event['raw_message'] ??= '';
+        return $event;
+    }
 
-		// 子协程默认不继承父协程上下文，显式恢复 HTTP 请求级快照后再覆盖事件相关字段
-		$snapshot = Cache::snapshot();
-		\Swoole\Coroutine::create(function () use ($class, $postType, $event, $adapter, $responder, $snapshot) {
-			try {
-				Cache::restore($snapshot);
-				// 协程内隔离上下文：请求参数 + 事件来源适配器 + 响应器
-				Cache::set('param', (object)$event);
-				Cache::set('adapter', $adapter ?? new HttpAdapter());
-				// 事件处理过程中没有 HTTP 响应对象（Webhook 的响应由路由回调直接返回），
-				// 因此统一使用空响应器，避免误用上一个请求残留的 RequestHandler。
-				Cache::set('server', new NullResponder());
-				$controller = new $class();
-				Logger::debug("[事件分发] 已处理 {$postType} 事件");
-			} catch (\Throwable $e) {
-				Logger::error("[事件分发] {$postType} 处理异常：{$e->getMessage()} | {$e->getFile()}:{$e->getLine()}");
-			} finally {
-				if ($responder) {
-					try {
-						$responder(self::accepted());
-					} catch (\Throwable $e) {
-						Logger::error('[事件分发] 响应回调异常：' . $e->getMessage());
-					}
-				}
-			}
-		});
-
-		return self::accepted();
-	}
-
-	/** 补齐公共字段 */
-	public static function normalize(array $event): array {
-		$event['time']   ??= time();
-		$event['self_id'] ??= 0;
-		$event['post_type'] ??= '';
-		$event['raw_message'] ??= '';
-		return $event;
-	}
-
-	private static function accepted(): array {
-		return [
-			'status'  => 'ok',
-			'retcode' => 0,
-			'data'    => ['status' => 'accepted'],
-		];
-	}
+    private static function accepted(): array
+    {
+        return [
+            'status'  => 'ok',
+            'retcode' => 0,
+            'data'    => ['status' => 'accepted'],
+        ];
+    }
 }

@@ -49,6 +49,9 @@ class HttpServer {
 				'daemonize' => false,
 				'log_file' => __logger__ . '/logger.log',
 				'log_rotation' => SWOOLE_LOG_ROTATION_DAILY,
+				// WebSocket 支持（OneBot 反向 WS / Milky WS 服务端）
+				'open_websocket_protocol' => true,
+				'websocket_compression' => false,
 			],
 			'super_permission' => Env::get('permission.super', []),
 		];
@@ -86,6 +89,8 @@ class HttpServer {
 		$this->server->on('request', [$this, 'onRequest']);
 		$this->server->on('WorkerStart', [$this, 'onWorkerStart']);
 		$this->server->on('WorkerError', [$this, 'onWorkerError']);
+		// WebSocket 事件（OneBot 反向 WS / Milky WS 服务端接入）
+		ProtocolOneBotWsHub::bindServer($this->server);
 		$this->bindShutdownEvents(); //注册关闭事件
 	}
 
@@ -433,6 +438,13 @@ HELP;
 		try {
 			$requestTime = round($request->server['request_time_float'] * 1000);
 			Cache::set('request_time', $requestTime);
+			// 保存原始请求体与请求头（QQ 官方机器人 Webhook 验签必须使用原始字节）
+			Cache::set('raw_body', $request->getContent() ?: '');
+			$headers = [];
+			foreach (($request->header ?: []) as $key => $value) {
+				$headers[strtolower($key)] = $value;
+			}
+			Cache::set('headers', $headers);
 			$param = $this->mergeRequestParam($request);
 			Cache::$param = $param;
 			$handler = new RequestHandler($request, $response);
@@ -481,9 +493,27 @@ HELP;
 		Logger::debug("Worker进程启动 | ID: {$workerId} | PID: {$server->worker_pid}");
 		$workerNum = $server->setting['worker_num'];
 		if ($workerId === $workerNum - 1) {
-			var_dump($workerNum);
+			Logger::debug("Task Worker 数量：{$workerNum}");
 			task::getInstance()->init();
 		}
+
+		// 只在一个 Worker 中启动协议客户端（常驻协程），避免重复连接
+		if ($workerId === 0) {
+			$this->startProtocolClients();
+		}
+	}
+
+	/**
+	 * 启动各协议的常驻客户端（正向 WS / Milky WS·SSE / QQ 官方 Gateway）
+	 */
+	private function startProtocolClients(): void {
+		\Swoole\Coroutine::create(function () {
+			try {
+				\Protocol\WebhookRouter::boot();
+			} catch (\Throwable $e) {
+				Logger::error("协议客户端启动失败：{$e->getMessage()} | {$e->getFile()}:{$e->getLine()}");
+			}
+		});
 	}
 
 

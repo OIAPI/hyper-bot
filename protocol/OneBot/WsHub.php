@@ -1,0 +1,362 @@
+<?php
+namespace Protocol\OneBot;
+
+use Swoole\Coroutine\Channel;
+use Swoole\Coroutine;
+use Swoole\Coroutine\Http\Client;
+use Utils\Logger;
+use Utils\Cache;
+use Protocol\Core\EventDispatcher;
+
+/**
+ * OneBot11 WebSocket 连接中枢
+ *
+ * 同时支持两种形态：
+ *  - 正向 WS（forward）：本框架作为客户端，主动连接 OneBot 实现端（go-cqhttp / Lagrange.OneBot 等）
+ *  - 反向 WS（reverse）：本框架开启 WS 服务端，由 OneBot 实现端连入（/onebot/v11/ws）
+ *
+ * 事件：实现端 → 框架（post_type 结构）
+ * 调用：框架 → 实现端（action + params + echo，按 echo 关联响应）
+ */
+class WsHub {
+	/** @var array<int, array> fd => 会话信息（反向 WS 连入的客户端） */
+	private static array $sessions = [];
+	/** @var array<string, Channel> echo => 等待响应的通道 */
+	private static array $pending = [];
+	/** @var \Swoole\Http\Server|null WS 服务端引用 */
+	private static $server = null;
+	/** @var Client|null 正向 WS 客户端 */
+	private static ?Client $forward = null;
+	private static bool $forwardRunning = false;
+	private static ?string $forwardUrl = null;
+	private static string $forwardToken = '';
+	private static int $echoSeq = 0;
+	/** @var callable|null 收到未知帧时的兜底处理 */
+	private static $frameHandler = null;
+
+	// ---------------------- 反向 WS（服务端） ----------------------
+
+	/** 绑定 Swoole 服务器的 WS 回调 */
+	public static function bindServer(\Swoole\Http\Server $server): void {
+		self::$server = $server;
+		$server->on('open', [self::class, 'onOpen']);
+		$server->on('message', [self::class, 'onMessage']);
+		$server->on('close', [self::class, 'onClose']);
+	}
+
+	public static function onOpen(\Swoole\Http\Server $server, $request): void {
+		$fd = $request->fd;
+		$path = $request->server['path_info'] ?? '/';
+		$milkyPath = rtrim(\Protocol\Core\Config::string('milky.ws.server_path', '/milky/event'), '/');
+
+		// Milky WS 端点：只用于本框架向外部推送事件，不按 OneBot 会话处理
+		if ($path === $milkyPath) {
+			self::$sessions[$fd] = [
+				'fd'        => $fd,
+				'connected' => time(),
+				'last'      => time(),
+				'self_id'   => 0,
+				'remote'    => $request->server['remote_addr'] ?? '',
+				'path'      => $path,
+				'role'      => 'milky',
+			];
+			Logger::success("[Milky-WS] 客户端已连接 | fd={$fd}");
+			return;
+		}
+
+		self::$sessions[$fd] = [
+			'fd'         => $fd,
+			'connected'  => time(),
+			'last'       => time(),
+			'self_id'    => 0,
+			'remote'     => $request->server['remote_addr'] ?? '',
+			'path'       => $path,
+			'role'       => 'reverse',
+		];
+		Logger::success("[OneBot-WS] 反向 WS 客户端已连接 | fd={$fd} | IP=" . ($request->server['remote_addr'] ?? ''));
+	}
+
+	public static function onMessage(\Swoole\Http\Server $server, $frame): void {
+		$fd = $frame->fd;
+		$data = json_decode((string)$frame->data, true);
+		if (!is_array($data)) {
+			Logger::warning("[OneBot-WS] 收到非 JSON 帧，已忽略 | fd={$fd}");
+			return;
+		}
+		if (isset(self::$sessions[$fd])) {
+			self::$sessions[$fd]['last'] = time();
+		}
+		self::handleFrame($data, $fd);
+	}
+
+	public static function onClose(\Swoole\Http\Server $server, int $fd): void {
+		unset(self::$sessions[$fd]);
+		Logger::warning("[OneBot-WS] 反向 WS 客户端断开 | fd={$fd}");
+	}
+
+	/** 已连接的反向 WS 会话数 */
+	public static function reverseCount(): int {
+		return count(self::$sessions);
+	}
+
+	/** 取一个可用于下发 API 调用的反向会话 fd */
+	public static function pickReverseFd(): ?int {
+		if (empty(self::$sessions)) return null;
+		$best = null;
+		foreach (self::$sessions as $fd => $info) {
+			if ($best === null || $info['last'] > self::$sessions[$best]['last']) {
+				$best = $fd;
+			}
+		}
+		return $best;
+	}
+
+	/** 向反向会话推送事件 */
+	public static function pushEvent(array $event, ?int $fd = null): bool {
+		$fd ??= self::pickReverseFd();
+		if ($fd === null) return false;
+		return self::push($fd, $event);
+	}
+
+	public static function push(int $fd, array $payload): bool {
+		$server = self::$server;
+		if (!$server instanceof \Swoole\Http\Server) {
+			$server = Cache::$http;
+			self::$server = $server instanceof \Swoole\Http\Server ? $server : null;
+		}
+		if (!$server instanceof \Swoole\Http\Server) {
+			Logger::warning('[OneBot-WS] WS 服务端未就绪，无法向 fd=' . $fd . ' 推送');
+			return false;
+		}
+		if (!$server->exist($fd)) {
+			Logger::warning('[OneBot-WS] fd=' . $fd . ' 不存在，推送失败');
+			return false;
+		}
+		return (bool)$server->push($fd, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+	}
+
+	// ---------------------- 正向 WS（客户端） ----------------------
+
+	/**
+	 * 启动正向 WS 连接（常驻协程内运行，断线自动重连）
+	 * @param string $url 例如 ws://127.0.0.1:3001
+	 * @param string $token access_token（可为空）
+	 */
+	public static function startForward(string $url, string $token = ''): void {
+		if (self::$forwardRunning) {
+			Logger::warning('[OneBot-WS] 正向 WS 已在运行，忽略重复启动');
+			return;
+		}
+		self::$forwardUrl   = $url;
+		self::$forwardToken = $token;
+		self::$forwardRunning = true;
+
+		Coroutine::create(function () {
+			$retry = 1;
+			while (self::$forwardRunning) {
+				try {
+					$connected = self::connectForward();
+					if ($connected) {
+						$retry = 1;
+						Logger::success('[OneBot-WS] 正向 WS 已连接：' . self::$forwardUrl);
+						self::forwardLoop();
+					}
+				} catch (\Throwable $e) {
+					Logger::error('[OneBot-WS] 正向 WS 异常：' . $e->getMessage());
+				} finally {
+					if (self::$forward !== null) {
+						try { self::$forward->close(); } catch (\Throwable $e) {}
+						self::$forward = null;
+					}
+				}
+				// 指数退避重连（1~30 秒）
+				$delay = min(30, $retry * 2);
+				$retry++;
+				Logger::warning("[OneBot-WS] 正向 WS 断开，{$delay} 秒后重连");
+				Coroutine::sleep($delay);
+			}
+		});
+	}
+
+	public static function stopForward(): void {
+		self::$forwardRunning = false;
+		if (self::$forward !== null) {
+			try { self::$forward->close(); } catch (\Throwable $e) {}
+			self::$forward = null;
+		}
+	}
+
+	private static function connectForward(): bool {
+		$url = parse_url(self::$forwardUrl ?? '');
+		if (!$url || empty($url['host'])) {
+			Logger::error('[OneBot-WS] 非法的正向 WS 地址：' . (self::$forwardUrl ?? ''));
+			self::$forwardRunning = false;
+			return false;
+		}
+		$scheme = $url['scheme'] ?? 'ws';
+		$ssl    = in_array($scheme, ['wss', 'https'], true);
+		$host   = $url['host'];
+		$port   = $url['port'] ?? ($ssl ? 443 : 80);
+		$path   = ($url['path'] ?? '/');
+		$query  = isset($url['query']) ? ('?' . $url['query']) : '';
+		$path  .= $query;
+
+		$client = new Client($host, $port, $ssl);
+		$client->set(['timeout' => -1, 'websocket_mask' => true, 'ssl_verify_peer' => false, 'ssl_verify_host' => false]);
+		$headers = ['User-Agent' => 'oiapi-bot/1.0'];
+		if (self::$forwardToken !== '') {
+			$headers['Authorization'] = 'Bearer ' . self::$forwardToken;
+		}
+		$client->setHeaders($headers);
+		$ok = $client->upgrade($path);
+		if (!$ok) {
+			Logger::warning('[OneBot-WS] 正向 WS 握手失败 | ' . self::$forwardUrl . ' | errCode=' . $client->errCode);
+			return false;
+		}
+		self::$forward = $client;
+		return true;
+	}
+
+	private static function forwardLoop(): void {
+		$client = self::$forward;
+		while (self::$forwardRunning && $client !== null) {
+			$frame = $client->recv(1.0);
+			if ($frame === false || $frame === null) {
+				if ($client->errCode) {
+					Logger::warning('[OneBot-WS] 正向 WS 连接回收 | errCode=' . $client->errCode);
+					break;
+				}
+				continue; // 空闲超时，继续等待
+			}
+			if (!$frame instanceof \Swoole\WebSocket\Frame) continue;
+			$data = json_decode((string)$frame->data, true);
+			if (!is_array($data)) continue;
+			self::handleFrame($data, null);
+		}
+	}
+
+	// ---------------------- 帧处理 ----------------------
+
+	/**
+	 * 统一帧处理：区分「事件 / API 响应 / API 请求」
+	 * @param array $data 帧数据
+	 * @param int|null $fd 来源反向会话（正向连接时为 null）
+	 */
+	private static function handleFrame(array $data, ?int $fd): void {
+		// 1) API 响应：带 echo 且带 status/retcode
+		if (isset($data['echo']) && (isset($data['status']) || isset($data['retcode']))) {
+			$echo = (string)$data['echo'];
+			if (isset(self::$pending[$echo])) {
+				self::$pending[$echo]->push($data);
+			}
+			return;
+		}
+
+		// 2) 事件：带 post_type
+		if (isset($data['post_type'])) {
+			self::handleIncomingEvent($data, $fd);
+			return;
+		}
+
+		// 3) API 请求：带 action（OneBot 实现端反调框架，较少见）
+		if (isset($data['action'])) {
+			self::handleApiRequest($data, $fd);
+			return;
+		}
+
+		if (self::$frameHandler) {
+			call_user_func(self::$frameHandler, $data, $fd);
+		} else {
+			Logger::debug('[OneBot-WS] 未识别的帧：' . substr(json_encode($data, JSON_UNESCAPED_UNICODE), 0, 200));
+		}
+	}
+
+	/** 处理入站事件（实现端 → 框架） */
+	private static function handleIncomingEvent(array $event, ?int $fd): void {
+		$adapter = Adapter::currentAdapter($fd);
+		EventDispatcher::dispatch($event, $adapter);
+	}
+
+	/** 处理入站 API 请求（实现端 → 框架，走本地触发逻辑或转发） */
+	private static function handleApiRequest(array $data, ?int $fd): void {
+		$echo = $data['echo'] ?? ($data['request_id'] ?? null);
+		try {
+			// 实现端反向调用框架的 API：本地不承载此类语义，转发给默认 HTTP 协议端
+			$result = (array) (new \Protocol\Core\HttpAdapter())->call((string)$data['action'], (array)($data['params'] ?? []));
+		} catch (\Throwable $e) {
+			$result = ['status' => 'failed', 'retcode' => -1, 'data' => null, 'message' => $e->getMessage()];
+		}
+		if ($echo !== null) {
+			if ($fd !== null) {
+				self::push($fd, array_merge($result, ['echo' => $echo]));
+			} elseif (self::$forward !== null) {
+				self::sendRaw(array_merge($result, ['echo' => $echo]));
+			}
+		}
+	}
+
+	/**
+	 * 通过 WS 调用 OneBot API（优先正向连接，其次反向会话）
+	 */
+	public static function callApi(string $action, array $params = [], float $timeout = 30.0): ?array {
+		$payload = [
+			'action' => $action,
+			'params' => (object)$params,
+			'echo'   => self::nextEcho(),
+		];
+		$echo = $payload['echo'];
+		$channel = new Channel(1);
+		self::$pending[$echo] = $channel;
+
+		$sent = false;
+		if (self::$forward !== null) {
+			$sent = self::sendRaw($payload);
+		}
+		if (!$sent) {
+			$fd = self::pickReverseFd();
+			if ($fd !== null) {
+				$sent = self::push($fd, $payload);
+			}
+		}
+
+		if (!$sent) {
+			unset(self::$pending[$echo]);
+			return null;
+		}
+
+		$response = $channel->pop($timeout);
+		unset(self::$pending[$echo]);
+		if ($response === false) {
+			Logger::warning("[OneBot-WS] API 调用超时：{$action}（{$timeout}s）");
+			return null;
+		}
+		return is_array($response) ? $response : null;
+	}
+
+	private static function sendRaw(array $payload): bool {
+		if (self::$forward === null) return false;
+		return (bool)self::$forward->push(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+	}
+
+	private static function nextEcho(): string {
+		self::$echoSeq++;
+		return 'echo_' . substr(md5((string)microtime(true) . self::$echoSeq . mt_rand()), 0, 12) . '_' . self::$echoSeq;
+	}
+
+	public static function hasForward(): bool {
+		return self::$forward !== null;
+	}
+
+	public static function forwardUrl(): ?string {
+		return self::$forwardUrl;
+	}
+
+	public static function setFrameHandler(callable $handler): void {
+		self::$frameHandler = $handler;
+	}
+
+	/** 会话信息（调试/管理面板用） */
+	public static function sessions(): array {
+		return self::$sessions;
+	}
+}

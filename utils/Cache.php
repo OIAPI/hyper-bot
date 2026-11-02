@@ -18,10 +18,22 @@ class Cache {
 	public static ?SwooleHttpServer $http = null; // Swoole HTTP Server实例
 	public static ?Api $api = null;			// API容器实例
 	public static ?array $replys = null;	   // 回复内容列表（统一小写命名）
+	public static ?object $adapter = null;	  // 当前事件来源的协议适配器（OneBot/Milky/QqBot）
 
 	// ---------------------- 动态缓存区（支持过期、过滤）----------------------
 	private static array $dynamicCache = [];   // 动态缓存存储：key=缓存名，value=[value, expireTime]
-	private static array $reservedKeys = ['param', 'server', 'http', 'api', 'replys']; // 静态属性预留键名
+	private static array $reservedKeys = ['param', 'server', 'http', 'api', 'replys', 'adapter']; // 静态属性预留键名
+
+	/**
+	 * 获取协程级上下文容器（Swoole 协程内独立，非协程返回 null）
+	 * 说明：持久连接（WS）会并发处理多个事件，必须按协程隔离上下文，避免串号。
+	 */
+	private static function ctx(): ?\ArrayObject {
+		if (\extension_loaded('swoole') && \Swoole\Coroutine::getCid() > 0) {
+			return \Swoole\Coroutine::getContext();
+		}
+		return null;
+	}
 
 
 	/**
@@ -44,8 +56,12 @@ class Cache {
 			throw new InvalidArgumentException('缓存名称不能为空', 400);
 		}
 
-		// 2. 优先检查静态核心属性
+		// 2. 优先检查静态核心属性（协程内优先读取协程上下文，避免并发事件串号）
 		if (in_array($name, self::$reservedKeys, true)) {
+			$ctx = self::ctx();
+			if ($ctx !== null && $ctx->offsetExists($name)) {
+				return $checkExists ? true : $ctx[$name];
+			}
 			return $checkExists ? isset(self::$$name) : (self::$$name ?? $default);
 		}
 
@@ -93,8 +109,14 @@ class Cache {
 			throw new InvalidArgumentException('缓存名称不能为空', 400);
 		}
 
-		// 1. 处理静态核心属性（严格类型校验，避免赋值错误）
+		// 1. 处理静态核心属性：协程内写入协程上下文，避免并发事件串号
 		if (in_array($name, self::$reservedKeys, true)) {
+			$ctx = self::ctx();
+			if ($ctx !== null) {
+				self::validateReservedProperty($name, $value);
+				$ctx[$name] = $value;
+				return;
+			}
 			self::setReservedProperty($name, $value);
 			return;
 		}
@@ -175,6 +197,16 @@ class Cache {
 	 * @throws InvalidArgumentException 类型不匹配时抛出
 	 */
 	private static function setReservedProperty(string $name, mixed $value): void {
+		self::validateReservedProperty($name, $value);
+		self::$$name = $value;
+		Logger::success("[Cache] 设置静态属性：{$name}");
+	}
+
+	/**
+	 * 校验静态核心属性的类型
+	 * @throws InvalidArgumentException 类型不匹配时抛出
+	 */
+	private static function validateReservedProperty(string $name, mixed $value): void {
 		// 类型映射：静态属性名 => 允许的类型
 		$typeMap = [
 			'param' => 'object',
@@ -182,9 +214,14 @@ class Cache {
 			'http' => SwooleHttpServer::class,
 			'api' => Api::class,
 			'replys' => 'array',
+			'adapter' => 'object',
 		];
 
 		$expectedType = $typeMap[$name];
+		// 适配器允许为 null
+		if ($name === 'adapter' && $value === null) {
+			return;
+		}
 		// 检查类型（类实例用instanceof，基础类型用gettype）
 		$isValid = match (true) {
 			class_exists($expectedType) => $value instanceof $expectedType,
@@ -198,9 +235,6 @@ class Cache {
 				400
 			);
 		}
-
-		self::$$name = $value;
-		Logger::success("[Cache] 设置静态属性：{$name}（类型：{$expectedType}）");
 	}
 
 

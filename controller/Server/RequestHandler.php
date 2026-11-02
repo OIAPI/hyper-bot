@@ -77,6 +77,13 @@ class RequestHandler {
 		try {
 			$method = $this->request->server['request_method'] ?? 'UNKNOWN';
 			$path = $this->request->server['path_info'] ?? '/';
+
+			// WebSocket 专属握手端点（OneBot 反向 WS / Milky WS）：直接返回 101 升级响应
+			if ($this->isWebSocketEndpoint($path)) {
+				$this->handleWebSocketUpgrade($path);
+				return;
+			}
+
 			$param = Cache::$param;
 	
 			// 匹配路由：获取 [回调函数, 路由参数]
@@ -148,6 +155,79 @@ class RequestHandler {
 				}
 			}
 		});
+	}
+
+	/**
+	 * 是否为 WebSocket 端点
+	 */
+	private function isWebSocketEndpoint(string $path): bool {
+		$path = '/' . ltrim($path, '/');
+		$onebotPath = rtrim(\Protocol\Core\Config::string('onebot.reverse.path', '/onebot/v11/ws'), '/');
+		$milkyPath  = rtrim(\Protocol\Core\Config::string('milky.ws.server_path', '/milky/event'), '/');
+
+		$isOneBot = \Protocol\Core\Config::bool('onebot.reverse.enable', false) && $path === $onebotPath;
+		$isMilky  = \Protocol\Core\Config::bool('milky.enable', false) && $path === $milkyPath;
+		return $isOneBot || $isMilky;
+	}
+
+	/**
+	 * 处理 WebSocket 升级
+	 * 说明：Swoole 会先派发 request 事件，需要显式 upgrade 才会进入 open/message 回调。
+	 */
+	private function handleWebSocketUpgrade(string $path): void {
+		$path = '/' . ltrim($path, '/');
+		$token = (string)($this->request->header['authorization'] ?? '');
+		$query = (string)($this->request->server['query_string'] ?? '');
+
+		// OneBot 反向 WS
+		$onebotPath = rtrim(\Protocol\Core\Config::string('onebot.reverse.path', '/onebot/v11/ws'), '/');
+		if ($path === $onebotPath && \Protocol\Core\Config::bool('onebot.reverse.enable', false)) {
+			$expect = (string)\Protocol\Core\Config::string('onebot.reverse.token', '');
+			if ($expect !== '' && !$this->checkToken($token, $query, $expect)) {
+				Logger::warning('[OneBot-WS] 反向 WS 鉴权失败 | ' . $path);
+				$this->response->status(401);
+				$this->response->end('unauthorized');
+				return;
+			}
+			$ok = \Swoole\Http\Server::upgrade($this->request, $this->response);
+			if (!$ok) {
+				$this->response->status(400);
+				$this->response->end('websocket upgrade failed');
+			}
+			return;
+		}
+
+		// Milky WS（本框架模拟协议端的 /event 端点）
+		$milkyPath = rtrim(\Protocol\Core\Config::string('milky.ws.server_path', '/milky/event'), '/');
+		if ($path === $milkyPath) {
+			$expect = (string)\Protocol\Core\Config::string('milky.token', '');
+			if ($expect !== '' && !$this->checkToken($token, $query, $expect)) {
+				Logger::warning('[Milky-WS] 鉴权失败 | ' . $path);
+				$this->response->status(401);
+				$this->response->end('unauthorized');
+				return;
+			}
+			\Swoole\Http\Server::upgrade($this->request, $this->response);
+			return;
+		}
+
+		$this->response->status(404);
+		$this->response->end('not a websocket endpoint');
+	}
+
+	/**
+	 * 校验 access_token：支持 Authorization: Bearer xxx 与 ?access_token=xxx
+	 */
+	private function checkToken(string $authorization, string $queryString, string $expect): bool {
+		$bearer = '';
+		if (str_starts_with(strtolower($authorization), 'bearer ')) {
+			$bearer = trim(substr($authorization, 7));
+		}
+		if ($bearer === '' && $queryString !== '') {
+			parse_str($queryString, $query);
+			$bearer = (string)($query['access_token'] ?? '');
+		}
+		return $bearer !== '' && hash_equals($expect, $bearer);
 	}
 
 	// 以下方法均保留原逻辑，无修改

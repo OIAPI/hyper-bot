@@ -1,0 +1,233 @@
+<?php
+namespace Controller\Server;
+
+use Swoole\Coroutine;
+use Swoole\Http\Request;
+use Swoole\Http\Response;
+use Utils\Logger;
+use Utils\MessageLog;
+use Utils\Cache;
+use Utils\Env;
+use Utils\Route; // 引入路由类
+use InvalidArgumentException;
+use RuntimeException;
+use App\Controller\Api as robot;
+
+
+class RequestHandler {
+	private array $allowedTypes = [];
+	private ?string $currentPostType = null;
+	private Request $request;
+	private Response $response;
+
+	public function __construct(Request $request, Response $response) {
+		$this->request = $request;
+		$this->response = $response;
+
+		// 记录请求基础信息（保留原逻辑）
+		$method = $request->server['request_method'] ?? 'UNKNOWN';
+		$path = $request->server['path_info'] ?? '/';
+		// Logger::success("[请求接收] {$method} {$path}");
+
+		if (Env::get('app.debug', false)) {
+			$paramJson = json_encode(Cache::$param, JSON_UNESCAPED_UNICODE);
+			Logger::debug("[请求参数] {$paramJson}");
+		}
+		$this->initRoute();
+	}
+	private function initRoute() {
+		Route::registerByAnnotation(robot::class);
+	}
+
+	// 保留原registerType方法（兼容旧的post_type逻辑）
+	public function registerType(string|array $types): void {
+		$types = is_array($types) ? $types : [$types];
+		foreach ($types as $type) {
+			$type = ucwords(trim($type));
+			if (!empty($type)) {
+				$this->allowedTypes[$type] = true;
+				// Logger::debug("[请求类型注册] 已允许：{$type}");
+			}
+		}
+	}
+
+	/**
+	 * 新增：实例化后注册路由（兼容$this->route()调用）
+	 * @param string $method 请求方法（get/post）
+	 * @param string $path 路由路径
+	 * @param callable $callback 回调函数
+	 */
+	public function route(string $method, string $path, callable $callback): void {
+		$method = strtoupper($method);
+		if (!in_array($method, ['GET', 'POST'])) {
+			throw new InvalidArgumentException("不支持的请求方法：{$method}");
+		}
+		// 调用Route类静态方法注册
+		if ($method === 'GET') {
+			Route::get($path, $callback);
+		} else {
+			Route::post($path, $callback);
+		}
+	}
+
+	/**
+	 * 核心改造：优先匹配路由，未匹配则走原post_type逻辑
+	 */
+	public function handle(): void {
+		try {
+			$method = $this->request->server['request_method'] ?? 'UNKNOWN';
+			$path = $this->request->server['path_info'] ?? '/';
+			$param = Cache::$param;
+	
+			// 匹配路由：获取 [回调函数, 路由参数]
+			$routeResult = Route::match($method, $path);
+			if ($routeResult) {
+				[$routeCallback, $routeParams] = $routeResult;
+				$this->handleRouteCallback($routeCallback, $routeParams); // 传入路由参数
+				return;
+			}
+
+			// 2. 未匹配路由，执行原post_type逻辑（兼容旧功能）
+			// Logger::debug("[未匹配路由] 走原post_type逻辑：{$method} {$path}");
+			$this->validateBaseParams();
+			$this->currentPostType = ucwords($param->post_type);
+			if (!isset($this->allowedTypes[$this->currentPostType])) {
+				throw new InvalidArgumentException("不支持的请求类型：{$this->currentPostType}", 400);
+			}
+			MessageLog::write($param, $this->currentPostType);
+			Coroutine::create(function () {
+				try {
+					$this->completeUserId();
+					$controllerClass = "\\Controller\\Trigger\\{$this->currentPostType}";
+					$this->createController($controllerClass);
+					// Logger::success("[请求处理成功] 类型：{$this->currentPostType}");
+				} catch (\Exception $e) {
+					Logger::error("[协程处理异常] 类型：{$this->currentPostType}，原因：{$e->getMessage()}，堆栈：{$e->getTraceAsString()}");
+					if (!$this->isEnd()) {
+						$this->sendError(500, "服务器内部错误：{$e->getMessage()}");
+					}
+				}
+			});
+			$this->sendSuccess(['status' => 'accepted', 'message' => '请求已接收，正在处理']);
+
+		} catch (\Exception $e) {
+			$code = $e->getCode() ?: 400;
+			$this->sendError($code, $e->getMessage());
+			Logger::error("[请求处理失败] 原因：{$e->getMessage()}，代码：{$code}");
+		}
+	}
+
+	/**
+	 * 处理路由回调（新增路由参数传递）
+	 */
+	private function handleRouteCallback(callable $callback, array $routeParams): void {
+		Coroutine::create(function () use ($callback, $routeParams) {
+			try {
+				// 回调函数参数：请求对象、响应对象、全局参数、路由参数（顺序固定，便于使用）
+				$result = call_user_func(
+					$callback,
+					$this->request,
+					$this->response,
+					Cache::$param,
+					$routeParams // 新增：传递路由参数（如 ['id' => 123]）
+				);
+	
+				// 响应处理（原逻辑不变）
+				if (is_array($result) || is_object($result)) {
+					$this->sendResponse($result, 200);
+				} elseif ($result === null) {
+					$this->sendResponse(['code' => 1, 'message' => '路由处理成功'], 200);
+				} else {
+					$this->sendResponse(['code' => 1, 'message' => $result], 200);
+					// throw new RuntimeException("路由回调返回值必须是数组或null");
+				}
+			} catch (\Exception $e) {
+				Logger::error("[路由处理异常] 原因：{$e->getMessage()}，堆栈：{$e->getTraceAsString()}");
+				if (!$this->isEnd()) {
+					$this->sendError(500, "路由处理错误：{$e->getMessage()}");
+				}
+			}
+		});
+	}
+
+	// 以下方法均保留原逻辑，无修改
+	private function validateBaseParams(): void {
+		if (empty(Cache::$param)) {
+			throw new RuntimeException("请求参数为空", 400);
+		}
+		if (!isset(Cache::$param->post_type) || empty(trim(Cache::$param->post_type))) {
+			throw new RuntimeException("缺少必要参数：post_type", 400);
+		}
+	}
+
+	private function completeUserId(): void {
+		return;
+		$param = Cache::$param;
+		if (!isset($param->user_id)) {
+			if (isset($param->operator_id) && !empty($param->operator_id)) {
+				$param->user_id = $param->operator_id;
+				// Logger::debug("[用户ID补全] 从operator_id填充：{$param->user_id}");
+			} else {
+				throw new RuntimeException("缺少用户标识：user_id/operator_id", 400);
+			}
+		}
+	}
+
+	private function createController(string $controllerClass): object {
+		if (!class_exists($controllerClass)) {
+			throw new RuntimeException("控制器不存在：{$controllerClass}", 404);
+		}
+
+		try {
+			return new $controllerClass();
+		} catch (\Exception $e) {
+			throw new RuntimeException("控制器实例化失败：{$controllerClass}，原因：{$e->getMessage()}", 500);
+		}
+	}
+
+	public function sendSuccess(array $data, int $code = 200): void {
+		$response = [
+			'code' => 1,
+			'message' => 'success666',
+			'data' => $data,
+			'timestamp' => time()
+		];
+		$this->sendResponse($response, $code);
+	}
+
+	public function sendError(int $httpCode, string $message, int $bizCode = -1): void {
+		$response = [
+			'code' => $bizCode,
+			'message' => $message,
+			'data' => null,
+			'timestamp' => time()
+		];
+		$this->sendResponse($response, $httpCode);
+	}
+
+	private function sendResponse(array|object $response, int $httpCode): void {
+		if ($this->isEnd()) {
+			// Logger::warning("[响应重复发送] HTTP码：{$httpCode}，数据：" . json_encode($response));
+			return;
+		}
+
+		$this->response->status($httpCode);
+		$this->response->header('Content-Type', 'application/json; charset=utf-8');
+		$this->response->header('Access-Control-Allow-Origin', '*');
+
+		$responseJson = json_encode($response, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+		$this->response->end($responseJson);
+		Logger::debug("[响应发送] HTTP码：{$httpCode}");
+	}
+	public function __get(string $key): mixed {
+		throw new RuntimeException("禁止通过魔术方法获取参数【{$key}】，请使用Cache::get('param->{$key}')", 403);
+	}
+	
+	private function isEnd() {
+		return !$this->response->isWritable();
+	}
+
+	public function on(string $type): void {
+		$this->registerType($type);
+	}
+}

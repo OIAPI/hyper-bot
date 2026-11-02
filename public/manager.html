@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="scroll-smooth">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Bot管理系统</title>
+		<!-- 外部资源 -->
+		<script src="https://cdn.tailwindcss.com"></script>
+		<link href="https://npm.webcache.cn/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+		<script src="https://npm.webcache.cn/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+		
+		<!-- Tailwind配置 -->
+		<script>
+			tailwind.config = {
+				darkMode: 'class',
+				theme: {
+					extend: {
+						colors: {
+							primary: '#165DFF',
+							secondary: '#36CFC9',
+							success: '#52C41A',
+							warning: '#FAAD14',
+							danger: '#FF4D4F',
+							dark: {
+								100: '#1F2937',
+								200: '#111827',
+								300: '#0F172A'
+							}
+						},
+						fontFamily: {
+							inter: ['Inter', 'system-ui', 'sans-serif'],
+						},
+						boxShadow: {
+							'card': '0 4px 20px 0 rgba(0, 0, 0, 0.05), 0 2px 8px 0 rgba(0, 0, 0, 0.08)',
+							'card-hover': '0 8px 30px 0 rgba(0, 0, 0, 0.12), 0 4px 15px 0 rgba(0, 0, 0, 0.08)',
+						}
+					},
+				}
+			}
+		</script>
+		
+		<!-- 自定义工具类 -->
+		<style type="text/tailwindcss">
+			@layer utilities {
+				.content-auto {
+					content-visibility: auto;
+				}
+				.sidebar-item {
+					@apply flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 cursor-pointer;
+				}
+				.sidebar-item.active {
+					@apply bg-primary/10 text-primary font-medium;
+				}
+				.sidebar-item:hover:not(.active) {
+					@apply bg-gray-100 dark:bg-dark-100;
+				}
+				.card-transition {
+					@apply transition-all duration-300 hover:shadow-card-hover transform hover:-translate-y-1;
+				}
+				.card-fade-in {
+					@apply opacity-100 transform translate-y-0 transition-all duration-500 ease-out;
+				}
+				.card-fade-out {
+					@apply opacity-0 transform translate-y-10 transition-all duration-300 ease-in pointer-events-none;
+				}
+				.card-content-height {
+					@apply min-h-[70vh]; /* 调整卡片高度以与侧边栏对齐 */
+				}
+				.btn-primary {
+					@apply bg-primary hover:bg-primary/90 text-white font-medium py-2 px-4 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg;
+				}
+				.btn-outline {
+					@apply border border-gray-300 dark:border-gray-700 hover:border-primary dark:hover:border-primary text-gray-700 dark:text-gray-300 hover:text-primary dark:hover:text-primary font-medium py-2 px-4 rounded-lg transition-all duration-200;
+				}
+				.switch {
+					@apply relative inline-block w-12 h-6;
+				}
+				.switch input {
+					@apply opacity-0 w-0 h-0;
+				}
+				.slider {
+					@apply absolute cursor-pointer inset-0 bg-gray-300 dark:bg-gray-700 transition-all duration-300 rounded-full before:absolute before:h-5 before:w-5 before:left-0.5 before:bottom-0.5 before:bg-white before:transition-all before:duration-300 before:rounded-full before:shadow-md;
+				}
+				input:checked + .slider {
+					@apply bg-success;
+				}
+				input:checked + .slider:before {
+					@apply transform translate-x-6;
+				}
+			}
+		</style>
+	</head>
+	
+	<body class="font-inter bg-gray-50 dark:bg-dark-300 text-gray-900 dark:text-gray-100 min-h-screen flex flex-col transition-colors duration-300">
+		<!-- 顶部导航栏 -->
+		<header class="bg-white dark:bg-dark-200 shadow-sm sticky top-0 z-30 transition-all duration-300">
+			<div class="container mx-auto px-4 py-3 flex items-center justify-between">
+				<!-- 移动端菜单按钮 -->
+				<button id="mobile-menu-btn" class="lg:hidden text-gray-700 dark:text-gray-300 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-dark-100 transition-colors">
+					<i class="fa fa-bars text-xl"></i>
+				</button>
+				
+				<!-- Logo和标题 -->
+				<div class="flex items-center gap-2">
+					<div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center text-white">
+						<i class="fa fa-cog text-xl"></i>
+					</div>
+					<h1 class="text-xl font-bold hidden sm:block">Bot管理系统</h1>
+				</div>
+				
+				<!-- 右侧工具栏 -->
+				<div class="flex items-center gap-4">
+					<!-- 搜索框 -->
+					<div class="relative hidden md:block">
+						<input type="text" id="group-search" placeholder="搜索群聊..." class="pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-dark-100 focus:outline-none focus:ring-2 focus:ring-primary/50 w-64 transition-all">
+						<i class="fa fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+					</div>
+					
+					<!-- 通知按钮 -->
+					<!-- <button class="relative p-2 rounded-full hover:bg-gray-100 dark:hover:bg-dark-100 transition-colors"> -->
+						<!-- <i class="fa fa-bell text-lg"></i> -->
+						<!-- <span class="absolute top-0 right-0 w-2 h-2 bg-danger rounded-full"></span> -->
+					<!-- </button> -->
+					
+					<!-- 主题切换 -->
+					<button id="theme-toggle" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-dark-100 transition-colors">
+						<i class="fa fa-moon-o dark:hidden text-lg"></i>
+						<i class="fa fa-sun-o hidden dark:block text-lg"></i>
+					</button>
+					
+					<!-- 用户信息 -->
+					<!-- <div class="flex items-center gap-2"> -->
+						<!-- <img src="https://picsum.photos/id/1005/200/200" alt="用户头像" class="w-8 h-8 rounded-full object-cover border-2 border-primary/20"> -->
+						<!-- <span class="hidden md:block font-medium">管理员</span> -->
+					<!-- </div> -->
+				</div>
+			</div>
+		</header>
+	
+		<div class="flex flex-1 overflow-hidden">
+			<!-- 侧边栏 -->
+			<aside id="sidebar" class="w-64 bg-white dark:bg-dark-200 shadow-md z-20 hidden lg:block transition-all duration-300 overflow-y-auto h-[calc(100vh-64px)]">
+				<div class="p-4 pt-20 space-y-2">
+						<div class="sidebar-item active">
+							<i class="fa fa-home text-lg w-5 text-center"></i>
+							<span>控制台</span><span class="ml-auto bg-primary/10 text-primary text-xs px-2 py-0.5 rounded-full" id="group-count-badge">0</span>
+						</div>
+						<div class="sidebar-item">
+							<i class="fa fa-plug text-lg w-5 text-center"></i>
+							<span>插件管理</span>
+						</div>
+					</div>
+					
+					<!-- 统计信息 -->
+					<div class="p-4 pt-16 border-t border-gray-200 dark:border-gray-700">
+						<h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">系统统计</h3>
+						<div class="space-y-3">
+							<div class="bg-gray-50 dark:bg-dark-100 p-3 rounded-lg">
+								<div class="flex justify-between items-center">
+									<span class="text-sm text-gray-600 dark:text-gray-300">总群聊数</span>
+									<span class="font-bold" id="stat-total-groups">0</span>
+								</div>
+								<div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 mt-2">
+									<div class="bg-primary h-1.5 rounded-full" id="total-groups-bar" style="width: 0%"></div>
+								</div>
+							</div>
+							<div class="bg-gray-50 dark:bg-dark-100 p-3 rounded-lg">
+								<div class="flex justify-between items-center">
+									<span class="text-sm text-gray-600 dark:text-gray-300">活跃群聊</span>
+									<span class="font-bold text-success" id="stat-active-groups">0</span>
+								</div>
+								<div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 mt-2">
+									<div class="bg-success h-1.5 rounded-full" id="active-groups-bar" style="width: 0%"></div>
+								</div>
+							</div>
+							<div class="bg-gray-50 dark:bg-dark-100 p-3 rounded-lg">
+								<div class="flex justify-between items-center">
+									<span class="text-sm text-gray-600 dark:text-gray-300">总用户数</span>
+									<span class="font-bold" id="stat-total-members">0</span>
+								</div>
+								<div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 mt-2">
+									<div class="bg-warning h-1.5 rounded-full" id="total-members-bar" style="width: 0%"></div>
+								</div>
+							</div>
+						</div>
+					</div>
+			</aside>
+	
+			<!-- 主内容区 -->
+			<main class="flex-1 overflow-y-auto bg-gray-50 dark:bg-dark-300 p-4 md:p-6 transition-all duration-300">
+				<!-- 页面标题 -->
+				<div class="mb-6">
+					<h2 class="text-[clamp(1.5rem,3vw,2rem)] font-bold">群管理</h2>
+					<p class="text-gray-600 dark:text-gray-400 mt-1">管理所有群聊的Bot状态和插件配置</p>
+				</div>
+				
+				<!-- 加载状态提示 -->
+				<div id="loading" class="fixed inset-0 bg-black/5 backdrop-blur-sm flex items-center justify-center z-50 hidden">
+					<div class="bg-white dark:bg-dark-200 p-6 rounded-xl shadow-lg flex items-center gap-4">
+						<div class="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-primary"></div>
+						<span class="font-medium">加载中...</span>
+					</div>
+				</div>
+				
+				<!-- 群列表和详情区域 -->
+				<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+					<!-- 群列表 -->
+					<div class="lg:col-span-1 space-y-4">
+						<div class="bg-white dark:bg-dark-200 rounded-xl shadow-card p-4 card-transition">
+							<div class="flex items-center justify-between mb-4">
+								<h3 class="font-bold text-lg">群聊列表</h3>
+								<button id="refresh-groups" class="text-primary hover:text-primary/80 transition-colors">
+									<i class="fa fa-refresh"></i>
+								</button>
+							</div>
+							
+							<!-- 搜索框（移动端） -->
+							<div class="relative mb-4 md:hidden">
+								<input type="text" id="group-search-mobile" placeholder="搜索群聊..." class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-dark-100 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all">
+								<i class="fa fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+							</div>
+							
+							<!-- 群聊列表容器 -->
+							<div id="groups-list" class="space-y-2 max-h-[70vh] overflow-y-auto pr-2">
+								<!-- 群聊项将通过API动态生成 -->
+								<div class="text-center py-8 text-gray-500 dark:text-gray-400">
+									<i class="fa fa-spinner fa-spin text-2xl mb-2"></i>
+									<p>正在加载群列表...</p>
+								</div>
+							</div>
+						</div>
+					</div>
+	
+					<!-- 群详情与插件管理（默认隐藏） -->
+					<div id="group-detail" class="lg:col-span-2 space-y-4 hidden">
+						<!-- 群基本信息 -->
+						<div class="bg-white dark:bg-dark-200 rounded-xl shadow-card p-6 card-transition card-fade-in card-content-height">
+							<div class="flex flex-col md:flex-row md:items-center justify-between mb-6">
+								<div class="flex items-center mb-4 md:mb-0">
+									<div class="w-14 h-14 rounded-full overflow-hidden mr-4">
+										<img id="group-avatar" src="https://p.qlogo.cn/gh/0/0/0" alt="群头像" class="w-full h-full object-cover">
+									</div>
+									<div>
+										<h3 class="font-bold text-xl" id="group-name">加载中...</h3>
+										<div class="flex items-center mt-1 text-sm text-gray-600 dark:text-gray-400 flex-wrap gap-2">
+											<span><i class="fa fa-id-card-o mr-1"></i> 群ID: <span id="group-id">--</span></span>
+											<span><i class="fa fa-user-o mr-1"></i> 成员: <span id="member-count">--</span>/<span id="max-member-count">--</span></span>
+											<span class="flex items-center">
+												<i class="fa fa-circle text-gray-400 mr-1 text-xs"></i>
+												<span id="group-status">加载中...</span>
+											</span>
+										</div>
+									</div>
+								</div>
+								
+								<div class="flex flex-col gap-4">
+									<div class="flex items-center">
+										<span class="mr-3 text-sm">状态:</span>
+										<label class="switch">
+											<input type="checkbox" id="group-status-switch" disabled>
+											<span class="slider"></span>
+										</label>
+									</div>
+									<button id="save-group-status" class="btn-primary w-full" disabled>
+										<i class="fa fa-save mr-2"></i>保存
+									</button>
+								</div>
+							</div>
+	
+							<!-- 成员统计图表 -->
+							<div>
+								<h4 class="font-medium mb-4">成员活跃度统计</h4>
+								<div class="h-64 flex items-center justify-center">
+									<canvas id="memberChart"></canvas>
+								</div>
+							</div>
+						</div>
+	
+						<!-- 插件管理 -->
+						<div class="bg-white dark:bg-dark-200 rounded-xl shadow-card p-6 card-transition card-fade-in card-content-height hidden">
+							<div class="flex items-center justify-between mb-6">
+								<h3 class="font-bold text-xl">插件管理</h3>
+								<button id="refresh-plugins" class="text-primary hover:text-primary/80 transition-colors flex items-center" disabled>
+									<i class="fa fa-refresh mr-1"></i> 刷新插件列表
+								</button>
+							</div>
+	
+							<!-- 插件列表区域 - 支持垂直和水平内部滑动 -->
+							<div class="overflow-x-auto" style="max-height: 400px;">
+								<div class="overflow-y-auto" style="height: 100%;">
+									<table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+											<thead class="sticky top-0 z-10 bg-white dark:bg-dark-200">
+											<tr>
+												<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">插件名称</th>
+												<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">插件标识</th>
+												<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">状态</th>
+												<th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">操作</th>
+											</tr>
+										</thead>
+										<tbody id="plugins-table-body" class="bg-white dark:bg-dark-200 divide-y divide-gray-200 dark:divide-gray-700">
+											<!-- 插件列表加载状态 -->
+											<tr>
+												<td colspan="4" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+													<i class="fa fa-spinner fa-spin mr-2"></i>正在加载插件列表...
+												</td>
+											</tr>
+										</tbody>
+									</table>
+								</div>
+							</div>
+	
+							<div class="mt-6 flex justify-end">
+								<button id="save-plugins" class="btn-primary" disabled>
+									<i class="fa fa-save mr-2"></i>保存
+								</button>
+							</div>
+						</div>
+					</div>
+	
+					<!-- 空状态提示（默认显示） -->
+					<div id="empty-state" class="lg:col-span-2 flex items-center justify-center bg-white dark:bg-dark-200 rounded-xl shadow-card p-8 card-transition">
+						<div class="text-center">
+							<div class="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center text-primary text-3xl mx-auto mb-4">
+								<i class="fa fa-users"></i>
+							</div>
+							<h3 class="font-bold text-xl mb-2">请选择一个群聊</h3>
+							<p class="text-gray-600 dark:text-gray-400 max-w-md mx-auto">
+								从左侧群聊列表中选择一个群，即可管理该群的Bot状态和插件配置
+							</p>
+						</div>
+					</div>
+				</div>
+			</main>
+		</div>
+	
+		<!-- 操作提示弹窗 -->
+		<div id="toast" class="fixed top-4 right-0 px-6 py-3 rounded-lg shadow-lg transform translate-x-full transition-transform duration-300 flex items-center z-50 bg-success text-white">
+			<i class="fa fa-check-circle mr-2"></i>
+			<span id="toast-message">操作成功</span>
+		</div>
+	
+		<!-- JavaScript -->
+		<script>
+			// DOM元素
+			const sidebar = document.getElementById('sidebar');
+			const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+			const themeToggle = document.getElementById('theme-toggle');
+			const loading = document.getElementById('loading');
+			const groupsList = document.getElementById('groups-list');
+			const groupDetail = document.getElementById('group-detail');
+			const emptyState = document.getElementById('empty-state');
+			const groupSearch = document.getElementById('group-search');
+			const groupSearchMobile = document.getElementById('group-search-mobile');
+			const refreshGroupsBtn = document.getElementById('refresh-groups');
+			const refreshPluginsBtn = document.getElementById('refresh-plugins');
+			const saveGroupStatusBtn = document.getElementById('save-group-status');
+			const savePluginsBtn = document.getElementById('save-plugins');
+			const groupStatusSwitch = document.getElementById('group-status-switch');
+			const pluginsTableBody = document.getElementById('plugins-table-body');
+			const toast = document.getElementById('toast');
+			const toastMessage = document.getElementById('toast-message');
+	
+			// 统计相关元素
+			const groupCountBadge = document.getElementById('group-count-badge');
+			const statTotalGroups = document.getElementById('stat-total-groups');
+			const statActiveGroups = document.getElementById('stat-active-groups');
+			const statTotalMembers = document.getElementById('stat-total-members');
+			const totalGroupsBar = document.getElementById('total-groups-bar');
+			const activeGroupsBar = document.getElementById('active-groups-bar');
+			const totalMembersBar = document.getElementById('total-members-bar');
+	
+			// 群详情元素
+			const groupNameEl = document.getElementById('group-name');
+			const groupIdEl = document.getElementById('group-id');
+			const memberCountEl = document.getElementById('member-count');
+			const maxMemberCountEl = document.getElementById('max-member-count');
+			const groupStatusText = document.getElementById('group-status');
+			const groupStatusIcon = groupStatusText.previousElementSibling;
+	
+			// 全局变量
+			let currentGroupId = null;
+			let groupDataList = [];
+			let pluginStatusMap = new Map(); // 存储插件状态：key=插件标识，value=是否启用
+			let originalPluginStatusMap = new Map(); // 存储原始插件状态，用于判断哪些插件状态发生了变化
+	
+			// 初始化页面
+			document.addEventListener('DOMContentLoaded', () => {
+				initTheme();
+				initMobileMenu();
+				loadGroupList();
+				initSearch();
+				bindEventListeners();
+			});
+	
+			// 初始化主题
+			function initTheme() {
+				if (localStorage.getItem('theme') === 'dark' || 
+						(!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+					document.documentElement.classList.add('dark');
+				} else {
+					document.documentElement.classList.remove('dark');
+				}
+			}
+	
+			// 初始化移动端菜单
+			function initMobileMenu() {
+				mobileMenuBtn.addEventListener('click', () => {
+					sidebar.classList.toggle('hidden');
+					sidebar.classList.toggle('fixed');
+					sidebar.classList.toggle('inset-0');
+					sidebar.classList.toggle('min-h-[100%]');
+					sidebar.classList.toggle('z-50');
+				});
+	
+				// 点击空白处关闭侧边栏（移动端）
+				document.addEventListener('click', (e) => {
+					if (window.innerWidth < 1024 && 
+							!sidebar.contains(e.target) && 
+							!mobileMenuBtn.contains(e.target) && 
+							!sidebar.classList.contains('hidden')) {
+						sidebar.classList.add('hidden');
+					}
+				});
+			}
+	
+			// 绑定事件监听器
+			function bindEventListeners() {
+				// 主题切换
+				themeToggle.addEventListener('click', () => {
+					document.documentElement.classList.toggle('dark');
+					localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+				});
+
+				// 刷新群列表
+				refreshGroupsBtn.addEventListener('click', loadGroupList);
+
+				// 侧边栏插件管理点击事件
+				const sidebarItems = document.querySelectorAll('.sidebar-item');
+				let pluginManageItem = null;
+				let consoleItem = null;
+
+				// 查找插件管理和控制台项
+				sidebarItems.forEach(item => {
+					const spanText = item.querySelector('span')?.textContent;
+					if (spanText && spanText.includes('插件管理')) {
+						pluginManageItem = item;
+					} else if (spanText && spanText.includes('控制台')) {
+						consoleItem = item;
+					}
+				});
+
+				// 插件管理点击事件
+				if (pluginManageItem) {
+					pluginManageItem.addEventListener('click', () => {
+						// 移除所有侧边栏项的active状态
+						sidebarItems.forEach(item => {
+							item.classList.remove('active');
+						});
+						// 设置当前项为active
+						pluginManageItem.classList.add('active');
+						sidebar.classList.add('hidden');
+						// 获取卡片区域 - 使用更简单的选择器以避免兼容性问题
+						const cards = document.querySelectorAll('.bg-white.rounded-xl.shadow-card.p-6.card-transition, .dark\\:bg-dark-200.rounded-xl.shadow-card.p-6.card-transition');
+						let groupInfoSection = null;
+						let pluginsSection = null;
+
+						// 区分群信息和插件管理区域
+						cards.forEach(card => {
+							const headerText = card.querySelector('h3')?.textContent;
+							if (headerText && headerText.includes('插件管理')) {
+								pluginsSection = card;
+							} else if (headerText && !headerText.includes('成员活跃度统计')) {
+								groupInfoSection = card;
+							}
+						});
+
+						// 添加动画效果：隐藏群聊信息，显示插件列表
+						if (groupInfoSection) {
+							groupInfoSection.classList.remove('card-fade-in');
+							groupInfoSection.classList.add('card-fade-out');
+							setTimeout(() => {
+								groupInfoSection.style.display = 'none';
+							}, 300); // 等待动画完成
+						}
+						if (pluginsSection) {
+							pluginsSection.style.display = 'block';
+							setTimeout(() => {
+								pluginsSection.classList.remove('card-fade-out');
+								pluginsSection.classList.add('card-fade-in');
+							}, 50); // 短暂延迟以确保display设置生效
+						}
+
+						// 如果有选择的群，加载插件列表
+						if (currentGroupId) {
+							loadGroupPluginsWithStatus(currentGroupId);
+						}
+					});
+				}
+
+				// 控制台点击事件
+				if (consoleItem) {
+					consoleItem.addEventListener('click', () => {
+						// 移除所有侧边栏项的active状态
+						sidebarItems.forEach(item => {
+							item.classList.remove('active');
+						});
+						// 设置当前项为active
+						consoleItem.classList.add('active');
+						sidebar.classList.add('hidden');
+						// 获取卡片区域 - 使用更简单的选择器以避免兼容性问题
+						const cards = document.querySelectorAll('.bg-white.rounded-xl.shadow-card.p-6.card-transition, .dark\\:bg-dark-200.rounded-xl.shadow-card.p-6.card-transition');
+						let groupInfoSection = null;
+						let pluginsSection = null;
+
+						// 区分群信息和插件管理区域
+						cards.forEach(card => {
+							const headerText = card.querySelector('h3')?.textContent;
+							if (headerText && headerText.includes('插件管理')) {
+								pluginsSection = card;
+							} else if (headerText && !headerText.includes('成员活跃度统计')) {
+								groupInfoSection = card;
+							}
+						});
+
+						// 添加动画效果：只显示群聊信息，不显示插件列表
+						if (groupInfoSection) {
+							groupInfoSection.style.display = 'block';
+							setTimeout(() => {
+								groupInfoSection.classList.remove('card-fade-out');
+								groupInfoSection.classList.add('card-fade-in');
+							}, 50);
+						}
+						if (pluginsSection) {
+							pluginsSection.classList.remove('card-fade-in');
+							pluginsSection.classList.add('card-fade-out');
+							setTimeout(() => {
+								pluginsSection.style.display = 'none';
+							}, 300); // 等待动画完成
+						}
+					});
+				}
+	
+				// 刷新插件列表
+				refreshPluginsBtn.addEventListener('click', () => {
+					if (currentGroupId) {
+						loadGroupPluginsWithStatus(currentGroupId);
+					}
+				});
+	
+				// 群状态切换事件
+				groupStatusSwitch.addEventListener('change', () => {
+					saveGroupStatusBtn.disabled = false;
+				});
+	
+				// 保存群状态
+				saveGroupStatusBtn.addEventListener('click', async () => {
+					if (!currentGroupId) return;
+					
+					showLoading();
+					try {
+						const isEnabled = groupStatusSwitch.checked;
+						const response = await fetch(`/api/switch?group_id=${currentGroupId}`, {
+							method: 'GET',
+							headers: {
+								'Content-Type': 'application/json'
+							}
+						});
+						
+						const result = await response.json();
+						if (result.code === 1) {
+							// 更新UI
+							groupStatusText.textContent = isEnabled ? '已启用' : '未启用';
+							groupStatusIcon.className = `fa fa-circle ${isEnabled ? 'text-success' : 'text-gray-400'} mr-1 text-xs`;
+							
+							// 更新群列表中的状态
+							updateGroupStatusInList(currentGroupId, isEnabled);
+							
+							// 更新统计数据
+							updateStatisticData();
+							
+							showToast(`群${isEnabled ? '开启' : '关闭'}成功`);
+							saveGroupStatusBtn.disabled = true;
+						} else {
+							throw new Error(result.message || '操作失败');
+						}
+					} catch (error) {
+						showToast(error.message, 'error');
+						// 回滚状态
+						groupStatusSwitch.checked = !groupStatusSwitch.checked;
+						console.error(error);
+					} finally {
+						hideLoading();
+					}
+				});
+	
+				savePluginsBtn.addEventListener('click', async () => {
+					if (!currentGroupId || pluginStatusMap.size === 0) return;
+					
+					showLoading();
+					try {
+						// 只提交状态发生变化的插件
+						const updatePromises = [];
+						const changedPlugins = [];
+						
+						for (const [plugin, isEnabled] of pluginStatusMap.entries()) {
+							// 检查插件状态是否发生变化
+							const originalStatus = originalPluginStatusMap.get(plugin);
+							if (isEnabled !== originalStatus) {
+								changedPlugins.push(plugin);
+								// 为每个状态变化的插件创建一个独立的Promise
+								const promise = fetch(`/api/switch?group_id=${currentGroupId}&plugin=${encodeURIComponent(plugin)}`, {
+									method: 'GET',
+									headers: {
+										'Content-Type': 'application/json'
+									}
+								}).then(response => response.json());
+								updatePromises.push(promise);
+							}
+						}
+						
+						if (updatePromises.length === 0) {
+							// 没有插件状态发生变化
+							showToast('没有检测到插件状态变化');
+							savePluginsBtn.disabled = true;
+						} else {
+							// 使用Promise.allSettled确保所有请求都完成，无论成功失败
+							const results = await Promise.allSettled(updatePromises);
+							const successCount = results.filter(res => {
+								if(res.value.code !== 1) {
+									showToast(res.value.message, 'info');
+								}
+								return res.status === 'fulfilled' && res.value.code === 1;
+							}).length;
+							
+							showToast(`成功更新${successCount}/${changedPlugins.length}个插件状态`);
+							savePluginsBtn.disabled = true;
+							// 重新加载插件列表以确认状态
+							loadGroupPlugins(currentGroupId);
+						}
+					} catch (error) {
+						showToast('插件状态更新失败：' + error.message, 'error');
+						console.error(error);
+					} finally {
+						hideLoading();
+					}
+				});
+			}
+	
+			// 初始化搜索功能
+			function initSearch() {
+				const searchInputs = [groupSearch, groupSearchMobile];
+				searchInputs.forEach(input => {
+					if (input) {
+						input.addEventListener('input', (e) => {
+							const keyword = e.target.value.trim().toLowerCase();
+							filterGroupList(keyword);
+						});
+					}
+				});
+			}
+	
+			// 过滤群列表
+			function filterGroupList(keyword) {
+				const groupItems = groupsList.querySelectorAll('.group-item');
+				groupItems.forEach(item => {
+					const groupName = item.querySelector('h4').textContent.toLowerCase();
+					const groupId = item.querySelector('p').textContent.split(': ')[1];
+					const match = groupName.includes(keyword) || groupId.includes(keyword);
+					item.classList.toggle('hidden', !match);
+				});
+			}
+	
+			// 加载群列表
+			async function loadGroupList() {
+				showLoading();
+				try {
+					const response = await fetch('/api/group');
+					const result = await response.json();
+					
+					if (result.code === 1 && Array.isArray(result.data)) {
+					groupDataList = result.data;
+					renderGroupList(groupDataList);
+					updateStatisticData();
+					} else {
+						throw new Error(result.message || '获取群列表失败');
+					}
+				} catch (error) {
+					groupsList.innerHTML = `
+						<div class="text-center py-8 text-danger">
+							<i class="fa fa-exclamation-circle text-2xl mb-2"></i>
+							<p>${error.message}</p>
+							<button class="mt-3 text-primary hover:underline" onclick="loadGroupList()">重试</button>
+						</div>
+					`;
+					console.error(error);
+				} finally {
+					hideLoading();
+				}
+			}
+	
+			// 渲染群列表
+			function renderGroupList(groups) {
+				if (groups.length === 0) {
+					groupsList.innerHTML = `
+						<div class="text-center py-8 text-gray-500 dark:text-gray-400">
+							<i class="fa fa-folder-open-o text-2xl mb-2"></i>
+							<p>暂无群聊数据</p>
+						</div>
+					`;
+					groupCountBadge.textContent = '0';
+					return;
+				}
+	
+				groupCountBadge.textContent = groups.length;
+				let html = '';
+				groups.forEach(group => {
+					const isActive = currentGroupId === group.group_id;
+					// 由于api/group不返回status字段，暂时不显示状态信息
+					// 状态信息将在selectGroup并调用api/getInfo后显示在群详情中
+					
+					html += `
+						<div class="group-item p-3 rounded-lg ${isActive ? 'bg-primary/5 border-l-4 border-primary' : 'border-l-4 border-transparent hover:bg-gray-100 dark:hover:bg-dark-100'}" data-group-id="${group.group_id}">
+																<div class="flex items-center">
+																	<!-- 群头像 -->
+																	<div class="w-10 h-10 rounded-full overflow-hidden mr-3 flex-shrink-0">
+																		<img src="https://p.qlogo.cn/gh/${group.group_id}/${group.group_id}/0" alt="${group.group_name}" class="w-full h-full object-cover">
+																	</div>
+																	<div class="flex-1">
+																		<h4 class="font-medium">${group.group_name}</h4>
+																		<p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">ID: ${group.group_id}</p>
+																		<div class="flex items-center mt-1 text-sm">
+																			<i class="fa fa-user-o mr-1 text-gray-500 dark:text-gray-400"></i>
+																			<span class="text-gray-600 dark:text-gray-300">${group.member_count}/${group.max_member_count} 成员</span>
+																		</div>
+																	</div>
+																</div>
+															</div>`;
+				});
+	
+				groupsList.innerHTML = html;
+	
+				// 绑定群列表点击事件
+				document.querySelectorAll('.group-item').forEach(item => {
+					item.addEventListener('click', () => {
+						const groupId = parseInt(item.getAttribute('data-group-id'));
+						selectGroup(groupId);
+					});
+				});
+			}
+	
+			// 选择群聊
+			async function selectGroup(groupId) {
+				if (currentGroupId === groupId) return;
+				
+				currentGroupId = groupId;
+				showLoading();
+				
+				try {
+					// 更新群列表选中状态
+					document.querySelectorAll('.group-item').forEach(item => {
+						const itemGroupId = parseInt(item.getAttribute('data-group-id'));
+						if (itemGroupId === groupId) {
+							item.classList.add('bg-primary/5', 'border-l-4', 'border-primary');
+							item.classList.remove('border-transparent', 'hover:bg-gray-100', 'dark:hover:bg-dark-100');
+						} else {
+							item.classList.remove('bg-primary/5', 'border-l-4', 'border-primary');
+							item.classList.add('border-transparent', 'hover:bg-gray-100', 'dark:hover:bg-dark-100');
+						}
+					});
+	
+					// 获取群基本信息（从缓存的列表数据中获取）
+					const group = groupDataList.find(g => g.group_id === groupId);
+					if (group) {
+						// 先渲染基本信息，不包含状态
+						renderGroupInfo({...group, status: null});
+					}
+
+					// 获取群插件状态和完整信息（包括status）
+					await loadGroupPluginsWithStatus(groupId);
+	
+					// 显示详情，隐藏空状态
+					groupDetail.classList.remove('hidden');
+					emptyState.classList.add('hidden');
+				} catch (error) {
+					showToast('加载群信息失败：' + error.message, 'error');
+					console.error(error);
+				} finally {
+					hideLoading();
+				}
+			}
+	
+			// 渲染群基本信息
+						function renderGroupInfo(group) {
+							groupNameEl.textContent = group.group_name;
+							groupIdEl.textContent = group.group_id;
+							memberCountEl.textContent = group.member_count;
+							maxMemberCountEl.textContent = group.max_member_count;
+							// 更新群头像
+							const groupAvatarEl = document.getElementById('group-avatar');
+							if (groupAvatarEl) {
+								groupAvatarEl.src = `https://p.qlogo.cn/gh/${group.group_id}/${group.group_id}/0`;
+								groupAvatarEl.alt = group.group_name;
+							}
+				
+				// 检查status是否存在且有效
+				let isEnabled = false;
+				if (group.status !== null && group.status !== undefined) {
+					// 转换为数字并检查
+					const statusNumber = parseInt(group.status);
+					isEnabled = statusNumber === 1;
+				}
+				
+				// 设置群状态显示
+				groupStatusSwitch.checked = isEnabled;
+				groupStatusSwitch.disabled = group.status === null;
+				groupStatusText.textContent = isEnabled ? '已启用' : '未启用';
+				groupStatusIcon.className = `fa fa-circle ${isEnabled ? 'text-success' : 'text-gray-400'} mr-1 text-xs`;
+				
+				// 启用按钮
+				saveGroupStatusBtn.disabled = group.status === null;
+				refreshPluginsBtn.disabled = group.status === null;
+				
+				// 渲染成员统计图表
+				renderMemberChart(group.member_count, group.max_member_count);
+			}
+	
+			// 加载群插件状态和完整信息（包括status）
+			async function loadGroupPluginsWithStatus(groupId) {
+				showLoading();
+				try {
+					const response = await fetch(`/api/getInfo?group_id=${groupId}`);
+					const result = await response.json();
+					 
+					if (result.code === 1 && result.data) {
+						// 从api/getInfo获取群status
+						const groupStatus = result.data.status;
+						 
+						// 更新缓存中的群数据，添加status字段
+						const groupIndex = groupDataList.findIndex(g => g.group_id === groupId);
+						if (groupIndex !== -1) {
+							groupDataList[groupIndex].status = groupStatus;
+						}
+						 
+						// 重新渲染群详情，包含正确的状态信息
+						const updatedGroup = groupDataList.find(g => g.group_id === groupId);
+						if (updatedGroup) {
+							renderGroupInfo(updatedGroup);
+						}
+						 
+						// 处理插件状态：worker字段为JSON格式（键：插件名，值：开关状态bool）
+						const { worker: workerJson } = result.data || {}; // 直接取worker的JSON数据，兜底空对象
+						
+						// 1. 解析worker的JSON为对象（插件名=>开关状态），处理解析失败/非JSON情况
+						let workerPluginStatus = {};
+						try {
+							// 若worker是字符串则解析，已是对象则直接使用，兜底空对象
+							workerPluginStatus = typeof workerJson === 'string' 
+								? JSON.parse(workerJson) 
+								: (typeof workerJson === 'object' && workerJson !== null ? workerJson : {});
+						} catch (e) {
+							workerPluginStatus = {}; // JSON解析失败时，默认空状态
+						}
+						
+						// 2. 重置插件状态映射
+						pluginStatusMap.clear();
+						originalPluginStatusMap.clear();
+						
+						// 3. 提取所有插件名（从worker解析结果的键中获取），确保插件列表有效
+						const pluginList = Object.keys(workerPluginStatus);
+						
+						// 4. 生成插件状态映射（直接使用worker中定义的bool开关状态）
+						pluginList.forEach(pluginName => {
+							// 取worker中定义的开关状态（确保是bool类型，默认false）
+							const isActive = workerPluginStatus[pluginName];
+							
+							pluginStatusMap.set(pluginName, isActive);
+							originalPluginStatusMap.set(pluginName, isActive);
+						});
+						if (pluginList.length === 0) {
+							console.warn('未从worker中解析到有效插件状态数据');
+						}
+						
+						// 渲染插件列表
+						renderPluginsList(pluginList);
+						savePluginsBtn.disabled = true;
+					} else {
+						throw new Error(result.message || '获取群信息失败');
+					}
+				} catch (error) {
+					pluginsTableBody.innerHTML = `
+						<tr>
+							<td colspan="4" class="px-6 py-8 text-center text-danger">
+								<i class="fa fa-exclamation-circle mr-2"></i>${error.message}
+								<button class="mt-1 text-primary hover:underline" onclick="loadGroupPluginsWithStatus(${groupId})">重试</button>
+							</td>
+						</tr>
+					`;
+					console.error(error);
+				} finally {
+					hideLoading();
+				}
+			}
+
+			// 渲染插件列表
+			function renderPluginsList(pluginList) {
+				if (!pluginList || !Array.isArray(pluginList) || pluginList.length === 0) {
+					pluginsTableBody.innerHTML = `
+						<tr>
+							<td colspan="4" class="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
+								<i class="fa fa-plug mr-2"></i>该群暂无可用插件
+							</td>
+						</tr>
+					`;
+					savePluginsBtn.disabled = true;
+					return;
+				}
+			
+				let html = '';
+				// 插件名称映射（根据插件标识匹配中文名称）
+				const pluginNameMap = {
+					'App\\Plugins\\Permission': '权限管理插件',
+					'App\\Plugins\\Ai': 'AI插件',
+					'App\\Plugins\\Capi': 'API插件',
+					'App\\Plugins\\Idea': '创意插件',
+					'App\\Plugins\\Landlord': '地主插件',
+					'App\\Plugins\\Group': '群组插件',
+					'App\\Plugins\\Msg': '消息插件',
+					'App\\Plugins\\Sys': '系统插件',
+					'App\\Plugins\\Fq': '番茄插件',
+					'App\\Plugins\\Help': '帮助插件',
+					'App\\Plugins\\Draw': '绘图插件',
+					'App\\Plugins\\Reply': '自动回复插件'
+				};
+			 
+				pluginList.forEach(plugin => {
+					const pluginName = pluginNameMap[plugin] || plugin.split('\\').pop(); // 默认显示插件类名
+					const isEnabled = pluginStatusMap.get(plugin); // 从状态映射中获取实际状态
+					
+					// 根据状态设置样式和文本
+					const statusClass = isEnabled 
+						? 'bg-success/10 text-success' 
+						: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300';
+					const statusText = isEnabled ? '已启用' : '已禁用';
+					
+					html += `
+						<tr>
+							<td class="px-6 py-4 whitespace-nowrap">
+								<div class="text-sm font-medium text-gray-900 dark:text-gray-100">${pluginName}</div>
+							</td>
+							<td class="px-6 py-4 whitespace-nowrap">
+								<div class="text-sm text-gray-600 dark:text-gray-400 font-mono break-all max-w-xs">${plugin}</div>
+							</td>
+							<td class="px-6 py-4 whitespace-nowrap">
+								<span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">
+									${statusText}
+								</span>
+							</td>
+							<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+								<label class="switch inline-block">
+									<input type="checkbox" class="plugin-switch" data-plugin="${plugin}" ${isEnabled ? 'checked' : ''}>
+									<span class="slider"></span>
+								</label>
+							</td>
+						</tr>
+					`;
+				});
+			
+				pluginsTableBody.innerHTML = html;
+			
+				// 绑定插件开关事件
+				document.querySelectorAll('.plugin-switch').forEach(switchEl => {
+					switchEl.addEventListener('change', (e) => {
+						const plugin = e.target.getAttribute('data-plugin');
+						const isChecked = e.target.checked;
+						
+						// 更新插件状态映射
+						pluginStatusMap.set(plugin, isChecked);
+						
+						// 更新状态文本
+						const statusCell = e.target.closest('tr').querySelector('td:nth-child(3) span');
+						if (isChecked) {
+							statusCell.className = 'px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-success/10 text-success';
+							statusCell.textContent = '已启用';
+						} else {
+							statusCell.className = 'px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300';
+							statusCell.textContent = '已禁用';
+						}
+						
+						// 启用保存按钮
+						savePluginsBtn.disabled = false;
+					});
+				});
+			}
+			
+			// 渲染成员统计图表
+			function renderMemberChart(current, max) {
+				const ctx = document.getElementById('memberChart').getContext('2d');
+				
+				// 销毁已存在的图表
+				if (window.memberChartInstance) {
+					window.memberChartInstance.destroy();
+				}
+				
+				// 计算占用率和剩余数
+				const usedRate = Math.round((current / max) * 100);
+				const remaining = max - current;
+				
+				window.memberChartInstance = new Chart(ctx, {
+					type: 'doughnut',
+					data: {
+						labels: [`已占用 (${current})`, `剩余 (${remaining})`],
+						datasets: [{
+							data: [current, remaining],
+							backgroundColor: [
+								'#165DFF',
+								document.documentElement.classList.contains('dark') ? '#2D3748' : '#EDF2F7'
+							],
+							borderColor: [
+								'#165DFF',
+								document.documentElement.classList.contains('dark') ? '#2D3748' : '#EDF2F7'
+							],
+							borderWidth: 1,
+							cutout: '70%'
+						}]
+					},
+					options: {
+						responsive: true,
+						maintainAspectRatio: false,
+						plugins: {
+							legend: {
+								position: 'bottom',
+								labels: {
+									padding: 20,
+									usePointStyle: true,
+									pointStyle: 'circle'
+								}
+							},
+							tooltip: {
+								callbacks: {
+									label: function(context) {
+										const label = context.label || '';
+										const value = context.raw || 0;
+										return `${label}: ${value} (${Math.round((value / max) * 100)}%)`;
+									}
+								}
+							},
+							title: {
+								display: true,
+								text: `群成员占用率: ${usedRate}%`,
+								font: {
+									size: 14,
+									weight: 'bold'
+								},
+								padding: {
+									bottom: 20
+								}
+							}
+						},
+						animation: {
+							animateScale: true,
+							animateRotate: true
+						}
+					}
+				});
+			}
+			
+			// 更新群列表中的状态显示
+			function updateGroupStatusInList(groupId, isEnabled) {
+				const groupItem = groupsList.querySelector(`.group-item[data-group-id="${groupId}"]`);
+				if (groupItem) {
+					// 更新缓存数据中的状态
+					const groupIndex = groupDataList.findIndex(g => g.group_id === groupId);
+					if (groupIndex !== -1) {
+						// 确保status以数字类型存储
+						groupDataList[groupIndex].status = isEnabled ? 1 : 0;
+						console.log('更新后缓存中的状态值:', groupDataList[groupIndex].status, typeof groupDataList[groupIndex].status);
+						
+						// 如果当前选中的是这个群，也更新详情显示
+						if (currentGroupId === groupId) {
+							renderGroupInfo(groupDataList[groupIndex]);
+						}
+					}
+				}
+			}
+			
+			// 更新统计数据
+			function updateStatisticData() {
+				if (groupDataList.length === 0) {
+					statTotalGroups.textContent = '0';
+					statActiveGroups.textContent = '0';
+					statTotalMembers.textContent = '0';
+					totalGroupsBar.style.width = '0%';
+					activeGroupsBar.style.width = '0%';
+					totalMembersBar.style.width = '0%';
+					return;
+				}
+			
+				// 计算总群数、活跃群数、总成员数
+				const totalGroups = groupDataList.length;
+				// 只计算有明确status字段且status === 1的群作为活跃群
+				const activeGroups = groupDataList.filter(g => g.status !== undefined && g.status !== null && g.status === 1).length;
+				const totalMembers = groupDataList.reduce((sum, g) => sum + g.member_count, 0);
+				const totalMaxMembers = groupDataList.reduce((sum, g) => sum + g.max_member_count, 0);
+				
+				// 计算百分比（最大100%）
+				const totalGroupsPercent = Math.min(100, Math.round((totalGroups / 100) * 100)); // 假设系统最大支持100个群
+				const activeGroupsPercent = Math.min(100, Math.round((activeGroups / totalGroups) * 100));
+				const membersPercent = Math.min(100, Math.round((totalMembers / totalMaxMembers) * 100));
+				
+				// 更新UI
+				statTotalGroups.textContent = totalGroups;
+				statActiveGroups.textContent = activeGroups;
+				statTotalMembers.textContent = totalMembers;
+				totalGroupsBar.style.width = `${totalGroupsPercent}%`;
+				activeGroupsBar.style.width = `${activeGroupsPercent}%`;
+				totalMembersBar.style.width = `${membersPercent}%`;
+			}
+			
+			// 显示加载状态
+			function showLoading() {
+				loading.classList.remove('hidden');
+			}
+			
+			// 隐藏加载状态
+			function hideLoading() {
+				loading.classList.add('hidden');
+			}
+			
+			// 显示提示弹窗
+			function showToast(message, type = 'success') {
+				const toast = document.createElement('div');
+				const icon = document.createElement('i');
+				const text = document.createElement('span');
+			
+				text.textContent = message;
+			
+				// 1. 类型样式+图标（不变）
+				if (type === 'error') {
+					icon.className = 'fa fa-exclamation-circle mr-2';
+					toast.classList.add('bg-danger');
+				} else if (type === 'info') {
+					icon.className = 'fa fa-info-circle mr-2';
+					toast.classList.add('bg-primary');
+				} else {
+					icon.className = 'fa fa-check-circle mr-2';
+					toast.classList.add('bg-success');
+				}
+			
+				// 2. 公共样式：新增【custom-toast】专属类，用于精准统计
+				toast.classList.add(
+					'custom-toast', // 弹窗唯一标识类
+					'fixed', 'right-0', 'px-6', 'py-3', 'rounded-lg', 
+					'shadow-lg', 'transform', 'translate-x-full', 'transition-transform', 
+					'duration-300', 'flex', 'items-center', 'z-50', 'text-white'
+				);
+			
+				// 3. 精准统计：只算带custom-toast类的弹窗，避免误判
+				const toastCount = document.querySelectorAll('.custom-toast').length;
+				// 起始位置：4px（顶部很近），新弹窗始终置顶
+				const topOffset = 8 + (toastCount > 0 ? (toastCount - 0) * 32 : 0); 
+				toast.style.top = `${topOffset}px`;
+			
+				// 4. 组装+显示（不变）
+				toast.appendChild(icon);
+				toast.appendChild(text);
+				document.body.appendChild(toast);
+			
+				setTimeout(() => toast.classList.replace('translate-x-full', 'translate-x-0'), 10);
+				setTimeout(() => {
+					toast.classList.replace('translate-x-0', 'translate-x-full');
+					setTimeout(() => toast.remove(), 300);
+				}, 3000);
+			}
+			
+			window.loadGroupList = loadGroupList;
+			window.loadGroupPlugins = loadGroupPluginsWithStatus;
+		</script>
+	</body>
+</html>

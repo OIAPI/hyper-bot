@@ -45,6 +45,20 @@ final class Request {
             }
         }
 
+        // Swoole 通常会填好 $req->cookie；但在纯 HTTP 桥接 / 测试桩里可能只有
+        // Cookie 头，这里做一次兜底解析，避免会话"看着有 cookie 却读不到"。
+        $cookies = (array)($req->cookie ?? []);
+        if ($cookies === [] && isset($headers['cookie'])) {
+            foreach (explode(';', (string)$headers['cookie']) as $pair) {
+                $pair = trim($pair);
+                if ($pair === '' || !str_contains($pair, '=')) {
+                    continue;
+                }
+                [$name, $value] = explode('=', $pair, 2);
+                $cookies[trim($name)] = rawurldecode(trim($value));
+            }
+        }
+
         $path = (string)($server['path_info'] ?? $query['__path'] ?? '/');
         if ($path === '') {
             $path = '/';
@@ -57,7 +71,7 @@ final class Request {
             $body,
             $headers,
             $raw,
-            (array)($req->cookie ?? []),
+            $cookies,
             (array)($req->files ?? []),
             (string)($server['remote_addr'] ?? ''),
             (float)($server['request_time_float'] ?? microtime(true)),

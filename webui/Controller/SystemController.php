@@ -67,17 +67,19 @@ final class SystemController extends Base {
     /** 路由清单（开发/排查用） */
     public function routes(Request $request): Response {
         $router = \Core\App::boot()->container->get(\Core\Http\Router::class);
+        // Router::all() 是「方法 => 路由列表」的二维表。
         $out = [];
         foreach ($router->all() as $method => $routes) {
             foreach ($routes as $route) {
                 $out[] = [
-                    'method'      => $method,
-                    'pattern'     => $route['pattern'],
-                    'name'        => $route['name'],
-                    'middlewares' => $route['middlewares'],
+                    'method'      => (string)$method,
+                    'pattern'     => $route['pattern'] ?? '',
+                    'name'        => $route['name'] ?? null,
+                    'middlewares' => $route['middlewares'] ?? [],
                 ];
             }
         }
+        usort($out, fn($a, $b) => [$a['pattern'], $a['method']] <=> [$b['pattern'], $b['method']]);
         return $this->ok(['items' => $out, 'total' => count($out)]);
     }
 }

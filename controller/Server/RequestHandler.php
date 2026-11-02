@@ -99,6 +99,12 @@ class RequestHandler {
 				return;
 			}
 
+			// WebUI：走新的内核管线（/webui/ 与 /webui/api/*），
+			// 不匹配时返回 false 继续走下面的旧逻辑，互不影响。
+			if (class_exists(\Webui\Bridge::class) && \Webui\Bridge::handle($this->request, $this->response)) {
+				return;
+			}
+
 			$param = Cache::get('param');
 	
 			// 匹配路由：获取 [回调函数, 路由参数]

@@ -371,7 +371,7 @@ class HttpServer {
 	
 		switch ($lowerCmd) {
 			case 'clear':
-				echo `clear`;
+				echo shell_exec('clear');
 				// Logger::debug("终端命令执行 | clear（清空屏幕）");
 				break;
 			case 'stop':
@@ -379,7 +379,7 @@ class HttpServer {
 				break;
 			case 'restart':
 			case 'reload':
-				echo `clear`;
+				echo shell_exec('clear');
 				Logger::warning("终端命令执行 | restart（重启Worker进程）");
 				// System::exec("kill -USR1 " . constant(self::MASTER_PID_KEY));
 				$this->server->reload();
@@ -501,6 +501,10 @@ HELP;
 			Logger::debug("Task Worker 数量：{$workerNum}");
 			task::getInstance()->init();
 		}
+
+		// WebUI 首次运行需要生成管理员账号（多 Worker 下每个进程都会检查，
+		// 已存在则直接跳过，不会互相覆盖）。
+		\Webui\Auth::bootstrap();
 
 		// 只在一个 Worker 中启动协议客户端（常驻协程），避免重复连接
 		if ($workerId === 0) {

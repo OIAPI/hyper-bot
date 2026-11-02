@@ -25,8 +25,19 @@ use Webui\Controller\SystemController;
  * 这是「默认拒绝」而不是「默认允许」，新增接口忘了加鉴权也不会裸奔。
  */
 final class Routes {
+    /** 已注册过的路由实例（WeakMap 语义用 spl_object_id 实现） */
+    private static array $registered = [];
+
     public static function register(Router $router, AuthMiddleware $auth): void
     {
+        // 每个请求都会调 kernel()，若重复注册会让路由表无限增长并拖慢匹配，
+        // 这里按路由实例去重（同一 Router 只装配一次）。
+        $id = spl_object_id($router);
+        if (isset(self::$registered[$id])) {
+            return;
+        }
+        self::$registered[$id] = true;
+
         $router->group('/webui/api', function (Router $r) use ($auth): void {
             $authCtl = new AuthController($auth);
             $overview = new OverviewController();

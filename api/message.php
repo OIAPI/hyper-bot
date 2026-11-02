@@ -69,10 +69,10 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 获取消息
-	 * @param int $message_id 消息id
+	 * @param string|float|int $message_id 消息id（QQ 官方机器人为字符串）
 	 * @return object
 	 */
-	public function getMsg(int $message_id) : object {
+	public function getMsg(string|float|int $message_id) : object {
 		$url = $this->api . '/get_msg';
 		$data = ['message_id'=>$message_id];
 		return $this->post($url, $data);
@@ -80,10 +80,10 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 撤回消息
-	 * @param int $message_id 消息id
+	 * @param string|float|int $message_id 消息id（QQ 官方机器人为字符串）
 	 * @return object
 	 */
-	public function deleteMsg(int $message_id) : object {
+	public function deleteMsg(string|float|int $message_id) : object {
 		$url = $this->api . '/delete_msg';
 		$data = ['message_id'=>$message_id];
 		return $this->post($url, $data);
@@ -91,10 +91,10 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 标记消息已读
-	 * @param int $message_id 消息id
+	 * @param string|float|int $message_id 消息id
 	 * @return object
 	 */
-	public function markMsgAsRead(int $message_id) : object {
+	public function markMsgAsRead(string|float|int $message_id) : object {
 		$url = $this->api . '/mark_msg_as_read';
 		$data = ['message_id'=>$message_id];
 		return $this->post($url, $data);
@@ -102,10 +102,10 @@ class message extends app {
 	/**
 	 * @access public
 	 * @desc 获取合并转发
-	 * @param int $message_id 消息id
+	 * @param string|float|int $message_id 消息id
 	 * @return object
 	 */
-	public function getForwardMsg(int $message_id) : object {
+	public function getForwardMsg(string|float|int $message_id) : object {
 		$url = $this->api . '/get_forward_msg';
 		$data = ['message_id'=>$message_id];
 		return $this->post($url, $data);

@@ -50,9 +50,12 @@ class HttpAdapter extends Adapter {
 			return $this->fail(-1, 'HTTP 协议端返回非 JSON 数据：' . substr((string)$curl->result, 0, 200));
 		}
 
+		// 兼容两种响应形态：OneBot11（status/retcode）与老 CQ（code/message）
+		$code = $json['code'] ?? ($json['retcode'] ?? 0);
+		$status = $json['status'] ?? ((int)$code === 1 || (int)$code === 0 ? 'ok' : 'failed');
 		return (object)[
-			'status'  => $json['status'] ?? ($json['code'] === 1 ? 'ok' : 'failed'),
-			'retcode' => $json['retcode'] ?? ($json['code'] ?? 0),
+			'status'  => $status,
+			'retcode' => $json['retcode'] ?? $code,
 			'data'    => $json['data'] ?? null,
 			'message' => $json['message'] ?? '',
 		];

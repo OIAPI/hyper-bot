@@ -80,6 +80,23 @@ $ok('角色映射 owner', ($q['sender']['role'] ?? '') === 'owner');
 $c2c = \Protocol\QqBot\Converter::toOneBot(['op' => 0, 's' => 2, 't' => 'C2C_MESSAGE_CREATE', 'd' => ['id' => 'M2', 'content' => 'hi', 'author' => ['user_openid' => 'UOPENID', 'username' => 'u']]], 999);
 $ok('单聊消息 → private/friend', ($c2c['message_type'] ?? '') === 'private' && ($c2c['user_id'] ?? '') === 'UOPENID');
 
+echo "== QQ 官方新增事件 ==\n";
+$addBot = \Protocol\QqBot\Converter::toOneBot(['op' => 0, 's' => 3, 't' => 'GROUP_ADD_ROBOT', 'd' => ['group_openid' => 'G1', 'op_member_openid' => 'OP1', 'timestamp' => 1784570534]], 999);
+$ok('GROUP_ADD_ROBOT → group_increase/invite', ($addBot['notice_type'] ?? '') === 'group_increase' && ($addBot['sub_type'] ?? '') === 'invite');
+$ok('入群事件 user_id 是机器人自己', ($addBot['user_id'] ?? '') === '999');
+
+$delBot = \Protocol\QqBot\Converter::toOneBot(['op' => 0, 's' => 4, 't' => 'GROUP_DEL_ROBOT', 'd' => ['group_openid' => 'G1', 'op_member_openid' => 'OP1']], 999);
+$ok('GROUP_DEL_ROBOT → group_decrease/kick_me', ($delBot['notice_type'] ?? '') === 'group_decrease' && ($delBot['sub_type'] ?? '') === 'kick_me');
+
+$c2cOff = \Protocol\QqBot\Converter::toOneBot(['op' => 0, 's' => 5, 't' => 'C2C_MSG_REJECT', 'd' => ['openid' => 'U1', 'timestamp' => 1784570599]], 999);
+$ok('C2C_MSG_REJECT → private_msg_receive/disable', ($c2cOff['notice_type'] ?? '') === 'private_msg_receive' && ($c2cOff['sub_type'] ?? '') === 'disable');
+
+$groupOn = \Protocol\QqBot\Converter::toOneBot(['op' => 0, 's' => 6, 't' => 'GROUP_MSG_RECEIVE', 'd' => ['group_openid' => 'G1', 'op_member_openid' => 'OP1']], 999);
+$ok('GROUP_MSG_RECEIVE → group_msg_receive/enable', ($groupOn['notice_type'] ?? '') === 'group_msg_receive' && ($groupOn['sub_type'] ?? '') === 'enable');
+
+$subStatus = \Protocol\QqBot\Converter::toOneBot(['op' => 0, 's' => 7, 't' => 'SUBSCRIBE_MESSAGE_STATUS', 'd' => ['openid' => 'U1', 'result' => [['template_id' => 1, 'op' => 1]]]], 999);
+$ok('SUBSCRIBE_MESSAGE_STATUS → notice/subscribe_message_status', ($subStatus['notice_type'] ?? '') === 'subscribe_message_status');
+
 echo "== Config 读取 ==\n";
 $ok('protocol 段存在', \Utils\Env::get('protocol.default', '') === 'http');
 $ok('onebot 正向地址读取', \Protocol\Core\Config::string('onebot.forward.url') === 'ws://127.0.0.1:3001');

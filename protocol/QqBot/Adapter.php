@@ -29,11 +29,42 @@ class Adapter extends BaseAdapter {
 			return match ($action) {
 				'send_msg', 'send_group_msg', 'send_private_msg' => $this->sendMessage($action, $params),
 				'delete_msg', 'recall_msg'          => $this->recall($params),
-				'get_group_member_list'             => $this->getGroupMembers($params),
 				'get_login_info'                    => $this->getLoginInfo(),
+				'interaction_reply'                 => $this->interactionReply($params),
+
+				// 群信息与成员
+				'get_group_info'                    => $this->getGroupInfo($params),
+				'get_group_member_list'             => $this->getGroupMembers($params),
+				'get_group_member_info'             => $this->getGroupMemberInfo($params),
+				'set_group_kick'                    => $this->removeMembers($params),
+				'get_group_bot_state'               => $this->requestOk('GET', '/v2/groups/' . urlencode($this->groupOpenid($params)) . '/bot_state'),
+				'get_group_restrict_chat_setting'   => $this->requestOk('GET', '/v2/groups/' . urlencode($this->groupOpenid($params)) . '/restrict_chat_setting'),
+				'set_group_ban'                     => $this->muteMember($params),
+
+				// 入群申请
+				'get_group_system_msg'              => $this->joinRequestList($params),
+				'set_group_add_request'             => $this->approveJoinRequest($params),
+
+				// 黑名单
+				'get_group_member_blacklist'        => $this->requestOk('GET', '/v2/groups/' . urlencode($this->groupOpenid($params)) . '/member_blacklist', [
+					'cursor' => (string)($params['cursor'] ?? ''),
+					'limit'  => (int)($params['limit'] ?? 20),
+				]),
+				'set_group_member_blacklist'        => $this->blacklistOp($params),
+
+				// 菜单 / 面板 / 分享链接
+				'get_menu'                          => $this->requestOk('GET', '/v2/menu'),
+				'set_menu'                          => $this->requestOk('PUT', '/v2/menu', ['menu' => $params['menu'] ?? new \stdClass()]),
+				'get_panels'                        => $this->requestOk('GET', '/v2/panels'),
+				'create_panel'                      => $this->requestOk('POST', '/v2/panels', $params),
+				'generate_url_link'                 => $this->requestOk('POST', '/v2/generate_url_link', ['callback_data' => (string)($params['callback_data'] ?? '')]),
+
+				// 官方确实未开放的能力
 				'get_group_list'                    => $this->fail(-501, 'QQ 官方机器人不支持获取群列表'),
 				'get_friend_list'                   => $this->fail(-501, 'QQ 官方机器人不支持获取好友列表（官方未提供该接口）'),
-				'interaction_reply'                 => $this->interactionReply($params),
+				'get_friend_msg_history'            => $this->fail(-501, 'QQ 官方机器人不支持拉取历史消息'),
+				'get_group_msg_history'             => $this->fail(-501, 'QQ 官方机器人不支持拉取历史消息'),
+				'set_group_whole_ban'               => $this->fail(-501, 'QQ 官方机器人不支持全员禁言'),
 				default                             => $this->fail(-404, "QQ 官方机器人不支持该操作：{$action}"),
 			};
 		} catch (\Throwable $e) {
@@ -182,9 +213,172 @@ class Adapter extends BaseAdapter {
 		return $this->ok(new \stdClass());
 	}
 
+	/** 群 OpenID（兼容 group_id / group_openid 两种写法） */
+	private function groupOpenid(array $p): string {
+		$id = (string)($p['group_id'] ?? ($p['group_openid'] ?? ($p['group'] ?? '')));
+		if ($id === '') {
+			throw new \InvalidArgumentException('缺少 group_openid');
+		}
+		return $id;
+	}
+
+	/** 通用请求：成功返回 data，失败返回标准 failed 结构 */
+	private function requestOk(string $method, string $path, array $body = []): object {
+		$result = $this->request($method, $path, $body);
+		if (isset($result['code']) && (int)$result['code'] !== 0) {
+			return $this->fail((int)$result['code'], (string)($result['message'] ?? '请求失败'));
+		}
+		return $this->ok($result);
+	}
+
+	private function getGroupInfo(array $p): object {
+		$result = $this->request('GET', '/v2/groups/' . urlencode($this->groupOpenid($p)) . '/info');
+		if (isset($result['code']) && (int)$result['code'] !== 0) {
+			return $this->fail((int)$result['code'], (string)($result['message'] ?? '获取群信息失败'));
+		}
+		return $this->ok([
+			'group_id'        => (string)($result['group_openid'] ?? ''),
+			'group_name'      => (string)($result['group_name'] ?? ''),
+			'group_memo'      => (string)($result['group_finger_memo'] ?? ''),
+			'group_class_text'=> (string)($result['group_class_text'] ?? ''),
+			'member_count'    => (int)($result['group_member_num'] ?? 0),
+			'max_member_count'=> (int)($result['group_member_num'] ?? 0),
+		]);
+	}
+
+	private function getGroupMemberInfo(array $p): object {
+		$group = $this->groupOpenid($p);
+		$member = (string)($p['user_id'] ?? ($p['member_openid'] ?? ''));
+		if ($member === '') return $this->fail(-400, '缺少 member_openid');
+		$result = $this->request('GET', '/v2/groups/' . urlencode($group) . '/members/' . urlencode($member));
+		if (isset($result['code']) && (int)$result['code'] !== 0) {
+			return $this->fail((int)$result['code'], (string)($result['message'] ?? '获取成员信息失败'));
+		}
+		return $this->ok($this->mapMember($result));
+	}
+
+	/** 群成员批量移除（单次最多 20 个） */
+	private function removeMembers(array $p): object {
+		$group = $this->groupOpenid($p);
+		$openids = [];
+		if (!empty($p['user_id'])) $openids[] = (string)$p['user_id'];
+		foreach ((array)($p['user_ids'] ?? []) as $id) $openids[] = (string)$id;
+		$openids = array_values(array_unique(array_filter($openids, fn($v) => $v !== '')));
+		if ($openids === []) return $this->fail(-400, '缺少待移除成员 openid');
+		if (count($openids) > 20) return $this->fail(-400, '单次最多移除 20 个成员');
+		$result = $this->request('POST', '/v2/groups/' . urlencode($group) . '/batch_remove_members', [
+			'member_openids'           => $openids,
+			'add_to_member_blacklist'  => (bool)($p['reject_add_request'] ?? false),
+		]);
+		if (isset($result['code']) && (int)$result['code'] !== 0) {
+			return $this->fail((int)$result['code'], (string)($result['message'] ?? '移除成员失败'));
+		}
+		return $this->ok(['result' => $result['remove_members_result'] ?? 'success']);
+	}
+
+	/** 群成员禁言：OneBot 的 duration 单位是秒，官方要求 RFC3339 到期时间 */
+	private function muteMember(array $p): object {
+		$group = $this->groupOpenid($p);
+		$member = (string)($p['user_id'] ?? '');
+		if ($member === '') return $this->fail(-400, '缺少 member_openid');
+		$duration = (int)($p['duration'] ?? 0);
+		$expire = $duration > 0 ? date('c', time() + min($duration, 2592000)) : '';
+		$result = $this->request('POST', '/v2/groups/' . urlencode($group) . '/restrict_chat_setting', [
+			'members' => [[
+				'op'             => $duration > 0 ? 'add' : 'del',
+				'member_openid'  => $member,
+				'mute_expire_at' => $expire,
+			]],
+		]);
+		if (isset($result['code']) && (int)$result['code'] !== 0) {
+			return $this->fail((int)$result['code'], (string)($result['message'] ?? '设置禁言失败'));
+		}
+		return $this->ok(new \stdClass());
+	}
+
+	private function joinRequestList(array $p): object {
+		$group = $this->groupOpenid($p);
+		$result = $this->request('GET', '/v2/groups/' . urlencode($group) . '/join_request_list', [
+			'cursor' => (string)($p['cursor'] ?? ''),
+			'limit'  => (int)($p['limit'] ?? ($p['count'] ?? 20)),
+		]);
+		if (isset($result['code']) && (int)$result['code'] !== 0) {
+			return $this->fail((int)$result['code'], (string)($result['message'] ?? '获取入群申请失败'));
+		}
+		$list = array_map(function ($item) {
+			$item = (array)$item;
+			return [
+				'request_id'  => (string)($item['join_request_id'] ?? ''),
+				'user_id'     => (string)($item['member_openid'] ?? ''),
+				'nickname'    => (string)($item['username'] ?? ''),
+				'comment'     => (string)($item['risk_tips'] ?? ''),
+				'flag'        => (string)($item['join_request_id'] ?? ''),
+				'time'        => (string)($item['apply_at'] ?? ''),
+			];
+		}, (array)($result['list'] ?? []));
+		return $this->ok(['requests' => $list, 'next_cursor' => (string)($result['next_cursor'] ?? '')]);
+	}
+
+	private function approveJoinRequest(array $p): object {
+		$group  = $this->groupOpenid($p);
+		$member = (string)($p['user_id'] ?? ($p['member_openid'] ?? ''));
+		if ($member === '') return $this->fail(-400, '缺少 member_openid');
+		$approve = filter_var($p['approve'] ?? true, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? true;
+		$subType = strtolower((string)($p['sub_type'] ?? 'add'));
+		$body = [
+			'op'                  => $approve ? 'approve' : 'decline',
+			'join_request_id'     => (string)($p['flag'] ?? ($p['join_request_id'] ?? '')),
+		];
+		if (!$approve) {
+			$body['reject_reason'] = (string)($p['reason'] ?? '');
+		}
+		$result = $this->request('POST', '/v2/groups/' . urlencode($group) . '/approval_join_request/' . urlencode($member), $body);
+		if (isset($result['code']) && (int)$result['code'] !== 0) {
+			return $this->fail((int)$result['code'], (string)($result['message'] ?? '审批失败'));
+		}
+		return $this->ok(new \stdClass());
+	}
+
+	private function blacklistOp(array $p): object {
+		$group = $this->groupOpenid($p);
+		$openids = [];
+		if (!empty($p['user_id'])) $openids[] = (string)$p['user_id'];
+		foreach ((array)($p['user_ids'] ?? []) as $id) $openids[] = (string)$id;
+		$openids = array_values(array_unique(array_filter($openids, fn($v) => $v !== '')));
+		if ($openids === []) return $this->fail(-400, '缺少 member_openid');
+		$result = $this->request('POST', '/v2/groups/' . urlencode($group) . '/member_blacklist', [
+			'op'            => !empty($p['approve']) ? 'add' : 'del',
+			'member_openids'=> $openids,
+		]);
+		if (isset($result['code']) && (int)$result['code'] !== 0) {
+			return $this->fail((int)$result['code'], (string)($result['message'] ?? '黑名单操作失败'));
+		}
+		return $this->ok(new \stdClass());
+	}
+
+	/** 官方成员实体 → OneBot 成员结构 */
+	private function mapMember(mixed $m): array {
+		$m = (array)$m;
+		return [
+			'user_id'  => (string)($m['member_openid'] ?? ($m['user_openid'] ?? ($m['openid'] ?? ''))),
+			'nickname' => (string)($m['username'] ?? ''),
+			'card'     => (string)($m['username'] ?? ''),
+			'role'     => $this->mapMemberRole((string)($m['member_role'] ?? 'member')),
+			'join_time'=> (string)($m['joined_at'] ?? ''),
+			'is_bot'   => (bool)($m['bot'] ?? false),
+		];
+	}
+
+	private function mapMemberRole(string $role): string {
+		return match (strtolower($role)) {
+			'owner' => 'owner',
+			'admin' => 'admin',
+			default => 'member',
+		};
+	}
+
 	private function getGroupMembers(array $p): object {
-		$groupOpenid = (string)($p['group_id'] ?? ($p['group_openid'] ?? ''));
-		if ($groupOpenid === '') return $this->fail(-400, '缺少 group_openid');
+		$groupOpenid = $this->groupOpenid($p);
 		$result = $this->request('GET', '/v2/groups/' . urlencode($groupOpenid) . '/members', [
 			'limit'  => (int)($p['limit'] ?? 30),
 			'cursor' => (string)($p['cursor'] ?? ''),
@@ -192,20 +386,15 @@ class Adapter extends BaseAdapter {
 		if (isset($result['code']) && (int)$result['code'] !== 0) {
 			return $this->fail((int)$result['code'], (string)($result['message'] ?? '获取成员失败'));
 		}
-		$members = array_map(function ($m) {
-			$m = (array)$m;
-			return [
-				'user_id'  => (string)($m['member_openid'] ?? ($m['user_openid'] ?? ($m['openid'] ?? ''))),
-				'nickname' => (string)($m['nickname'] ?? ''),
-				'card'     => (string)($m['card'] ?? ''),
-				'role'     => (string)($m['role'] ?? 'member'),
-			];
-		}, (array)($result['members'] ?? []));
-		return $this->ok($members);
+		$members = array_map(fn($m) => $this->mapMember($m), (array)($result['members'] ?? []));
+		return $this->ok(['members' => $members, 'next_cursor' => (string)($result['next_cursor'] ?? '')]);
 	}
 
 	private function getLoginInfo(): object {
 		$result = $this->request('GET', '/users/@me');
+		if (isset($result['code']) && (int)$result['code'] !== 0) {
+			return $this->fail((int)$result['code'], (string)($result['message'] ?? '获取账号信息失败'));
+		}
 		return $this->ok([
 			'user_id'  => (string)($result['id'] ?? ''),
 			'nickname' => (string)($result['username'] ?? ''),

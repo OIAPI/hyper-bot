@@ -50,13 +50,28 @@ class WsHub {
 		$fd = $request->fd;
 		$path = rtrim((string)($request->server['path_info'] ?? '/'), '/');
 		$milkyPath = rtrim(\Protocol\Core\Config::string('milky.ws.server_path', '/milky/event'), '/');
+		$onebotPath = rtrim(\Protocol\Core\Config::string('onebot.reverse.path', '/onebot/v11/ws'), '/');
+
+		// 路径校验：不在预期端点上的连接直接拒绝，避免任意路径都能挂成反向会话
+		$isMilky  = $path === $milkyPath;
+		$isOneBot = $path === $onebotPath;
+		if (!$isMilky && !$isOneBot) {
+			Logger::warning("[WS] 未知端点，拒绝连接 | fd={$fd} | path={$path}");
+			$server->disconnect($fd, 4004, 'unknown endpoint');
+			return;
+		}
+		if ($isOneBot && !\Protocol\Core\Config::bool('onebot.reverse.enable', false)) {
+			Logger::warning("[OneBot-WS] 反向 WS 未启用，拒绝连接 | fd={$fd}");
+			$server->disconnect($fd, 4003, 'reverse ws disabled');
+			return;
+		}
 
 		/*
 		 * 鉴权说明：Swoole 的 WebSocket\Server + open_websocket_protocol 会在完成握手后
 		 * 直接派发 open 事件（onRequest 不再被调用），因此 token 校验必须放在这里。
 		 * 不通过时下发一条错误帧并断开，避免实现端无限重连却不报错。
 		 */
-		$expect = $path === $milkyPath
+		$expect = $isMilky
 			? \Protocol\Core\Config::string('milky.token', '')
 			: \Protocol\Core\Config::string('onebot.reverse.token', '');
 
@@ -72,7 +87,7 @@ class WsHub {
 		}
 
 		// Milky WS 端点：只用于本框架向外部推送事件，不按 OneBot 会话处理
-		if ($path === $milkyPath) {
+		if ($isMilky) {
 			self::$sessions[$fd] = [
 				'fd'        => $fd,
 				'connected' => time(),

@@ -35,10 +35,15 @@ class Converter {
 			'GROUP_AT_MESSAGE_CREATE', 'GROUP_MESSAGE_CREATE' => self::groupMessage($d, $time, $self, $t),
 			'C2C_MESSAGE_CREATE'                              => self::c2cMessage($d, $time, $self),
 			'AT_MESSAGE_CREATE', 'MESSAGE_CREATE', 'DIRECT_MESSAGE_CREATE' => self::channelMessage($d, $time, $self, $t),
-			'GROUP_ADD_ROBOT'                                 => self::groupIncrease($d, $time, $self),
-			'GROUP_DEL_ROBOT'                                 => self::groupDecrease($d, $time, $self),
+			'GROUP_ADD_ROBOT'                                 => self::botJoinGroup($d, $time, $self),
+			'GROUP_DEL_ROBOT'                                 => self::botLeaveGroup($d, $time, $self),
 			'GROUP_MEMBER_ADD'                                => self::groupIncrease($d, $time, $self),
 			'GROUP_MEMBER_REMOVE'                             => self::groupDecrease($d, $time, $self),
+			'C2C_MSG_RECEIVE'                                 => self::msgReceiveSwitch($d, $time, $self, 'private', true),
+			'C2C_MSG_REJECT'                                  => self::msgReceiveSwitch($d, $time, $self, 'private', false),
+			'GROUP_MSG_RECEIVE'                               => self::msgReceiveSwitch($d, $time, $self, 'group', true),
+			'GROUP_MSG_REJECT'                                => self::msgReceiveSwitch($d, $time, $self, 'group', false),
+			'SUBSCRIBE_MESSAGE_STATUS'                        => self::subscribeStatus($d, $time, $self),
 			'GROUP_JOIN_REQUEST'                              => self::groupJoinRequest($d, $time, $self),
 			'FRIEND_ADD'                                      => self::friendAdd($d, $time, $self),
 			'FRIEND_DEL'                                      => self::friendDel($d, $time, $self),
@@ -207,6 +212,67 @@ class Converter {
 	}
 
 	// ---------------- 通知 / 请求 / 元事件 ----------------
+
+	/** 机器人自身入群（GROUP_ADD_ROBOT）：user_id 是机器人自己，operator 是邀请人 */
+	private static function botJoinGroup(array $d, int $time, int $self): array {
+		return [
+			'post_type'    => 'notice',
+			'notice_type'  => 'group_increase',
+			'sub_type'     => 'invite',
+			'time'         => $time,
+			'self_id'      => $self,
+			'group_id'     => (string)($d['group_openid'] ?? ''),
+			'group_openid' => (string)($d['group_openid'] ?? ''),
+			'user_id'      => (string)$self,
+			'operator_id'  => (string)($d['op_member_openid'] ?? ''),
+		];
+	}
+
+	/** 机器人自身被移出群（GROUP_DEL_ROBOT） */
+	private static function botLeaveGroup(array $d, int $time, int $self): array {
+		return [
+			'post_type'    => 'notice',
+			'notice_type'  => 'group_decrease',
+			'sub_type'     => 'kick_me',
+			'time'         => $time,
+			'self_id'      => $self,
+			'group_id'     => (string)($d['group_openid'] ?? ''),
+			'group_openid' => (string)($d['group_openid'] ?? ''),
+			'user_id'      => (string)$self,
+			'operator_id'  => (string)($d['op_member_openid'] ?? ''),
+		];
+	}
+
+	/** 消息接收开关（C2C_MSG_RECEIVE / GROUP_MSG_RECEIVE 等） */
+	private static function msgReceiveSwitch(array $d, int $time, int $self, string $scene, bool $enabled): array {
+		$groupOpenid = (string)($d['group_openid'] ?? '');
+		return [
+			'post_type'    => 'notice',
+			'notice_type'  => $scene === 'group' ? 'group_msg_receive' : 'private_msg_receive',
+			'sub_type'     => $enabled ? 'enable' : 'disable',
+			'time'         => self::parseTime($d['timestamp'] ?? null, $time),
+			'self_id'      => $self,
+			'group_id'     => $groupOpenid,
+			'group_openid' => $groupOpenid,
+			'user_id'      => (string)($d['openid'] ?? ($d['op_member_openid'] ?? '')),
+			'operator_id'  => (string)($d['op_member_openid'] ?? ''),
+		];
+	}
+
+	/** 订阅消息授权状态变更 */
+	private static function subscribeStatus(array $d, int $time, int $self): array {
+		return [
+			'post_type'    => 'notice',
+			'notice_type'  => 'subscribe_message_status',
+			'sub_type'     => 'update',
+			'time'         => $time,
+			'self_id'      => $self,
+			'group_id'     => (string)($d['group_openid'] ?? ''),
+			'group_openid' => (string)($d['group_openid'] ?? ''),
+			'user_id'      => (string)($d['openid'] ?? ''),
+			'result'       => $d['result'] ?? [],
+		];
+	}
 
 	private static function groupIncrease(array $d, int $time, int $self): array {
 		return [

@@ -16,7 +16,8 @@ use RuntimeException;
  */
 class Message {
 	protected object $param;			   // 请求参数（提前校验，避免重复判断）
-	protected ?RequestHandler $server;	  // 响应处理器（WS/常驻事件场景下可能为空）
+	/** @var object|null 响应处理器：HTTP 请求为 RequestHandler，常驻事件为 Protocol\Core\NullResponder */
+	protected ?object $server;
 	protected ?\Redis $redis = null;	   // Redis实例（避免重复获取）
 	protected Api $api;					// API容器实例
 	protected const OFFICIAL_ROBOT_PREFIX = '3889'; // 官方机器人ID前缀（可配置化）

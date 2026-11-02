@@ -19,7 +19,8 @@ use RuntimeException;
  * @help 可通过注解的getAttributes方法获取注解类信息
  */
 class Request {
-	protected ?RequestHandler $server;	  // 响应处理器（WS/常驻事件场景下可能为空）
+	/** @var object|null 响应处理器：HTTP 请求为 RequestHandler，常驻事件为 Protocol\Core\NullResponder */
+	protected ?object $server;
 	protected string $groupId;			 // 群ID（提前提取，避免重复调用）
 	protected Api $api;					// API容器实例
 	protected object $param;			   // 请求参数（提前校验，避免重复判断）

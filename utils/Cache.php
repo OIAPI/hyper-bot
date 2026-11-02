@@ -15,7 +15,8 @@ class Cache {
 	// ---------------------- 静态核心属性（固定业务依赖，不参与动态缓存）----------------------
 	// 注：仅存放全局核心实例，避免随意扩展
 	public static ?object $param = null;	   // 请求参数对象
-	public static ?RequestHandler $server = null;	  // 业务Server实例
+	// 常驻事件（WS/Gateway）没有 HTTP 响应对象，此时为 Protocol\Core\NullResponder
+	public static ?object $server = null;	  // 业务Server实例（RequestHandler 或 NullResponder）
 	public static ?SwooleHttpServer $http = null; // Swoole HTTP Server实例
 	public static ?Api $api = null;			// API容器实例
 	public static ?array $replys = null;	   // 回复内容列表（统一小写命名）
@@ -23,6 +24,8 @@ class Cache {
 
 	// ---------------------- 动态缓存区（支持过期、过滤）----------------------
 	private static array $dynamicCache = [];   // 动态缓存存储：key=缓存名，value=[value, expireTime]
+	/** 非协程环境的「协程私有」数据兜底存储 */
+	private static array $localFallback = [];
 	private static array $reservedKeys = ['param', 'server', 'http', 'api', 'replys', 'adapter']; // 静态属性预留键名
 
 	/**
@@ -130,6 +133,41 @@ class Cache {
 
 
 	/**
+	 * 写入「协程私有」数据（不参与全局共享）
+	 *
+	 * 用途：HTTP 请求级数据（原始 body、请求头）。这些值每个请求各不相同，
+	 * 若放入全局动态缓存，两个并发请求会互相覆盖（例如 QQ 官方 Webhook 验签会用错 body）。
+	 * 非协程环境（CLI 单测等）退化为静态数组。
+	 *
+	 * @param string $name 键名
+	 * @param mixed $value 值
+	 */
+	public static function setLocal(string $name, mixed $value): void {
+		$ctx = self::ctx();
+		if ($ctx !== null) {
+			$local = $ctx['__local'] ?? [];
+			$local[$name] = $value;
+			$ctx['__local'] = $local;
+			return;
+		}
+		self::$localFallback[$name] = $value;
+	}
+
+	/**
+	 * 读取「协程私有」数据
+	 * @param string $name 键名
+	 * @param mixed $default 默认值
+	 */
+	public static function getLocal(string $name, mixed $default = null): mixed {
+		$ctx = self::ctx();
+		if ($ctx !== null) {
+			$local = $ctx['__local'] ?? [];
+			return array_key_exists($name, $local) ? $local[$name] : $default;
+		}
+		return array_key_exists($name, self::$localFallback) ? self::$localFallback[$name] : $default;
+	}
+
+	/**
 	 * 删除缓存/重置静态属性
 	 * @param string ...$names 缓存名/静态属性名（传"data"删除全部动态缓存）
 	 */
@@ -211,7 +249,7 @@ class Cache {
 		// 类型映射：静态属性名 => 允许的类型
 		$typeMap = [
 			'param' => 'object',
-			'server' => Server::class,
+			'server' => 'object', // RequestHandler / NullResponder 均是对象
 			'http' => SwooleHttpServer::class,
 			'api' => Api::class,
 			'replys' => 'array',
@@ -219,8 +257,8 @@ class Cache {
 		];
 
 		$expectedType = $typeMap[$name];
-		// 适配器允许为 null
-		if ($name === 'adapter' && $value === null) {
+		// 适配器 / 响应器允许为 null（常驻事件结束后需要清空）
+		if (in_array($name, ['adapter', 'server'], true) && $value === null) {
 			return;
 		}
 		// 检查类型（类实例用instanceof，基础类型用gettype）

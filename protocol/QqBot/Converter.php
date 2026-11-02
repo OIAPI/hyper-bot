@@ -2,6 +2,7 @@
 namespace Protocol\QqBot;
 
 use Utils\Logger;
+use Protocol\Core\Config;
 
 /**
  * QQ 官方机器人（QQ Bot API v2）→ OneBot11 事件转换器

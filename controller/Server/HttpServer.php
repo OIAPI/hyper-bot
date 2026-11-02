@@ -441,13 +441,14 @@ HELP;
 		try {
 			$requestTime = round($request->server['request_time_float'] * 1000);
 			Cache::set('request_time', $requestTime);
-			// 保存原始请求体与请求头（QQ 官方机器人 Webhook 验签必须使用原始字节）
-			Cache::set('raw_body', $request->getContent() ?: '');
+			// 保存原始请求体与请求头（QQ 官方机器人 / Milky WebHook 验签必须使用原始字节）
+			// 使用协程私有存储：并发请求时不能互相覆盖
+			Cache::setLocal('raw_body', $request->getContent() ?: '');
 			$headers = [];
 			foreach (($request->header ?: []) as $key => $value) {
 				$headers[strtolower($key)] = $value;
 			}
-			Cache::set('headers', $headers);
+			Cache::setLocal('headers', $headers);
 			$param = $this->mergeRequestParam($request);
 			Cache::$param = $param;
 			$handler = new RequestHandler($request, $response);

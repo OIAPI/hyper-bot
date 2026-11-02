@@ -1,7 +1,9 @@
 <?php
 namespace Controller\Server;
 
-use Swoole\Http\Server;
+// 注意：必须使用 WebSocket\Server（它继承自 Http\Server），
+// 否则 onOpen/onMessage 不会派发、Server::push() 也不存在。
+use Swoole\WebSocket\Server;
 use Swoole\Event;
 use Swoole\Timer;
 use Swoole\Runtime;
@@ -50,6 +52,7 @@ class HttpServer {
 				'log_file' => __logger__ . '/logger.log',
 				'log_rotation' => SWOOLE_LOG_ROTATION_DAILY,
 				// WebSocket 支持（OneBot 反向 WS / Milky WS 服务端）
+				// 说明：握手与鉴权在 WsHub::onOpen 中完成，这里保持 Swoole 默认自动握手
 				'open_websocket_protocol' => true,
 				'websocket_compression' => false,
 			],

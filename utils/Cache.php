@@ -3,7 +3,8 @@ namespace Utils;
 
 use Controller\Server\RequestHandler;
 use Controller\Api;
-use Swoole\Http\Server as SwooleHttpServer;
+// 服务端为 WebSocket\Server（继承自 Http\Server），WS 推送与 HTTP 请求共用同一实例
+use Swoole\WebSocket\Server as SwooleHttpServer;
 use InvalidArgumentException;
 use UnexpectedValueException;
 

@@ -23,7 +23,7 @@ class WsHub {
 	private static array $sessions = [];
 	/** @var array<string, Channel> echo => 等待响应的通道 */
 	private static array $pending = [];
-	/** @var \Swoole\Http\Server|null WS 服务端引用 */
+	/** @var \Swoole\WebSocket\Server|null WS 服务端引用 */
 	private static $server = null;
 	/** @var Client|null 正向 WS 客户端 */
 	private static ?Client $forward = null;
@@ -39,17 +39,37 @@ class WsHub {
 	// ---------------------- 反向 WS（服务端） ----------------------
 
 	/** 绑定 Swoole 服务器的 WS 回调 */
-	public static function bindServer(\Swoole\Http\Server $server): void {
+	public static function bindServer(\Swoole\WebSocket\Server $server): void {
 		self::$server = $server;
 		$server->on('open', [self::class, 'onOpen']);
 		$server->on('message', [self::class, 'onMessage']);
 		$server->on('close', [self::class, 'onClose']);
 	}
 
-	public static function onOpen(\Swoole\Http\Server $server, $request): void {
+	public static function onOpen(\Swoole\WebSocket\Server $server, $request): void {
 		$fd = $request->fd;
-		$path = $request->server['path_info'] ?? '/';
+		$path = rtrim((string)($request->server['path_info'] ?? '/'), '/');
 		$milkyPath = rtrim(\Protocol\Core\Config::string('milky.ws.server_path', '/milky/event'), '/');
+
+		/*
+		 * 鉴权说明：Swoole 的 WebSocket\Server + open_websocket_protocol 会在完成握手后
+		 * 直接派发 open 事件（onRequest 不再被调用），因此 token 校验必须放在这里。
+		 * 不通过时下发一条错误帧并断开，避免实现端无限重连却不报错。
+		 */
+		$expect = $path === $milkyPath
+			? \Protocol\Core\Config::string('milky.token', '')
+			: \Protocol\Core\Config::string('onebot.reverse.token', '');
+
+		if ($expect !== '' && !self::authOk($request, $expect)) {
+			Logger::warning("[WS] 鉴权失败，拒绝连接 | fd={$fd} | path={$path}");
+			$server->push($fd, json_encode([
+				'status'  => 'failed',
+				'retcode' => 401,
+				'message' => 'unauthorized: access_token 不匹配',
+			], JSON_UNESCAPED_UNICODE));
+			$server->disconnect($fd, 4001, 'unauthorized');
+			return;
+		}
 
 		// Milky WS 端点：只用于本框架向外部推送事件，不按 OneBot 会话处理
 		if ($path === $milkyPath) {
@@ -78,7 +98,27 @@ class WsHub {
 		Logger::success("[OneBot-WS] 反向 WS 客户端已连接 | fd={$fd} | IP=" . ($request->server['remote_addr'] ?? ''));
 	}
 
-	public static function onMessage(\Swoole\Http\Server $server, $frame): void {
+	/**
+	 * 校验 WS 握手请求的 access_token
+	 * 支持 Authorization: Bearer xxx、?access_token=xxx、X-Access-Token 三种写法。
+	 */
+	private static function authOk($request, string $expect): bool {
+		$header = (array)($request->header ?? []);
+		$bearer = (string)($header['authorization'] ?? ($header['Authorization'] ?? ''));
+		if (str_starts_with(strtolower($bearer), 'bearer ')) {
+			$bearer = trim(substr($bearer, 7));
+		}
+		if ($bearer === '') {
+			$bearer = (string)($header['x-access-token'] ?? ($header['X-Access-Token'] ?? ''));
+		}
+		if ($bearer === '') {
+			parse_str((string)($request->server['query_string'] ?? ''), $query);
+			$bearer = (string)($query['access_token'] ?? '');
+		}
+		return $bearer !== '' && hash_equals($expect, $bearer);
+	}
+
+	public static function onMessage(\Swoole\WebSocket\Server $server, $frame): void {
 		$fd = $frame->fd;
 		$data = json_decode((string)$frame->data, true);
 		if (!is_array($data)) {
@@ -91,7 +131,7 @@ class WsHub {
 		self::handleFrame($data, $fd);
 	}
 
-	public static function onClose(\Swoole\Http\Server $server, int $fd): void {
+	public static function onClose(\Swoole\WebSocket\Server $server, int $fd): void {
 		$role = self::$sessions[$fd]['role'] ?? 'reverse';
 		unset(self::$sessions[$fd]);
 		Logger::warning(($role === 'milky' ? '[Milky-WS] 客户端断开' : '[OneBot-WS] 反向 WS 客户端断开') . " | fd={$fd}");
@@ -129,11 +169,11 @@ class WsHub {
 
 	public static function push(int $fd, array $payload): bool {
 		$server = self::$server;
-		if (!$server instanceof \Swoole\Http\Server) {
+		if (!$server instanceof \Swoole\WebSocket\Server) {
 			$server = Cache::$http;
-			self::$server = $server instanceof \Swoole\Http\Server ? $server : null;
+			self::$server = $server instanceof \Swoole\WebSocket\Server ? $server : null;
 		}
-		if (!$server instanceof \Swoole\Http\Server) {
+		if (!$server instanceof \Swoole\WebSocket\Server) {
 			Logger::warning('[OneBot-WS] WS 服务端未就绪，无法向 fd=' . $fd . ' 推送');
 			return false;
 		}

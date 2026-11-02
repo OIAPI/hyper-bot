@@ -84,7 +84,16 @@ class RequestHandler {
 			$method = $this->request->server['request_method'] ?? 'UNKNOWN';
 			$path = $this->request->server['path_info'] ?? '/';
 
-			// WebSocket 专属握手端点（OneBot 反向 WS / Milky WS）：直接返回 101 升级响应
+			/*
+			 * WebSocket 端点的兜底分支。
+			 *
+			 * 正常情况：HttpServer 使用 Swoole\WebSocket\Server 且
+			 * open_websocket_protocol = true，升级请求由 Swoole 直接完成握手并派发
+			 * WsHub::onOpen（鉴权也在那里做），**不会**进入本方法。
+			 *
+			 * 兜底情况：服务端退化为普通 HTTP Server 时，这里显式 upgrade，
+			 * 保证 /onebot/v11/ws 与 /milky/event 仍可被手工接入。
+			 */
 			if ($this->isWebSocketEndpoint($path)) {
 				$this->handleWebSocketUpgrade($path);
 				return;

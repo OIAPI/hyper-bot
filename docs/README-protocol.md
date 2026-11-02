@@ -42,8 +42,17 @@ reverse.token = your_access_token
 
 - `forward.token` → 请求头 `Authorization: Bearer <token>`（与 go-cqhttp 的 `access_token` 对应）
 - `reverse.token` → 校验实现端带来的 `Authorization: Bearer` 或 `?access_token=`；留空表示不校验
-- 同一时刻「正向连接」优先用于 API 调用；无正向连接时使用最近活跃的反向会话
+- **API 回包优先走「事件来源的那条连接」**：反向 WS 的每个实现端连接各自持有会话，
+  把回复推到别的连接会导致消息发错人。没有来源 fd 时（HTTP 入口 / 定时任务）才退化为
+  「正向优先 → 任选一个反向会话」
 - 断线自动重连（2→30 秒退避）
+- `self_id` 可在 `onebot.self_id` 写死，留空则由事件里的 `self_id` 自动学习
+
+> ⚠️ **多 Worker 注意**：WS 会话表是 Worker 进程内的静态变量，`worker_num > 1` 时
+> 反向连接只会落在某一个 Worker 上。由 **HTTP 请求触发**的 API 调用若恰好落到其它 Worker，
+> 会因为看不到那条连接而回落到 HTTP 协议端。如需「任一 Worker 都能走 WS」，
+> 请把 `worker_num` 设为 1（`[http] sw` 段或 Swoole 默认值）。事件本身不受影响——
+> 事件总是在持有该连接的 Worker 内处理。
 
 ### 2.2 Milky
 
@@ -242,6 +251,11 @@ forward.url = ws://127.0.0.1:8081
 | QQ 官方验签一直失败 | 依赖 `ext-sodium`；`client_secret` 必须与机器人后台一致；body 必须是原始字节 |
 | QQ 官方回消息 40054005 | `msg_id+msg_seq` 重复，检查是否多个实例共用同一被动上下文 |
 | 事件重复处理 | Milky 多地址投递会被去重缓存拦截（键 = self_id+event_type+peer+seq） |
+| WS 连接上了但 API 调不到 | 多 Worker 下会话表不共享；把 `worker_num` 设为 1，或让实现端改用 HTTP |
+| 反向 WS 连上后事件不触发 | 检查 `[type]` 段是否订阅了对应 `post_type`；以及 `onebot.reverse.enable` |
+| Milky WS 收到帧但无事件 | Milky WS 只推送事件、无 action；若连的是本框架的 `/milky/event`，那是**出站**端点 |
+| QQ 官方回消息 40054005 | `msg_id+msg_seq` 重复；同一 event 被多实例消费也会触发 |
+| QQ 官方 `op=9` 后收不到事件 | 已改为主动断开重连；若仍异常检查 token 是否过期 |
 
 ---
 

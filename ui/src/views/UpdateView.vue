@@ -24,6 +24,10 @@ const branch = ref('')
 const repoUrl = ref('')
 const proxy = ref('')
 const proxyOptions = computed(() => info.value?.proxies ?? [{ label: '直连', prefix: '' }])
+// 必须缓存：每次渲染都新建数组会让下拉选项被重建，手机上表现为「点一下就闪没了」
+const proxySelectOptions = computed(() =>
+  proxyOptions.value.map((p) => ({ label: p.label, value: p.prefix })),
+)
 
 const checking = ref(false)
 const checkResult = ref<UpdateCheckResult | null>(null)
@@ -194,7 +198,7 @@ onMounted(load)
             <span class="field-label">加速前缀</span>
             <UiSelect
               :model-value="proxy"
-              :options="proxyOptions.map((p) => ({ label: p.label, value: p.prefix }))"
+              :options="proxySelectOptions"
               @update:model-value="(v: string | number) => (proxy = String(v))"
             />
           </label>

@@ -39,4 +39,4 @@
 | UiIcon | — | `#default` 放 svg |
 
 ## 参考实现
-`src/views/UiKitView.vue` 把上面每个组件都用了一遍，是唯一权威示例。
+各业务页面（如 `src/views/AccountView.vue`）就是使用示例；组件契约以本文件为准。

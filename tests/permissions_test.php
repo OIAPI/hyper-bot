@@ -75,6 +75,13 @@ try {
     check('旧等级 manager 映射为 admin', $r['ok'] === true && MemberPermissions::get('10001') === 'admin');
     $r = MemberPermissions::set('10001', 'supervisor');
     check('旧等级 supervisor 映射为 owner', $r['ok'] === true && MemberPermissions::get('10001') === 'owner');
+    // 有些 v1 部署存的是等级数字
+    $r = MemberPermissions::set('10001', '6');
+    check('数字等级 6 映射为 owner', $r['ok'] === true && MemberPermissions::get('10001') === 'owner');
+    $r = MemberPermissions::set('10001', '2');
+    check('数字等级 2 映射为 editor', $r['ok'] === true && MemberPermissions::get('10001') === 'editor');
+    $r = MemberPermissions::set('10001', '7');
+    check('数字等级 7（supervisor）映射为 owner', MemberPermissions::get('10001') === 'owner');
 
     check('删除返回 true', MemberPermissions::remove('10002') === true);
     check('删除后读不到', MemberPermissions::get('10002') === null);

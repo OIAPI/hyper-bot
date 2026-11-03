@@ -75,7 +75,26 @@ final class MemberRoles
         if (isset(self::ROLES[$role])) {
             return $role;
         }
-        return self::LEGACY[$role] ?? 'member';
+        if (isset(self::LEGACY[$role])) {
+            return self::LEGACY[$role];
+        }
+        // 有些 v1 部署存的是等级数字（2/3/6/15），按等级反查角色
+        if ($role !== '' && ctype_digit($role)) {
+            $level = (int)$role;
+            foreach (self::ROLES as $name => $meta) {
+                if ((int)$meta['level'] === $level) {
+                    return $name;
+                }
+            }
+            // supervisor 7 / director 5 / manager 4 这类没有对应角色的旧等级
+            return match (true) {
+                $level >= 6 => 'owner',
+                $level >= 3 => 'admin',
+                $level >= 2 => 'editor',
+                default     => 'member',
+            };
+        }
+        return 'member';
     }
 
     public static function level(string $role): int

@@ -36,9 +36,26 @@ final class Subscription
         public array $noticeTypes = [],
         public bool $ignoreSelf = true,
         public bool $ignoreRobots = true,
-        /** 机器人 ID 前缀（v1 的 '3889'，官方 QQ 机器人用它区分） */
+        /** 机器人 ID 前缀，支持多个：'3889,4000'（v1 只有 '3889'） */
         public string $robotPrefix = '3889',
     ) {}
+
+    /**
+     * 机器人前缀列表。
+     * 支持英文逗号 / 中文逗号 / 分号 / 空白分隔，例如 "3889, 4000；5000"。
+     */
+    public function robotPrefixes(): array
+    {
+        $parts = preg_split('/[,，;；\s]+/u', $this->robotPrefix) ?: [];
+        $list = [];
+        foreach ($parts as $part) {
+            $part = trim($part);
+            if ($part !== '' && !in_array($part, $list, true)) {
+                $list[] = $part;
+            }
+        }
+        return $list;
+    }
 
     /** 从配置构建：优先读 [subscription]（v2），缺失时回退 v1 的三个小节 */
     public static function fromConfig(): self
@@ -113,7 +130,10 @@ final class Subscription
             noticeTypes: $noticeTypes,
             ignoreSelf: $bool('subscription.ignore_self', 'type.ignore_self', true),
             ignoreRobots: $bool('subscription.ignore_robots', 'type.ignore_robots', true),
-            robotPrefix: Config::string('subscription.robot_prefix', '3889'),
+            // 显式清空（空串）= 不按前缀忽略；只有键不存在才用默认 3889
+            robotPrefix: Config::has('subscription.robot_prefix')
+                ? trim((string)Config::get('subscription.robot_prefix', ''))
+                : '3889',
         );
     }
 
@@ -145,10 +165,15 @@ final class Subscription
             return '忽略机器人自身消息';
         }
 
-        // 3. 官方机器人（ID 前缀）
-        if ($this->ignoreRobots && $this->robotPrefix !== '') {
-            if (str_starts_with($event->userId(), $this->robotPrefix)) {
-                return '忽略官方机器人消息';
+        // 3. 官方机器人（ID 前缀，可配多个）
+        if ($this->ignoreRobots) {
+            $userId = $event->userId();
+            if ($userId !== '') {
+                foreach ($this->robotPrefixes() as $prefix) {
+                    if (str_starts_with($userId, $prefix)) {
+                        return '忽略官方机器人消息（前缀 ' . $prefix . '）';
+                    }
+                }
             }
         }
 
@@ -216,6 +241,7 @@ final class Subscription
             'ignore_self'   => $this->ignoreSelf,
             'ignore_robots' => $this->ignoreRobots,
             'robot_prefix'  => $this->robotPrefix,
+            'robot_prefixes' => $this->robotPrefixes(),
             // 通知类型清单：catalog 用于兼容旧前端，groups 用于分区渲染
             'notice_catalog'  => self::noticeCatalog(),
             'notice_groups'   => SubscriptionCatalog::groups(),
@@ -377,7 +403,20 @@ final class Subscription
         }
 
         if (array_key_exists('robot_prefix', $input)) {
-            $ok = Config::set('subscription.robot_prefix', trim((string)$input['robot_prefix'])) && $ok;
+            $raw = $input['robot_prefix'];
+            if (is_array($raw)) {
+                $raw = implode(',', array_map(static fn($v) => (string)$v, $raw));
+            }
+            // 统一成「英文逗号 + 去重 + 去空白」，避免配置文件里出现 ",, 3889,"
+            $parts = preg_split('/[,，;；\s]+/u', (string)$raw) ?: [];
+            $clean = [];
+            foreach ($parts as $part) {
+                $part = trim($part);
+                if ($part !== '' && !in_array($part, $clean, true)) {
+                    $clean[] = $part;
+                }
+            }
+            $ok = Config::set('subscription.robot_prefix', implode(',', $clean)) && $ok;
         }
 
         return $ok;

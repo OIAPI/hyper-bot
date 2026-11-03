@@ -95,10 +95,13 @@ ok('空消息体被拒', $s->rejectReason(ev(['post_type' => 'message', 'message
 
 // ---------------------------------------------------------------- 6
 echo "\n=== 6. 自身与机器人过滤 ===\n";
-fixture('filter.ini', "[subscription]\nmessage_scope = all\nignore_self = true\nignore_robots = true\nrobot_prefix = 3889\n");
+fixture('filter.ini', "[subscription]\nmessage_scope = all\nignore_self = true\nignore_robots = true\nrobot_prefix = 3889, 4000；5000\n");
 $s = Subscription::fromConfig();
 ok('忽略自己', $s->rejectReason(ev(['post_type' => 'message', 'message_type' => 'group', 'group_id' => '1', 'user_id' => '100', 'self_id' => '100', 'raw_message' => 'x'])), '忽略机器人自身消息');
-ok('忽略官方机器人前缀', $s->rejectReason(ev(['post_type' => 'message', 'message_type' => 'group', 'group_id' => '1', 'user_id' => '38890001', 'self_id' => '100', 'raw_message' => 'x'])), '忽略官方机器人消息');
+ok('多前缀被正确拆分', $s->robotPrefixes(), ['3889', '4000', '5000']);
+ok('忽略前缀 3889', $s->rejectReason(ev(['post_type' => 'message', 'message_type' => 'group', 'group_id' => '1', 'user_id' => '38890001', 'self_id' => '100', 'raw_message' => 'x'])), '忽略官方机器人消息（前缀 3889）');
+ok('忽略前缀 4000', $s->rejectReason(ev(['post_type' => 'message', 'message_type' => 'group', 'group_id' => '1', 'user_id' => '40001234', 'self_id' => '100', 'raw_message' => 'x'])), '忽略官方机器人消息（前缀 4000）');
+ok('忽略前缀 5000', $s->rejectReason(ev(['post_type' => 'message', 'message_type' => 'group', 'group_id' => '1', 'user_id' => '5000', 'self_id' => '100', 'raw_message' => 'x'])), '忽略官方机器人消息（前缀 5000）');
 ok('正常用户通过', $s->allows(ev(['post_type' => 'message', 'message_type' => 'group', 'group_id' => '1', 'user_id' => '200', 'self_id' => '100', 'raw_message' => 'x'])), true);
 
 // ---------------------------------------------------------------- 7
@@ -185,6 +188,7 @@ $s2 = Subscription::fromConfig();
 ok('scope 已改', $s2->messageScope, 'all');
 ok('通知类型已改', $s2->noticeTypes, ['group_ban', 'poke']);
 ok('robot_prefix 已改', $s2->robotPrefix, '1234');
+ok('单个前缀解析正确', $s2->robotPrefixes(), ['1234']);
 ok('ignore_self 已改', $s2->ignoreSelf, false);
 
 ok('清空后保存成功', $s2->save(['notice_types' => []]), true);
@@ -193,6 +197,18 @@ ok('清空后回读为空', $s3->noticeTypes, []);
 ok('再次保存不会报错', $s3->save(['notice_types' => []]), true);
 
 ok('非法 scope 被拒', $s3->save(['message_scope' => 'nonsense']), false);
+
+echo "\n=== 11. 多机器人前缀的保存与归一化 ===\n";
+ok('保存多前缀', $s3->save(['robot_prefix' => ' 3889 , 4000；5000 ']), true);
+$s4 = Subscription::fromConfig();
+ok('落盘为英文逗号形式', $s4->robotPrefix, '3889,4000,5000');
+ok('重复前缀被去掉', $s4->robotPrefixes(), ['3889', '4000', '5000']);
+ok('支持数组入参', $s4->save(['robot_prefix' => ['3889', '4000', '3889']]), true);
+ok('数组入参去重后落盘', Subscription::fromConfig()->robotPrefix, '3889,4000');
+ok('空串表示不按前缀忽略', $s4->save(['robot_prefix' => '']), true);
+$s5 = Subscription::fromConfig();
+ok('空前缀列表为空', $s5->robotPrefixes(), []);
+ok('空前缀不误伤普通用户', $s5->allows(ev(['post_type' => 'message', 'message_type' => 'group', 'group_id' => '1', 'user_id' => '38890001', 'self_id' => '100', 'raw_message' => 'x'])), true);
 
 // ---------------------------------------------------------------- 11
 echo "\n=== 11. 全新部署默认全开 ===\n";

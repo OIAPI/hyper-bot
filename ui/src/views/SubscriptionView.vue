@@ -267,10 +267,12 @@ const CHANNELS = [
               <UiInput
                 v-model="state.robot_prefix"
                 class="w-narrow"
-                placeholder="3889"
+                placeholder="3889,4000"
                 @update:model-value="markDirty"
               />
-              <div class="field-hint">昵称以此开头的账号会被判定为机器人</div>
+              <div class="field-hint">
+                ID 以此开头的账号会被判定为机器人；多个前缀用英文逗号分隔，命中任意一个即忽略
+              </div>
             </div>
           </UiFormItem>
         </UiForm>

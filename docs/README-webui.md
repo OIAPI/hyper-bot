@@ -81,7 +81,7 @@ message / notice / request / meta_event 全开，消息范围 all，通知勾选
 
 | 来源 | 说明 |
 |---|---|
-| builtin | 内置 43 项，覆盖 OneBot 11 / Milky / QQ 官方转换器能产出的全部 notice_type |
+| builtin | 内置 44 项，覆盖 OneBot 11 / Milky / QQ 官方转换器能产出的全部 notice_type |
 | plugin | 插件类注释中的 @subscribe 声明，Registry 加载时自动收录 |
 | custom | 面板「添加」按钮写入，持久化在 runtime/subscription-custom.json |
 
@@ -104,6 +104,36 @@ Config.ini 只保存「用户选中了哪些」（[subscription] 小节），不
 
     @subscribeGroup 我的插件
     @subscribe my_event 我的事件
+
+### 机器人前缀过滤
+
+`ignore_robots` 打开时，`user_id` 以任一前缀开头的账号被视为官方机器人并丢弃。
+`robot_prefix` 支持配置**多个**前缀：
+
+    [subscription]
+    robot_prefix = 3889,4000
+
+- 分隔符：英文逗号、中文逗号、分号、空白都可以，例：`3889, 4000；5000`
+- 保存时统一归一化为英文逗号形式并去重，配置文件里不会出现 `3889,,3889`
+- 留空（`robot_prefix =`）= 不按前缀忽略，只保留 `ignore_self` 的自过滤
+- 老配置里的单个 `3889` 行为不变
+
+### 日志
+
+| 类 | 文件 | 职责 |
+|---|---|---|
+| `Core\Log\Logger` | `runtime/log/<Y-m-d>.log` | 结构化日志（level / channel / context），带内存环形缓冲供面板实时读取 |
+| `Utils\Logger` | `runtime/log/logger.log` | 终端彩色输出 + 文件追加，协程通道异步刷盘 |
+| `Utils\MessageLog` | `runtime/message/Y/m/d/<type>.log` | 事件审计（JSON Lines），在订阅过滤**之前**写，被丢弃的事件也能查 |
+
+三者的行为约束：
+
+- **轮转**：`Utils\Logger` 单文件超过 8MB 轮转，只保留最近 5 个备份；
+  `Utils\MessageLog` 单文件超过 32MB 轮转，保留最近 3 个。旧实现只增不删，日志目录会无限增长。
+- **脱敏**：`MessageLog` 写入前递归屏蔽 password / token / secret / authorization / cookie 等键，值为 `******`。
+- **截断**：单条消息超过 256KB 会被截断并标注 `[truncated N bytes]`，避免面板一次载入几 MB 的单行。
+- **读取**：`MessageLog::read($date, $type, $limit)` 支持 `Ymd` 与 `Y-m-d`，非协程环境（php 架构）同样可用。
+- 日志写失败**绝不影响业务**：所有写入路径都吞掉异常，只落到 `error_log`。
 
 ## 安全
 

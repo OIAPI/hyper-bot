@@ -202,7 +202,10 @@ export interface SubscriptionState {
   notice_types: string[]
   ignore_self: boolean
   ignore_robots: boolean
+  /** 机器人 ID 前缀，多个用英文逗号分隔（如 "3889,4000"） */
   robot_prefix: string
+  /** 后端解析后的前缀列表（只读） */
+  robot_prefixes?: string[]
   /** 扁平目录（兼容旧后端） */
   notice_catalog: Record<string, string>
   /** 分区目录（后端 v2 返回；缺失时前端退回扁平目录） */

@@ -44,6 +44,8 @@ final class Subscription
     public static function fromConfig(): self
     {
         $hasV2 = Config::get('subscription') !== null;
+        // 全新部署（三套键一个都没写）= 全开：订阅不再是「必须先手改 ini 才有东西进来」。
+        $fresh = !$hasV2 && !Config::has('type') && !Config::has('notice');
 
         $bool = static function (string $v2Key, string $v1Key, bool $default) use ($hasV2): bool {
             if ($hasV2) {
@@ -58,7 +60,7 @@ final class Subscription
         $message = $bool('subscription.message', 'type.message', true);
         $notice  = $bool('subscription.notice', 'type.notice', true);
         $request = $bool('subscription.request', 'type.request', true);
-        $meta    = $bool('subscription.meta_event', 'type.meta_event', false);
+        $meta    = $bool('subscription.meta_event', 'type.meta_event', $fresh);
 
         // 消息范围：group / private / all（v1 的 protected 是私聊别名）
         $scope = '';
@@ -66,7 +68,7 @@ final class Subscription
             $scope = Config::string('subscription.message_scope', '');
         }
         if ($scope === '') {
-            $scope = Config::string('message.type', 'group');
+            $scope = $fresh ? 'all' : Config::string('message.type', 'group');
         }
         $scope = strtolower(trim($scope));
         if ($scope === 'protected') {
@@ -92,6 +94,10 @@ final class Subscription
                 if ((is_numeric($value) && (int)$value === 1) || $value === true) {
                     $noticeTypes[] = strtolower((string)$type);
                 }
+            }
+            // 全新部署或 v1 没写过 [notice]：默认全选，避免「装了却什么都收不到」
+            if ($noticeTypes === [] && $fresh) {
+                $noticeTypes = SubscriptionCatalog::types();
             }
         }
         $noticeTypes = array_values(array_unique(array_filter(
@@ -211,8 +217,10 @@ final class Subscription
             'ignore_robots' => $this->ignoreRobots,
             'robot_prefix'  => $this->robotPrefix,
             // 通知类型清单：catalog 用于兼容旧前端，groups 用于分区渲染
-            'notice_catalog' => self::noticeCatalog(),
-            'notice_groups'  => self::noticeGroups(),
+            'notice_catalog'  => self::noticeCatalog(),
+            'notice_groups'   => SubscriptionCatalog::groups(),
+            'notice_stats'    => SubscriptionCatalog::stats(),
+            'notice_defaults' => SubscriptionCatalog::types(),
         ];
     }
 
@@ -234,8 +242,18 @@ final class Subscription
         return $flat;
     }
 
-    /** 分组后的目录：WebUI 按「群成员 / 群消息 / 群状态 / 好友私聊 / 频道 / 系统」分区展示 */
+    /** 分组后的目录：由 SubscriptionCatalog 提供（内置 + 插件 + 面板自定义） */
     public static function noticeGroups(): array
+    {
+        $groups = [];
+        foreach (SubscriptionCatalog::groups() as $group) {
+            $groups[] = ['title' => $group['title'], 'types' => $group['types']];
+        }
+        return $groups;
+    }
+
+    /** 旧的写死清单（仅作参考，实际以 SubscriptionCatalog 为准） */
+    private static function legacyNoticeGroups(): array
     {
         return [
             [

@@ -10,10 +10,18 @@
  */
 import { ref, onMounted, computed } from 'vue'
 import { subscriptionApi } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import type { NoticeGroup, SubscriptionState, SubscriptionExplain } from '@/types/api'
 
 const toast = useToastStore()
+const auth = useAuthStore()
+const canWrite = computed(() => auth.can('settings.write'))
+const query = ref('')
+const adding = ref(false)
+const newType = ref('')
+const newLabel = ref('')
+const newGroup = ref('自定义')
 const state = ref<SubscriptionState | null>(null)
 const explain = ref<SubscriptionExplain | null>(null)
 const source = ref<'v1' | 'v2'>('v2')
@@ -76,13 +84,36 @@ async function save(): Promise<void> {
 }
 
 /** 分区目录；后端没返回 groups 时把扁平目录包成一组，保证老数据也能看 */
-const noticeGroups = computed<NoticeGroup[]>(() => {
+const allGroups = computed<NoticeGroup[]>(() => {
   const s = state.value
   if (!s) return []
   if (s.notice_groups?.length) return s.notice_groups
   const flat = s.notice_catalog ?? {}
   return Object.keys(flat).length ? [{ title: '通知类型', types: flat }] : []
 })
+
+/** 搜索过滤：按类型名或中文名匹配，空组自动隐藏 */
+const noticeGroups = computed<NoticeGroup[]>(() => {
+  const q = query.value.trim().toLowerCase()
+  if (q === '') return allGroups.value
+  return allGroups.value
+    .map((g) => {
+      const types: Record<string, string> = {}
+      for (const [key, label] of Object.entries(g.types)) {
+        if (key.toLowerCase().includes(q) || label.toLowerCase().includes(q)) types[key] = label
+      }
+      return { ...g, types }
+    })
+    .filter((g) => Object.keys(g.types).length > 0)
+})
+
+const totalTypes = computed<number>(() => Object.keys(state.value?.notice_catalog ?? {}).length)
+
+const SOURCE_LABEL: Record<string, string> = {
+  builtin: '内置',
+  plugin: '插件',
+  custom: '自定义',
+}
 
 /** 目录里出现过的全部键（用于识别「配置里有、目录里没有」的旧值） */
 const knownTypes = computed<string[]>(() =>
@@ -117,6 +148,44 @@ function selectGroup(group: NoticeGroup, on: boolean): void {
   const rest = state.value.notice_types.filter((k) => !keys.includes(k))
   state.value.notice_types = on ? [...rest, ...keys] : rest
   markDirty()
+}
+
+/** 面板里添加一个自定义订阅类型，添加后立刻出现在目录里并可勾选 */
+async function addType(): Promise<void> {
+  const type = newType.value.trim()
+  if (type === '') {
+    toast.warn('请填写类型名')
+    return
+  }
+  adding.value = true
+  try {
+    await subscriptionApi.addCatalogItem({
+      type,
+      label: newLabel.value.trim(),
+      group: newGroup.value.trim() || '自定义',
+    })
+    newType.value = ''
+    newLabel.value = ''
+    toast.ok('已添加订阅类型')
+    await load()
+  } catch (e) {
+    toast.fromError(e, '添加失败')
+  } finally {
+    adding.value = false
+  }
+}
+
+async function removeType(type: string): Promise<void> {
+  try {
+    await subscriptionApi.removeCatalogItem(type)
+    if (state.value) {
+      state.value.notice_types = state.value.notice_types.filter((k) => k !== type)
+    }
+    toast.ok('已删除订阅类型')
+    await load()
+  } catch (e) {
+    toast.fromError(e, '删除失败')
+  }
 }
 
 const SCOPES = [
@@ -209,7 +278,7 @@ const CHANNELS = [
 
       <div class="section-title">
         通知类型
-        <span class="count">已选 {{ state.notice_types.length }}</span>
+        <span class="count">已选 {{ state.notice_types.length }} / {{ totalTypes }}</span>
       </div>
       <UiCard>
         <UiAlert v-if="noticeEmpty" type="warning" :closable="false" class="notice-warn">
@@ -217,13 +286,33 @@ const CHANNELS = [
         </UiAlert>
 
         <div class="notice-toolbar">
+          <UiInput
+            v-model="query"
+            class="notice-search"
+            placeholder="搜索类型或名称…"
+            clearable
+          />
           <UiButton size="small" @click="selectAll">全选</UiButton>
           <UiButton size="small" @click="clearAll">清空</UiButton>
+          <span v-if="state.notice_stats" class="notice-hint">
+            内置 {{ state.notice_stats.builtin ?? 0 }} · 插件 {{ state.notice_stats.plugin ?? 0 }} ·
+            自定义 {{ state.notice_stats.custom ?? 0 }}
+          </span>
         </div>
 
-        <div v-for="g in noticeGroups" :key="g.title" class="notice-group">
+        <div v-if="canWrite" class="notice-add">
+          <UiInput v-model="newType" class="add-type" placeholder="类型名，如 my_event" />
+          <UiInput v-model="newLabel" class="add-label" placeholder="显示名，如 自定义事件" />
+          <UiInput v-model="newGroup" class="add-group" placeholder="分组，默认「自定义」" />
+          <UiButton size="small" :loading="adding" @click="addType">添加</UiButton>
+        </div>
+
+        <div v-for="g in noticeGroups" :key="g.id || g.title" class="notice-group">
           <div class="notice-group-head">
             <span class="notice-group-title">{{ g.title }}</span>
+            <span v-if="g.source && g.source !== 'builtin'" class="source-tag">
+              {{ SOURCE_LABEL[g.source] }}
+            </span>
             <button type="button" class="link-btn" @click="selectGroup(g, true)">全选</button>
             <button type="button" class="link-btn" @click="selectGroup(g, false)">清空</button>
           </div>
@@ -238,6 +327,13 @@ const CHANNELS = [
             >
               <span class="notice-key">{{ key }}</span>
               <span class="notice-label">{{ label }}</span>
+              <span
+                v-if="canWrite && g.source === 'custom'"
+                class="chip-del"
+                title="删除该订阅类型"
+                @click.stop="removeType(key)"
+                >×</span
+              >
             </button>
           </div>
         </div>
@@ -261,7 +357,10 @@ const CHANNELS = [
           </div>
         </div>
 
-        <UiEmpty v-if="!noticeGroups.length" description="没有可配置的通知类型" />
+        <UiEmpty
+          v-if="!noticeGroups.length"
+          :description="query ? '没有匹配的类型' : '没有可配置的通知类型'"
+        />
       </UiCard>
 
       <div v-if="explain" class="section-title">为什么需要订阅</div>
@@ -324,7 +423,31 @@ p.sub { margin: 3px 0 0; font-size: 12.5px; color: var(--text-faint); }
 
 .count { margin-left: 6px; font-size: 11.5px; font-weight: 400; color: var(--text-faint); }
 .notice-warn { margin-bottom: 10px; }
-.notice-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.notice-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.notice-search { width: 220px; }
+.notice-hint { font-size: 11px; color: var(--text-faint); }
+.notice-add { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.add-type { width: 190px; }
+.add-label { width: 190px; }
+.add-group { width: 150px; }
+.source-tag {
+  padding: 0 5px;
+  font-size: 10.5px;
+  line-height: 16px;
+  border-radius: 3px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.notice-chip { position: relative; }
+.chip-del {
+  position: absolute;
+  top: 2px;
+  right: 5px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-faint);
+}
+.chip-del:hover { color: var(--danger, #d33); }
 .notice-group { margin-bottom: 14px; }
 .notice-group:last-of-type { margin-bottom: 0; }
 .notice-group-head { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }

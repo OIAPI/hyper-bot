@@ -204,6 +204,34 @@ $ok('owner 空地址 → 400', $oEmpty['status'] === 400 && ($oEmpty['json']['co
 $oPkg = $call('POST', '/webui/api/plugins/import/git', ['url' => 'https://example.invalid/nope.git'], $adminToken);
 $ok('admin 有导入权限（网络失败而非 403）', $oPkg['status'] !== 403);
 
+echo "== 订阅目录 ==\n";
+$catTmp = sys_get_temp_dir() . '/sub-custom-' . bin2hex(random_bytes(3)) . '.json';
+\Core\Bot\SubscriptionCatalog::path($catTmp);
+$cat = $call('GET', '/webui/api/subscription/catalog', [], $viewerToken);
+$ok('viewer 可读目录', $cat['status'] === 200 && count($cat['json']['data']['groups'] ?? []) >= 6);
+$ok('目录含内置统计', ($cat['json']['data']['stats']['builtin'] ?? 0) >= 40);
+$ok('目录与订阅接口同源', in_array('group_increase', array_keys($cat['json']['data']['types'] ?? []), true));
+
+$vAdd = $call('POST', '/webui/api/subscription/catalog', ['type' => 'demo_event', 'label' => '演示'], $viewerToken);
+$ok('viewer 添加订阅 → 403', $vAdd['status'] === 403);
+
+$oAdd = $call('POST', '/webui/api/subscription/catalog', ['type' => 'demo_event', 'label' => '演示事件', 'group' => '自定义'], $ownerToken);
+$ok('owner 添加订阅', ($oAdd['json']['code'] ?? 0) === 1);
+$types = array_keys($oAdd['json']['data']['types'] ?? []);
+$ok('目录里出现新类型', in_array('demo_event', $types, true));
+
+$dup = $call('POST', '/webui/api/subscription/catalog', ['type' => 'demo_event', 'label' => '重复'], $ownerToken);
+$ok('重复添加 → 400', $dup['status'] === 400);
+$bad = $call('POST', '/webui/api/subscription/catalog', ['type' => 'Bad Name', 'label' => 'x'], $ownerToken);
+$ok('非法类型名 → 400', $bad['status'] === 400);
+
+$delBuiltin = $call('DELETE', '/webui/api/subscription/catalog/group_increase', [], $ownerToken);
+$ok('内置类型不可删 → 400', $delBuiltin['status'] === 400);
+$delCustom = $call('DELETE', '/webui/api/subscription/catalog/demo_event', [], $ownerToken);
+$ok('删除自定义类型', ($delCustom['json']['code'] ?? 0) === 1);
+@unlink($catTmp);
+\Core\Bot\SubscriptionCatalog::path((defined('__root__') ? __root__ : getcwd()) . '/runtime/subscription-custom.json');
+
 // 恢复成单个管理员账号，后面的登出用例继续用它
 \Webui\Auth::setUsersForTest(['admin' => ['password' => password_hash('secret123', PASSWORD_BCRYPT), 'role' => 'admin', 'created' => time()]]);
 

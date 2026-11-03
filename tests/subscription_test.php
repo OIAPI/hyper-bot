@@ -14,6 +14,7 @@ require __root__ . '/vendor/autoload.php';
 
 use Core\Bot\Event;
 use Core\Bot\Subscription;
+use Core\Bot\SubscriptionCatalog;
 use Core\Config;
 
 $pass = 0;
@@ -193,11 +194,66 @@ ok('再次保存不会报错', $s3->save(['notice_types' => []]), true);
 
 ok('非法 scope 被拒', $s3->save(['message_scope' => 'nonsense']), false);
 
+// ---------------------------------------------------------------- 11
+echo "\n=== 11. 全新部署默认全开 ===\n";
+fixture('fresh.ini', "; 空配置\n");
+$s = Subscription::fromConfig();
+ok('message 默认开', $s->message, true);
+ok('notice 默认开', $s->notice, true);
+ok('request 默认开', $s->request, true);
+ok('meta_event 默认开', $s->metaEvent, true);
+ok('消息范围默认全部', $s->messageScope, 'all');
+ok('通知默认勾选全部目录项', $s->noticeTypes, SubscriptionCatalog::types());
+
+// ---------------------------------------------------------------- 12
+echo "\n=== 12. 面板可添加自定义订阅类型 ===\n";
+SubscriptionCatalog::path($sandbox . '/custom.json');
+$before = count(SubscriptionCatalog::types());
+$added = SubscriptionCatalog::add('my_custom_event', '我的事件', '自定义');
+ok('添加成功', $added['ok'], true);
+ok('目录多了一项', count(SubscriptionCatalog::types()), $before + 1);
+ok('新类型可读', SubscriptionCatalog::has('my_custom_event'), true);
+ok('重复添加被拒', SubscriptionCatalog::add('my_custom_event', '重复')['ok'], false);
+ok('非法类型名被拒', SubscriptionCatalog::add('Bad-Name!', 'x')['ok'], false);
+ok('落盘文件存在', is_file($sandbox . '/custom.json'), true);
+
+// 重新读盘（模拟重启）后仍在
+SubscriptionCatalog::path($sandbox . '/custom.json');
+ok('重启后仍在目录里', SubscriptionCatalog::has('my_custom_event'), true);
+
+fixture('withcustom.ini', "[subscription]\nnotice_types = my_custom_event\n");
+$s = Subscription::fromConfig();
+ok('自定义类型可被勾选保存', $s->noticeTypes, ['my_custom_event']);
+
+ok('删除成功', SubscriptionCatalog::remove('my_custom_event')['ok'], true);
+ok('删除后不在目录', SubscriptionCatalog::has('my_custom_event'), false);
+ok('内置类型不可删', SubscriptionCatalog::remove('group_increase')['ok'], false);
+SubscriptionCatalog::path($sandbox . '/custom.json');
+
+// ---------------------------------------------------------------- 13
+echo "\n=== 13. 插件 @subscribe 声明的类型自动入目录 ===\n";
+SubscriptionCatalog::absorb([
+    ['subscribes' => [['type' => 'demo_plugin_event', 'label' => '插件演示事件', 'group' => '插件演示']]],
+    ['subscribes' => [['type' => 'Bad Type', 'label' => '非法', 'group' => '插件演示']]],
+]);
+ok('插件声明已收录', SubscriptionCatalog::has('demo_plugin_event'), true);
+ok('非法声明被忽略', SubscriptionCatalog::has('bad type'), false);
+$groups = SubscriptionCatalog::groups();
+$demo = null;
+foreach ($groups as $g) {
+    if ($g['title'] === '插件演示') {
+        $demo = $g;
+    }
+}
+ok('插件声明的分组可读', $demo['source'] ?? '', 'plugin');
+ok('插件声明统计为 1', SubscriptionCatalog::stats()['plugin'] ?? 0, 1);
+
 // ---------------------------------------------------------------- 清理
 foreach (glob($sandbox . '/*') ?: [] as $file) {
     @unlink($file);
 }
 @rmdir($sandbox);
+SubscriptionCatalog::path((defined('__root__') ? __root__ : getcwd()) . '/runtime/subscription-custom.json');
 Config::path($origPath);
 Config::refresh();
 

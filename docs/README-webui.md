@@ -47,6 +47,7 @@ php bin/start.php     # 或你常用的启动入口
 | 群管理 | 登记/编辑/移除群，单群插件开关 |
 | 插件 | 插件清单、触发点、重新扫描 |
 | 消息记录 | 按日期查看 `Utils\MessageLog` 落盘的消息 |
+| 订阅 | 事件通道开关、消息范围、通知类型多选与全选、自定义订阅类型 |
 | 协议接入 | OneBot11 / Milky / QQ 官方机器人 的配置与能力矩阵 |
 | 日志 | 实时尾部 + 历史按日期，按级别过滤 |
 | 配置 | Config.ini 的表单视图、原文视图、键值写回、账号 |
@@ -69,6 +70,40 @@ public/webui/
 - `lib/dom.js`：`h('div.card', props, children)` 直接建真实节点，无虚拟 DOM。
 - `lib/api.js`：统一 fetch 封装，401 自动触发登出回调。
 - `lib/ui.js`：Toast / Modal / 确认框 / 格式化。
+
+## 消息订阅
+
+订阅决定哪些上游事件进入框架。**默认全开**：全新部署（Config.ini 里三套订阅键都没有）时
+message / notice / request / meta_event 全开，消息范围 all，通知勾选全部目录项 —— 装完就能收到事件，
+不需要先去改 ini。
+
+可订阅目录不再写死在 ini 里，由 core/Bot/SubscriptionCatalog.php 提供，三个来源：
+
+| 来源 | 说明 |
+|---|---|
+| builtin | 内置 43 项，覆盖 OneBot 11 / Milky / QQ 官方转换器能产出的全部 notice_type |
+| plugin | 插件类注释中的 @subscribe 声明，Registry 加载时自动收录 |
+| custom | 面板「添加」按钮写入，持久化在 runtime/subscription-custom.json |
+
+Config.ini 只保存「用户选中了哪些」（[subscription] 小节），不再承担「有哪些可订阅」的职责；
+老部署里 v1 的 [type] / [message] / [notice] 仍然能读，但显式清空的 notice_types 不会被复活。
+
+接口：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /webui/api/subscription | 当前订阅 + 完整目录 |
+| PUT | /webui/api/subscription | 保存选择结果 |
+| GET | /webui/api/subscription/catalog | 目录（分组 / 来源 / 统计） |
+| POST | /webui/api/subscription/catalog | 添加自定义类型，body: type / label / group |
+| DELETE | /webui/api/subscription/catalog/{type} | 删除自定义类型（内置与插件的不可删） |
+
+权限：读取需登录；增删需要 settings.write（owner / admin），viewer 返回 403。
+
+插件声明写法（类注释，二选一：空格或竖线分隔）：
+
+    @subscribeGroup 我的插件
+    @subscribe my_event 我的事件
 
 ## 安全
 

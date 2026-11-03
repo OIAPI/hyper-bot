@@ -6,7 +6,7 @@ import type {
   Overview, OverviewCounts, TimelineEvent,
   ProtocolStatus, ProtocolName, ProtocolDetail,
   SettingsData, SettingsUpdateResult,
-  SubscriptionData, SubscriptionExplain,
+  SubscriptionData, SubscriptionExplain, SubscriptionCatalogData,
   GroupList, Group, PluginList, PluginImportResult,
   LogTail, LogDates, MessageRecord,
   RuntimeData, HealthData, DiskData, RouteItem,
@@ -72,6 +72,12 @@ export const subscriptionApi = {
   get: () => http.get<SubscriptionData>('/subscription'),
   update: (payload: Record<string, unknown>) => http.put<{ subscription: unknown; needs_restart: boolean }>('/subscription', payload),
   explain: () => http.get<SubscriptionExplain>('/subscription/explain'),
+  catalog: () => http.get<SubscriptionCatalogData>('/subscription/catalog'),
+  /** 面板里添加一个可订阅类型（落盘到 runtime/subscription-custom.json） */
+  addCatalogItem: (payload: { type: string; label: string; group?: string }) =>
+    http.post<SubscriptionCatalogData>('/subscription/catalog', payload),
+  removeCatalogItem: (type: string) =>
+    http.del<SubscriptionCatalogData>('/subscription/catalog/' + encodeURIComponent(type)),
 }
 
 /** 群 */

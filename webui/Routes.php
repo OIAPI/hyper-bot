@@ -124,6 +124,9 @@ final class Routes {
                 $r->get('/subscription', [$subscription, 'index'], 'subscription.index');
                 $r->put('/subscription', [$subscription, 'update'], 'subscription.update');
                 $r->get('/subscription/explain', [$subscription, 'explain'], 'subscription.explain');
+                $r->get('/subscription/catalog', [$subscription, 'catalog'], 'subscription.catalog');
+                $r->post('/subscription/catalog', [$subscription, 'addType'], 'subscription.catalog.add');
+                $r->delete('/subscription/catalog/{type}', [$subscription, 'removeType'], 'subscription.catalog.remove');
 
                 // 系统
                 $r->get('/system/disk', [$system, 'disk'], 'system.disk');

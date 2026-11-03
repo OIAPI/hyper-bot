@@ -1,8 +1,8 @@
 <?php
 namespace Webui\Controller;
 
-use Core\App;
 use Core\Bot\Subscription;
+use Core\Bot\SubscriptionCatalog;
 use Core\Config;
 use Core\Http\Request;
 use Core\Http\Response;
@@ -42,6 +42,54 @@ final class SubscriptionController extends Base
             'subscription' => $reloaded->toArray(),
             'needs_restart' => true,
         ], '订阅已保存，重启后生效');
+    }
+
+    /** 可订阅目录：内置 + 插件声明 + 面板自定义，全部列出 */
+    public function catalog(Request $request): Response
+    {
+        return $this->ok($this->catalogPayload());
+    }
+
+    /** 面板里添加一个自定义订阅类型 */
+    public function addType(Request $request): Response
+    {
+        if ($deny = $this->guard($request, 'settings.write')) {
+            return $deny;
+        }
+        $input = $request->params();
+        $result = SubscriptionCatalog::add(
+            (string)($input['type'] ?? ''),
+            (string)($input['label'] ?? ''),
+            (string)($input['group'] ?? ''),
+        );
+        if (!$result['ok']) {
+            return $this->fail($result['msg'], -1, 400);
+        }
+        return $this->ok($this->catalogPayload(), $result['msg']);
+    }
+
+    /** 删除自定义类型（内置与插件的不能删） */
+    public function removeType(Request $request, array $params): Response
+    {
+        if ($deny = $this->guard($request, 'settings.write')) {
+            return $deny;
+        }
+        $result = SubscriptionCatalog::remove((string)($params['type'] ?? ''));
+        if (!$result['ok']) {
+            return $this->fail($result['msg'], -1, 400);
+        }
+        return $this->ok($this->catalogPayload(), $result['msg']);
+    }
+
+    /** @return array<string, mixed> */
+    private function catalogPayload(): array
+    {
+        return [
+            'groups'   => SubscriptionCatalog::groups(),
+            'types'    => SubscriptionCatalog::flat(),
+            'stats'    => SubscriptionCatalog::stats(),
+            'defaults' => SubscriptionCatalog::types(),
+        ];
     }
 
     /**

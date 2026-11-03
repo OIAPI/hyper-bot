@@ -64,6 +64,9 @@ final class App {
         $this->runtime = \Core\Runtime::fromConfig();
         $this->subscription = \Core\Bot\Subscription::fromConfig();
         $this->registry = new \Core\Bot\Registry($this->logger, $this->buildPluginSources());
+        // 插件用 @subscribe 声明的事件类型并入可订阅目录（面板上就能勾到）
+        $this->registry->load();
+        \Core\Bot\SubscriptionCatalog::absorb($this->registry->plugins());
         $this->dispatcher = new \Core\Bot\Dispatcher(
             $this->registry,
             $this->subscription,

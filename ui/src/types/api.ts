@@ -207,11 +207,25 @@ export interface SubscriptionState {
   notice_catalog: Record<string, string>
   /** 分区目录（后端 v2 返回；缺失时前端退回扁平目录） */
   notice_groups?: NoticeGroup[]
+  /** 各来源的条目数：builtin / plugin / custom */
+  notice_stats?: Record<string, number>
+  /** 全新部署时的默认勾选（= 全部目录项） */
+  notice_defaults?: string[]
 }
 
 export interface NoticeGroup {
+  id?: string
   title: string
   types: Record<string, string>
+  /** builtin = 内置清单，plugin = 插件 @subscribe 声明，custom = 面板里添加 */
+  source?: 'builtin' | 'plugin' | 'custom'
+}
+
+export interface SubscriptionCatalogData {
+  groups: NoticeGroup[]
+  types: Record<string, string>
+  stats: Record<string, number>
+  defaults: string[]
 }
 
 export interface SubscriptionData {

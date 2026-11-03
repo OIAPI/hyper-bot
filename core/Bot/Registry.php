@@ -126,6 +126,9 @@ final class Registry
             'author'      => '',
             'version'     => '',
             'lastUpdate'  => '',
+            // 插件声明的可订阅项：@subscribe <type> <label>，@subscribeGroup <分组名>
+            'subscribes'  => [],
+            'subscribeGroup' => '',
         ];
 
         $doc = (string)$ref->getDocComment();
@@ -150,6 +153,21 @@ final class Registry
                         break;
                     case 'lastupdate':
                         $meta['lastUpdate'] = $value;
+                        break;
+                    case 'subscribegroup':
+                        $meta['subscribeGroup'] = $value;
+                        break;
+                    case 'subscribe':
+                        // 支持 "type 中文名" 与 "type|中文名" 两种写法
+                        $parts = preg_split('/[\s|]+/u', $value, 2) ?: [];
+                        $type = strtolower(trim((string)($parts[0] ?? '')));
+                        if ($type !== '') {
+                            $meta['subscribes'][] = [
+                                'type'  => $type,
+                                'label' => trim((string)($parts[1] ?? '')) ?: $type,
+                                'group' => trim((string)$meta['subscribeGroup']),
+                            ];
+                        }
                         break;
                 }
             }

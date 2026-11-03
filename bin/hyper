@@ -359,6 +359,34 @@ function commandPasswd(array $ctx): void
     $list = $ctx['args'];
     $options = $ctx['options'];
 
+    // --path / --verify：排查「明明重置了却登不上」用
+    if (isset($options['path']) || in_array('--path', $list, true)) {
+        $file = \Webui\Auth::usersFile();
+        $exists = is_file($file);
+        echo PHP_EOL;
+        echo '  账号库  ' . $file . PHP_EOL;
+        echo '  状态    ' . ($exists ? ($isReadable = is_readable($file) ? '存在且可读' : '存在但不可读（属主/权限问题）') : '不存在（首次请求会自动创建 admin）') . PHP_EOL;
+        if ($exists) {
+            echo '  大小    ' . (int)@filesize($file) . ' 字节，' . count(\Webui\Auth::users()) . ' 个账号' . PHP_EOL;
+            echo '  属主    ' . (function_exists('posix_getpwuid') ? (@posix_getpwuid(@fileowner($file))['name'] ?? '?') : '?') . PHP_EOL;
+        }
+        $err = \Webui\Auth::storageError();
+        if ($err !== null) {
+            echo '  故障    ' . $err . PHP_EOL;
+        }
+        echo PHP_EOL;
+        return;
+    }
+
+    if (isset($options['verify']) || in_array('--verify', $list, true)) {
+        $u = (string)($list[1] ?? 'admin');
+        $pw = (string)($list[2] ?? '');
+        $ok = \Webui\Auth::verify($u, $pw) !== null;
+        echo PHP_EOL . '  校验 ' . $u . '：' . ($ok ? '密码正确' : '密码不匹配') . PHP_EOL;
+        echo '  账号库 ' . \Webui\Auth::usersFile() . PHP_EOL . PHP_EOL;
+        exit($ok ? 0 : 1);
+    }
+
     if (isset($options['list']) || in_array('--list', $list, true) || in_array('list', $list, true)) {
         $users = \Webui\Auth::users();
         if ($users === []) {

@@ -194,7 +194,20 @@ php bin/hyper passwd admin                # 不给密码则生成随机强密码
 
 登录页报「用户名或密码错误」时也会提示这条命令。重置后请到「账号设置」再改一次。
 
+排查「明明重置了却登不上」，先确认两边看的是同一个文件：
+
+```bash
+php bin/hyper passwd --path                 # 账号库路径、是否存在/可读、属主、账号数
+php bin/hyper passwd --verify admin '密码'  # 直接用 users.json 里的哈希校验，绕过网页
+```
+
+- `--verify` 返回「密码正确」但网页仍登不上 → 问题在会话/接口层，不在密码；
+- `--path` 显示「存在但不可读」→ 属主或权限不对。CLI 用 root 建的文件是 `0600 root`，而 php-fpm 以 www 运行就读不到，此时面板会报「账号文件不可用」而不是「密码错误」。修法：`chown -R www:www runtime`（把 www 换成实际的 FPM 用户）。
+
+**首次启动会自动建号**：`users.json` 不存在时，第一个请求会创建 `admin`（owner），随机密码写入 `runtime/webui/initial-password.txt`（0600），启动横幅与日志会打印该路径。不想用随机密码就先跑 `php bin/hyper passwd admin '密码'`。
+
 > 注意：`webui.password` 只在 **users.json 不存在**时用于初始化，之后改 Config.ini 不会改密码。
+> 账号文件存在但内容损坏（不是合法 JSON）时，系统**不会**重建覆盖，而是报错让人去修，避免把原有账号和第三方绑定冲掉。
 
 ## 版本号
 

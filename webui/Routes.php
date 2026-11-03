@@ -161,6 +161,17 @@ final class Routes {
      */
     public static function kernel(?\Closure $fallback = null): Kernel {
         $app = App::boot();
+        // 首次启动（users.json 不存在）自动建 admin，随机密码写到
+        // runtime/webui/initial-password.txt —— 否则全新部署根本没有任何账号，
+        // 用户看到的现象就是「怎么输密码都不对」。
+        $boot = \Webui\Auth::bootstrap();
+        if ($boot !== null) {
+            $target = $boot['password_file'] ?? null;
+            \Utils\Logger::info(
+                '已创建管理员账号 admin（角色 owner），初始密码'
+                . ($target !== null ? '见 ' . $target : '已写入日志，请用 php bin/hyper passwd admin 重置')
+            );
+        }
         // 老数据里首个账号可能是 admin：保证系统始终有一个 owner
         \Webui\Auth::ensureOwner();
         $auth = new AuthMiddleware($app->store);

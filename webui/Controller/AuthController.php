@@ -52,6 +52,15 @@ final class AuthController extends Base {
             return $this->fail('登录尝试过于频繁，请 5 分钟后再试', -2, 429);
         }
 
+        // 账号库为空或读不出来时，"用户名或密码错误" 会把人带到错误方向
+        $storageError = Auth::storageError();
+        if ($storageError !== null) {
+            return $this->fail('账号文件不可用：' . $storageError . '。修复后可用 php bin/hyper passwd admin <密码> 重建', -4, 500);
+        }
+        if (Auth::users() === []) {
+            return $this->fail('还没有任何账号：在服务器执行 php bin/hyper passwd admin <密码> 创建', -4, 409);
+        }
+
         $user = Auth::verify($username, $password);
         if ($user === null) {
             $this->store->set($key, $fails + 1, 300);

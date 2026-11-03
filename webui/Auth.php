@@ -19,6 +19,8 @@ final class Auth {
     private static ?array $users = null;
     private static ?string $lastGeneratedPassword = null;
     private static bool $lastPasswordSaved = false;
+    /** 账号文件存在但读不出来/不是合法 JSON 时的原因（权限、损坏） */
+    private static ?string $storageError = null;
 
     public static function dir(): string {
         $root = defined('__runtime__') ? __runtime__ : dirname(__DIR__) . '/runtime';
@@ -40,17 +42,35 @@ final class Auth {
         }
         $file = self::usersFile();
         if (is_file($file)) {
-            $decoded = json_decode((string)@file_get_contents($file), true);
+            $raw = @file_get_contents($file);
+            if ($raw === false) {
+                // 文件在、但读不出来：多半是属主/权限不对（CLI 用 root 建，FPM 是 www）
+                self::$storageError = '无法读取 ' . $file . '（检查属主与权限）';
+                return self::$users = [];
+            }
+            $decoded = json_decode($raw, true);
             if (is_array($decoded)) {
                 return self::$users = $decoded;
             }
+            self::$storageError = $file . ' 内容不是合法 JSON（文件可能被截断）';
+            return self::$users = [];
         }
         return self::$users = [];
+    }
+
+    /** 账号文件的故障原因（权限/损坏），正常时为 null */
+    public static function storageError(): ?string {
+        self::users();
+        return self::$storageError;
     }
 
     /** 首次启动初始化；返回新建的账号信息或 null */
     public static function bootstrap(): ?array {
         if (self::users() !== []) {
+            return null;
+        }
+        // 文件在但读不出来时绝不能「重建」：那会把原账号覆盖成随机密码
+        if (self::$storageError !== null) {
             return null;
         }
 
@@ -63,6 +83,9 @@ final class Auth {
             $saved = \Core\Fs::write($file, $password . "\n");
             if ($saved) {
                 @chmod($file, 0600);
+            } else {
+                // 文件写不进去时把密码打到日志里，否则用户永远进不来
+                \Utils\Logger::error('初始密码（runtime/webui 不可写，无法保存到文件）：' . $password);
             }
             // 文件写不进去时不能把密码吞掉，否则用户永远登不进来
             self::$lastGeneratedPassword = $password;

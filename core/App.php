@@ -201,37 +201,63 @@ final class App {
 
         $fileFallback = new \Core\Store\FileStore($root . '/store');
 
-        // auto / redis：能用 Redis 就用，否则退化为文件存储
+        // auto / redis：能用 Redis 就用，否则退化为文件存储。
+        // 关键点：失败原因必须说出来。以前这里把异常全吞掉，结果用户看到的
+        // 现象是「Redis 明明能连，面板却不用」——其实是 AUTH / SELECT / PING
+        // 某一步失败后静默回退了，日志里一个字都没有。
         if (class_exists('Redis')) {
+            $reason = '';
+            $client = null;
             try {
                 $client = new \Redis();
                 $host = Config::string('Redis.host', '127.0.0.1');
                 $port = Config::int('Redis.port', 6379);
-                $connected = @$client->connect($host, $port, 1.0);
-                if ($connected === true) {
+                if (@$client->connect($host, $port, 1.0) !== true) {
+                    $reason = '连接 ' . $host . ':' . $port . ' 失败（端口没开 / 防火墙 / 只监听其他地址）';
+                } else {
                     $auth = Config::string('Redis.auth', '');
                     if ($auth !== '') {
-                        @$client->auth($auth);
-                    }
-                    $select = Config::int('Redis.select', 0);
-                    if ($select > 0) {
-                        @$client->select($select);
-                    }
-                    // 连上了不代表对端是 Redis（端口被 HTTP 服务占用时也会 connect 成功），
-                    // 先 PING 一次，失败就直接用文件存储
-                    try {
-                        $pong = @$client->ping();
-                        if ($pong === false) {
-                            throw new \RuntimeException('PING 无响应');
+                        try {
+                            @$client->auth($auth);
+                        } catch (\Throwable $e) {
+                            // 服务器压根没设密码时，AUTH 会报 "no password is set"，
+                            // 这种情况不该判定为失败，继续往下走
+                            if (stripos($e->getMessage(), 'no password is set') === false) {
+                                $reason = 'AUTH 失败：' . $e->getMessage()
+                                    . '（Config.ini 的 Redis.auth 与服务器 requirepass 不一致）';
+                            }
                         }
-                        return new \Core\Store\ResilientStore(new \Core\Store\RedisStore($client), $fileFallback);
-                    } catch (\Throwable) {
-                        @$client->close();
                     }
+                    if ($reason === '') {
+                        $select = Config::int('Redis.select', 0);
+                        if ($select > 0) {
+                            try {
+                                @$client->select($select);
+                            } catch (\Throwable $e) {
+                                $reason = 'SELECT ' . $select . ' 失败：' . $e->getMessage()
+                                    . '（库索引超出范围，或该账号无权限）';
+                            }
+                        }
+                    }
+                    if ($reason === '') {
+                        try {
+                            $pong = @$client->ping();
+                            if ($pong === false || $pong === null) {
+                                $reason = 'PING 无响应（对端可能不是 Redis，端口被别的服务占了）';
+                            }
+                        } catch (\Throwable $e) {
+                            $reason = 'PING 失败：' . $e->getMessage() . '（对端可能不是 Redis）';
+                        }
+                    }
+                    if ($reason === '') {
+                        return new \Core\Store\ResilientStore(new \Core\Store\RedisStore($client), $fileFallback);
+                    }
+                    @$client->close();
                 }
-            } catch (\Throwable) {
-                // 落到文件存储
+            } catch (\Throwable $e) {
+                $reason = $e->getMessage();
             }
+            \Utils\Logger::warning('Redis 不可用，已回退文件存储：' . $reason . '；执行 php bin/hyper redis 可逐步排查');
         }
 
         return $fileFallback;

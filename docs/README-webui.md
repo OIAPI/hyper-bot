@@ -192,6 +192,40 @@ arch / receives_events / arch_hint。
 - 想彻底解决：`store.driver = file`，或把 `Redis.host / Redis.port` 改回真正的 Redis
 - 自检：`php bin/hyper doctor` 会真的 PING 一次并说明「连上了但不是 Redis」
 
+### Redis / KeyDB「明明能连，面板就是不用」
+
+以前这种情况日志里一个字都没有：连接成功但 AUTH、SELECT、PING 任一步失败，代码静默回退文件存储。现在：
+
+- 回退时会打一条 WARNING，写明具体哪一步失败以及原因
+- `php bin/hyper redis` 逐步诊断，逐行告诉你卡在哪：
+
+```
+TCP 连接    OK
+AUTH        FAIL  WRONGPASS invalid username-password pair  ← 密码与服务器 requirepass 不一致
+```
+
+常见原因：
+
+| 现象 | 原因 |
+|---|---|
+| AUTH FAIL | `Config.ini` 的 `Redis.auth` 与服务器 `requirepass` 不一致 |
+| 容器里设了密码却不生效 | 启动参数写成了 `--require pass xxx`，正确的是 `--requirepass xxx` |
+| 没设密码却配了 auth | 旧版直接失败；现在会识别「no password is set」并继续用 |
+| SELECT FAIL | `Redis.select` 超出库范围（默认只有 0-15）或该库被禁用 |
+| PING FAIL | 端口上不是 Redis（被 nginx / 其他 HTTP 服务占用） |
+| 诊断全 OK 但仍不用 | `Config.ini` 里 `[store] driver` 被写成了 `file` |
+
+KeyDB 与 Redis 协议兼容，直接按 Redis 配置即可（`docker run ... keydb-server --requirepass 你的密码`）。
+
+### 为什么会被「踢下线」
+
+面板的登录态是服务端会话。2.1.6 起会话**默认存在本地文件**（`runtime/store/session`，配置项 `[webui] session_store = file`），不再跟业务缓存共用 Redis：
+
+- 以前会话和缓存共用 Redis：Redis 重启、被 LRU 淘汰、或某次请求降级到文件存储，之前写进去的 token 就查不到 → 接口 401 → 前端跳登录页，看起来就是「莫名其妙被踢」
+- 现在 Redis 抖动只影响缓存，会话还在；只有 12 小时有效期到了才会要求重新登录
+- 存储后端异常时，会话校验失败会返回 **503（存储异常）** 而不是 401，前端不会把人踢回登录页
+- 多机部署需要共享会话时，把 `session_store` 改回 `store`，并保证 Redis 稳定
+
 ## 忘记密码（重置面板账号）
 
 面板账号存在 `runtime/webui/users.json`，密码是 bcrypt 哈希。下面三种情况都会让「原来那个密码」失效：

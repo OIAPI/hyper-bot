@@ -56,6 +56,9 @@ switch ($command) {
     case 'password':
         commandPasswd($args);
         break;
+    case 'redis':
+        commandRedis($args);
+        break;
     case 'status':
         commandStatus($args);
         break;
@@ -346,6 +349,122 @@ function commandWorker(array $ctx): void
 }
 
 // ---------------- doctor ----------------
+
+
+/**
+ * Redis / KeyDB 逐步连通性诊断。
+ *
+ * 用户最常见的困惑是「Redis 明明能连，面板就是不用」——真正原因几乎总是
+ * AUTH 密码不对、SELECT 的库不存在、或者端口上跑的根本不是 Redis，
+ * 而旧代码把这些异常全吞掉后静默回退到了文件存储。
+ */
+function commandRedis(array $ctx): void
+{
+    $host = \Core\Config::string('Redis.host', '127.0.0.1');
+    $port = \Core\Config::int('Redis.port', 6379);
+    $auth = \Core\Config::string('Redis.auth', '');
+    $select = \Core\Config::int('Redis.select', 0);
+    $masked = $auth === '' ? '（未配置）' : str_repeat('*', max(0, strlen($auth) - 2)) . substr($auth, -2);
+
+    $line = static function (string $step, bool $ok, string $detail = ''): void {
+        printf("  %-12s %s%s\n", $step, $ok ? 'OK  ' : 'FAIL', $detail !== '' ? '  ' . $detail : '');
+    };
+
+    echo PHP_EOL;
+    echo '  目标    ' . $host . ':' . $port . '  db=' . $select . '  auth=' . $masked . PHP_EOL;
+    echo '  配置    ' . \Core\Config::path() . PHP_EOL;
+    echo '  ' . str_repeat('-', 66) . PHP_EOL;
+
+    if (!class_exists('Redis')) {
+        $line('ext-redis', false, '没有 php-redis 扩展，只能使用文件存储');
+        echo PHP_EOL . '  安装示例：apt install php-redis（或 pecl install redis）' . PHP_EOL . PHP_EOL;
+        return;
+    }
+    $line('ext-redis', true, phpversion('redis') ?: '');
+
+    $client = new \Redis();
+    $error = '';
+    try {
+        $connected = @$client->connect($host, $port, 1.5);
+    } catch (\Throwable $e) {
+        $connected = false;
+        $error = $e->getMessage();
+    }
+    $line('TCP 连接', $connected === true, $connected === true ? '' : ($error !== '' ? $error : '连不上（端口未开 / 防火墙 / 只监听 127.0.0.1 / 容器端口没映射）'));
+    if ($connected !== true) {
+        echo PHP_EOL . '  提示：容器部署时 Redis 若在容器内，面板应连 127.0.0.1:映射端口；' . PHP_EOL
+            . '        若面板也在容器里，host 要写容器名（如 redis）而不是 127.0.0.1。' . PHP_EOL . PHP_EOL;
+        return;
+    }
+
+    if ($auth !== '') {
+        try {
+            @$client->auth($auth);
+            $line('AUTH', true);
+        } catch (\Throwable $e) {
+            $msg = $e->getMessage();
+            if (stripos($msg, 'no password is set') !== false) {
+                $line('AUTH', true, '服务器没设密码，跳过（配置里的 auth 可删掉）');
+            } else {
+                $line('AUTH', false, $msg . '  ← 密码与服务器 requirepass 不一致');
+                echo PHP_EOL . '  提示：KeyDB/Redis 的启动参数是 --requirepass <密码>；' . PHP_EOL
+                    . '        写成 --require pass <密码>（中间有空格）不会生效，服务端等于没密码。' . PHP_EOL . PHP_EOL;
+                return;
+            }
+        }
+    } else {
+        $line('AUTH', true, '未配置密码');
+    }
+
+    if ($select > 0) {
+        try {
+            @$client->select($select);
+            $line('SELECT ' . $select, true);
+        } catch (\Throwable $e) {
+            $line('SELECT ' . $select, false, $e->getMessage() . '  ← 库索引超出范围（默认只有 0-15）或该库被禁');
+            return;
+        }
+    } else {
+        $line('SELECT', true, '使用 db=0');
+    }
+
+    try {
+        $pong = @$client->ping();
+        $line('PING', $pong !== false && $pong !== null, is_string($pong) ? $pong : '');
+        if ($pong === false || $pong === null) {
+            echo PHP_EOL . '  提示：端口能连但不是 Redis 协议，检查是不是被 nginx / 其他 HTTP 服务占用。' . PHP_EOL . PHP_EOL;
+            return;
+        }
+    } catch (\Throwable $e) {
+        $line('PING', false, $e->getMessage());
+        return;
+    }
+
+    $key = 'hyper:doctor:' . bin2hex(random_bytes(4));
+    try {
+        $set = (bool)@$client->set($key, 'ok');
+        $get = (string)@$client->get($key);
+        @$client->del($key);
+        $line('读写往返', $set && $get === 'ok', $set && $get === 'ok' ? 'set/get/del 正常' : '写入或读取失败');
+    } catch (\Throwable $e) {
+        $line('读写往返', false, $e->getMessage());
+    }
+
+    try {
+        $info = (array)@$client->info('server');
+        $version = (string)($info['redis_version'] ?? $info['keydb_version'] ?? '');
+        $line('服务端', true, ($info['keydb_version'] ?? '') !== '' ? 'KeyDB ' . $version : 'Redis ' . $version);
+    } catch (\Throwable) {
+        // 某些托管实例禁用 INFO，不算失败
+    }
+
+    try {
+        $line('会话存储', true, '面板会话默认存本地文件（webui.session_store=file），不受 Redis 抖动影响');
+    } catch (\Throwable) {
+    }
+
+    echo PHP_EOL . '  结论：Redis 可用。若面板仍未使用，检查 Config.ini 的 [store] driver 是否被写成 file。' . PHP_EOL . PHP_EOL;
+}
 
 /** 环境体检：把所有「能不能跑」的判断集中到一处 */
 /**
@@ -805,6 +924,9 @@ function printHelp(): void
     echo PHP_EOL;
     echo '  php bin/hyper passwd [用户名] [新密码] [--list] [--role=owner|admin|viewer]' . PHP_EOL;
     echo '      重置面板密码（忘记密码时用）；不给密码则生成随机强密码' . PHP_EOL;
+    echo PHP_EOL;
+    echo '  php bin/hyper redis' . PHP_EOL;
+    echo '      逐步诊断 Redis/KeyDB：扩展 / TCP / AUTH / SELECT / PING / 读写' . PHP_EOL;
     echo PHP_EOL;
     echo '  php bin/hyper status' . PHP_EOL;
     echo '      打印当前架构、存储、订阅、协议启用情况' . PHP_EOL;

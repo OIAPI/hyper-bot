@@ -23,13 +23,8 @@ final class AuthController extends Base {
      */
     public function status(Request $request): Response {
         $token = $this->auth->token($request);
-        $session = null;
-        if ($token !== '') {
-            $session = $this->store->get('webui:session:' . $token);
-            if (!is_array($session) || ($session['expires'] ?? 0) < time()) {
-                $session = null;
-            }
-        }
+        // 会话由 AuthMiddleware 统一持有（默认是独立文件存储，不走 Redis）
+        $session = $this->auth->session($token);
         return $this->ok([
             'authenticated' => $session !== null,
             'user'          => $session['user'] ?? [],

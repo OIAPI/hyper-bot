@@ -251,7 +251,7 @@ async function logout(): Promise<void> {
 </script>
 
 <template>
-  <div class="page account">
+  <div class="page account-page">
     <header class="page-head">
       <div>
         <h1>账号</h1>
@@ -416,10 +416,10 @@ async function logout(): Promise<void> {
 .page-head { margin-bottom: 0; align-items: flex-end; }
 h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 .sub { margin: 4px 0 0; color: var(--text-faint); font-size: 12.5px; }
-.account { max-width: 860px; width: 100%; overflow-x: hidden; }
+.account-page { max-width: 860px; width: 100%; overflow-x: hidden; }
 /* 窄屏时角色下拉与两个按钮会一起挤出去，这里让表格自己横向滚动 */
-.account :deep(.el-table__body-wrapper),
-.account :deep(.el-table__header-wrapper) { overflow-x: auto; }
+.account-page :deep(.el-table__body-wrapper),
+.account-page :deep(.el-table__header-wrapper) { overflow-x: auto; }
 .role-select { width: 100%; min-width: 96px; }
 .pwd-form { display: flex; flex-direction: column; gap: 2px; }
 .logout-row { display: flex; align-items: center; gap: 14px; }

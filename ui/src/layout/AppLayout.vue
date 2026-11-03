@@ -362,10 +362,10 @@ async function doLogout(): Promise<void> {
         </UiPopover>
 
         <UiDropdown :items="accountItems" trigger="click" @select="onCommand">
-          <button class="account" type="button">
+          <button class="user-chip" type="button">
             <UiAvatar :size="26" class="avatar">{{ (auth.user?.username ?? '?').slice(0, 1).toUpperCase() }}</UiAvatar>
-            <span class="account-name">{{ auth.user?.username ?? '—' }}</span>
-            <span class="account-caret"><ArrowDown /></span>
+            <span class="user-chip-name">{{ auth.user?.username ?? '—' }}</span>
+            <span class="user-chip-caret"><ArrowDown /></span>
           </button>
         </UiDropdown>
       </header>
@@ -477,7 +477,7 @@ async function doLogout(): Promise<void> {
 .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .nav-ico {
   display: inline-flex; font-size: 15px; flex: none; display: inline-flex; }
-.nav-ico svg, .rail-foot-ico svg, .account-caret svg, .hamburger svg {
+.nav-ico svg, .rail-foot-ico svg, .user-chip-caret svg, .hamburger svg {
   width: 1em;
   height: 1em;
   display: block;
@@ -561,7 +561,7 @@ async function doLogout(): Promise<void> {
 .icon-btn:hover { border-color: var(--border-strong); background: var(--bg-hover); }
 .accent-chip { width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12); }
 
-.account {
+.user-chip {
   height: 32px;
   display: flex;
   align-items: center;
@@ -575,9 +575,9 @@ async function doLogout(): Promise<void> {
   font-size: 12.5px;
   cursor: pointer;
 }
-.account:hover { background: var(--bg-hover); }
-.account-name { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-caret { font-size: 11px; color: var(--text-faint); }
+.user-chip:hover { background: var(--bg-hover); }
+.user-chip-name { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-chip-caret { font-size: 11px; color: var(--text-faint); }
 
 .content { flex: 1; overflow-y: auto; padding: 16px; background: var(--bg); }
 
@@ -815,8 +815,8 @@ async function doLogout(): Promise<void> {
   .hamburger { display: inline-flex; }
   .content { padding: 12px; }
   .mobile-mask { display: block; position: fixed; inset: 0; z-index: 200; background: rgb(15 17 21 / 0.42); }
-  .account { padding: 0 6px 0 3px; }
-  .account-name { display: none; }
+  .user-chip { padding: 0 6px 0 3px; }
+  .user-chip-name { display: none; }
   .uptime { display: none; }
 }
 </style>

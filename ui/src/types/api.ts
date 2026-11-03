@@ -384,6 +384,8 @@ export interface RuntimeData {
 // ---------------- 系统 ----------------
 
 export interface HealthData {
+  /** 程序版本，来自仓库根目录 VERSION */
+  version?: string
   ok: boolean
   checks: Array<{ name: string; ok: boolean; detail: string }>
 }

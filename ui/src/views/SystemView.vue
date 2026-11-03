@@ -103,6 +103,7 @@ function usagePercent(d: DiskData): number {
             <div class="card-head-row">
               <span class="card-title">健康检查</span>
               <div class="spacer" />
+              <UiTag v-if="health?.version" type="accent" size="small">v{{ health.version }}</UiTag>
               <UiTag v-if="health" :type="health.ok ? 'ok' : 'danger'" size="small">
                 {{ health.ok ? '正常' : '有异常' }}
               </UiTag>

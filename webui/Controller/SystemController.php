@@ -27,6 +27,7 @@ final class SystemController extends Base {
         ];
         $ok = $runtimeOk && $configOk && $vendorOk;
         return $this->ok([
+            'version' => \Core\Version::current(),
             'ok'      => $ok,
             'status'  => $ok ? 'ok' : 'degraded',
             'checks'  => $checks,

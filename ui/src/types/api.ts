@@ -214,6 +214,24 @@ export interface SubscriptionState {
   notice_stats?: Record<string, number>
   /** 全新部署时的默认勾选（= 全部目录项） */
   notice_defaults?: string[]
+  /** 请求类型白名单（空 = 全收） */
+  request_types: string[]
+  /** 元事件类型白名单（空 = 全收） */
+  meta_event_types: string[]
+  request_catalog?: Record<string, string>
+  meta_event_catalog?: Record<string, string>
+  /** 按群覆盖：群号 -> 覆盖项 */
+  group_overrides?: Record<string, GroupOverride>
+}
+
+/** 单个群的订阅覆盖（缺省字段跟随全局） */
+export interface GroupOverride {
+  /** 该群不接收任何事件 */
+  mute: boolean
+  /** 该群的消息是否接收 */
+  message: boolean
+  /** 非空 = 该群只收这些通知类型 */
+  notice_types: string[]
 }
 
 export interface NoticeGroup {
@@ -234,6 +252,10 @@ export interface SubscriptionCatalogData {
 export interface SubscriptionData {
   subscription: SubscriptionState
   configured_from: 'v1' | 'v2'
+  /** 当前架构：webui-only 时不会接协议事件流 */
+  arch?: 'swoole' | 'php' | 'webui'
+  receives_events?: boolean
+  arch_hint?: string | null
 }
 
 export interface SubscriptionExplain {

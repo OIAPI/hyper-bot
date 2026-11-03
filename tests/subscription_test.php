@@ -15,6 +15,7 @@ require __root__ . '/vendor/autoload.php';
 use Core\Bot\Event;
 use Core\Bot\Subscription;
 use Core\Bot\SubscriptionCatalog;
+use Core\Bot\SubscriptionOverride;
 use Core\Config;
 
 $pass = 0;
@@ -263,6 +264,69 @@ foreach ($groups as $g) {
 }
 ok('插件声明的分组可读', $demo['source'] ?? '', 'plugin');
 ok('插件声明统计为 1', SubscriptionCatalog::stats()['plugin'] ?? 0, 1);
+
+// ---------------------------------------------------------------- 14
+echo "\n=== 14. 请求 / 元事件细分开关 ===\n";
+fixture('fine.ini', "[subscription]\nmessage = true\nnotice = true\nrequest = true\nmeta_event = true\nmessage_scope = all\nnotice_types = group_increase,group_recall\nrequest_types = group\nmeta_event_types = lifecycle\n");
+$s = Subscription::fromConfig();
+ok('request_types 读出', $s->requestTypes, ['group']);
+ok('meta_event_types 读出', $s->metaEventTypes, ['lifecycle']);
+$reqFriend = ev(['post_type' => 'request', 'request_type' => 'friend', 'user_id' => '2']);
+$reqGroup = ev(['post_type' => 'request', 'request_type' => 'group', 'group_id' => '9', 'user_id' => '2']);
+ok('未启用的请求类型被拒', $s->rejectReason($reqFriend), '请求类型 friend 未启用');
+ok('启用的请求类型放行', $s->rejectReason($reqGroup), null);
+$metaHeart = ev(['post_type' => 'meta_event', 'meta_event_type' => 'heartbeat', 'self_id' => '1']);
+$metaLife = ev(['post_type' => 'meta_event', 'meta_event_type' => 'lifecycle', 'self_id' => '1']);
+ok('未启用的元事件被拒', $s->rejectReason($metaHeart), '元事件类型 heartbeat 未启用');
+ok('启用的元事件放行', $s->rejectReason($metaLife), null);
+fixture('fine-empty.ini', "[subscription]\nmessage = true\nnotice = true\nrequest = true\nmeta_event = true\nnotice_types = group_increase\nrequest_types =\nmeta_event_types =\n");
+$s2 = Subscription::fromConfig();
+ok('空白名单 = 不限制请求', $s2->requestTypes, []);
+ok('空白名单放行任意请求', $s2->rejectReason($reqFriend), null);
+ok('空白名单放行任意元事件', $s2->rejectReason($metaHeart), null);
+
+// ---------------------------------------------------------------- 15
+echo "\n=== 15. 按群覆盖（静音 / 关消息 / 通知白名单） ===\n";
+SubscriptionOverride::path($sandbox . '/groups.json');
+fixture('group.ini', "[subscription]\nmessage = true\nnotice = true\nrequest = true\nmeta_event = true\nmessage_scope = all\nnotice_types = group_increase,group_recall\n");
+$s = Subscription::fromConfig();
+$msg100 = ev(['post_type' => 'message', 'message_type' => 'group', 'group_id' => '100', 'user_id' => '2', 'raw_message' => 'hi', 'message' => [['type' => 'text', 'data' => ['text' => 'hi']]]]);
+$notice100 = ev(['post_type' => 'notice', 'notice_type' => 'group_increase', 'group_id' => '100', 'user_id' => '2']);
+ok('无覆盖时正常放行', $s->rejectReason($msg100), null);
+ok('空群号被拒', SubscriptionOverride::set('', ['mute' => true])['ok'], false);
+ok('未知通知类型被拒', SubscriptionOverride::set('100', ['notice_types' => ['nope']])['ok'], false);
+$r = SubscriptionOverride::set('100', ['mute' => true]);
+ok('静音写入成功', $r['ok'], true);
+ok('静音后消息被拒', $s->rejectReason($msg100), '群 100 已静音');
+ok('静音后通知也被拒', $s->rejectReason($notice100), '群 100 已静音');
+SubscriptionOverride::set('100', ['mute' => false, 'message' => false]);
+ok('关闭消息后消息被拒', $s->rejectReason($msg100), '群 100 已关闭消息接收');
+ok('关闭消息后通知仍放行', $s->rejectReason($notice100), null);
+SubscriptionOverride::set('100', ['mute' => false, 'message' => true, 'notice_types' => ['group_recall']]);
+ok('该群通知白名单生效', $s->rejectReason($notice100), '群 100 未启用通知 group_increase');
+$recall100 = ev(['post_type' => 'notice', 'notice_type' => 'group_recall', 'group_id' => '100', 'user_id' => '2']);
+ok('白名单内的通知放行', $s->rejectReason($recall100), null);
+$other = ev(['post_type' => 'message', 'message_type' => 'group', 'group_id' => '200', 'user_id' => '2', 'raw_message' => 'yo']);
+ok('覆盖不影响其它群', $s->rejectReason($other), null);
+SubscriptionOverride::path($sandbox . '/groups.json');
+ok('覆盖已落盘', array_key_exists('100', SubscriptionOverride::all()), true);
+ok('删除覆盖', SubscriptionOverride::remove('100')['ok'], true);
+ok('删除后恢复全局', $s->rejectReason($msg100), null);
+ok('重复删除被拒', SubscriptionOverride::remove('100')['ok'], false);
+
+// ---------------------------------------------------------------- 16
+echo "\n=== 16. 频道删除 / 语音事件映射 ===\n";
+ok('目录含频道消息删除', SubscriptionCatalog::has('channel_message_delete'), true);
+ok('目录含频道语音', SubscriptionCatalog::has('channel_audio'), true);
+$del = \Protocol\QqBot\Converter::toOneBot(['t' => 'MESSAGE_DELETE', 'd' => ['guild_id' => 'g1', 'channel_id' => 'c1', 'message_id' => 'm1', 'op_user' => ['id' => 'u9']]], 1);
+ok('删除事件类型', $del['notice_type'] ?? '', 'channel_message_delete');
+ok('删除事件群号取 guild_id', $del['group_id'] ?? '', 'g1');
+ok('删除事件操作者', $del['operator_id'] ?? '', 'u9');
+$audio = \Protocol\QqBot\Converter::toOneBot(['t' => 'AUDIO_START', 'd' => ['guild_id' => 'g1', 'channel_id' => 'c1', 'audio' => ['url' => 'https://x/a.amr']]], 1);
+ok('语音开始类型', $audio['notice_type'] ?? '', 'channel_audio');
+ok('语音开始子类型', $audio['sub_type'] ?? '', 'start');
+$audioEnd = \Protocol\QqBot\Converter::toOneBot(['t' => 'AUDIO_FINISH', 'd' => ['guild_id' => 'g1', 'audio' => ['url' => 'https://x/a.amr']]], 1);
+ok('语音结束子类型', $audioEnd['sub_type'] ?? '', 'finish');
 
 // ---------------------------------------------------------------- 清理
 foreach (glob($sandbox . '/*') ?: [] as $file) {

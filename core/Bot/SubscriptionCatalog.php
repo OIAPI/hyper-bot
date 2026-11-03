@@ -81,6 +81,8 @@ final class SubscriptionCatalog
                 'channel_create'          => '子频道创建',
                 'channel_update'          => '子频道更新',
                 'channel_delete'          => '子频道删除',
+                'channel_message_delete'  => '频道消息删除（含私密子频道）',
+                'channel_audio'           => '频道语音（开始 / 结束）',
                 'forum_event'             => '论坛事件（帖子 / 回复）',
                 'guild_event'             => '其它频道生命周期事件',
             ]],

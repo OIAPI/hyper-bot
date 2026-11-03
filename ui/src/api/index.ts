@@ -6,7 +6,7 @@ import type {
   Overview, OverviewCounts, TimelineEvent,
   ProtocolStatus, ProtocolName, ProtocolDetail,
   SettingsData, SettingsUpdateResult,
-  SubscriptionData, SubscriptionExplain, SubscriptionCatalogData,
+  SubscriptionData, SubscriptionExplain, SubscriptionCatalogData, GroupOverride,
   GroupList, Group, PluginList, PluginImportResult,
   LogTail, LogDates, MessageRecord,
   RuntimeData, HealthData, DiskData, RouteItem,
@@ -78,6 +78,19 @@ export const subscriptionApi = {
     http.post<SubscriptionCatalogData>('/subscription/catalog', payload),
   removeCatalogItem: (type: string) =>
     http.del<SubscriptionCatalogData>('/subscription/catalog/' + encodeURIComponent(type)),
+  /** 按群覆盖列表 */
+  groupOverrides: () => http.get<{ groups: Record<string, GroupOverride> }>('/subscription/groups'),
+  /** 写入一个群的覆盖 */
+  setGroupOverride: (group: string, payload: Partial<GroupOverride>) =>
+    http.put<{ groups: Record<string, GroupOverride> }>(
+      '/subscription/groups/' + encodeURIComponent(group),
+      payload,
+    ),
+  /** 删除一个群的覆盖（恢复跟随全局） */
+  removeGroupOverride: (group: string) =>
+    http.del<{ groups: Record<string, GroupOverride> }>(
+      '/subscription/groups/' + encodeURIComponent(group),
+    ),
 }
 
 /** 群 */

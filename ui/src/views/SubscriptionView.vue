@@ -12,7 +12,7 @@ import { ref, onMounted, computed } from 'vue'
 import { subscriptionApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
-import type { NoticeGroup, SubscriptionState, SubscriptionExplain } from '@/types/api'
+import type { NoticeGroup, SubscriptionState, SubscriptionExplain, GroupOverride } from '@/types/api'
 
 const toast = useToastStore()
 const auth = useAuthStore()
@@ -29,12 +29,33 @@ const loading = ref(true)
 const saving = ref(false)
 const dirty = ref(false)
 
+/** 架构提示：webui-only 不接事件流，订阅写得再对也收不到事件 */
+const arch = ref<string>('')
+const receivesEvents = ref<boolean | null>(null)
+const archHint = ref<string | null>(null)
+
+/** 按群覆盖 */
+const newGroupId = ref('')
+const newGroupMute = ref(true)
+const addingGroup = ref(false)
+const busyGroup = ref('')
+const groupDialog = ref(false)
+const editingGroup = ref('')
+const editingTypes = ref<string[]>([])
+
 async function load(): Promise<void> {
   loading.value = true
   try {
     const [data, exp] = await Promise.all([subscriptionApi.get(), subscriptionApi.explain()])
     state.value = data.subscription
     source.value = data.configured_from
+    arch.value = data.arch ?? ''
+    receivesEvents.value = data.receives_events ?? null
+    archHint.value = data.arch_hint ?? null
+    // 兼容旧后端：细分开关字段缺失时按「全收」处理，避免模板里再判空
+    data.subscription.request_types ??= []
+    data.subscription.meta_event_types ??= []
+    data.subscription.group_overrides ??= {}
     explain.value = exp
   } catch (e) {
     toast.fromError(e, '加载订阅配置失败')
@@ -72,6 +93,8 @@ async function save(): Promise<void> {
       ignore_self: state.value.ignore_self,
       ignore_robots: state.value.ignore_robots,
       robot_prefix: state.value.robot_prefix,
+      request_types: state.value.request_types,
+      meta_event_types: state.value.meta_event_types,
     })
     toast.ok('订阅已保存，重启后生效')
     dirty.value = false
@@ -188,6 +211,107 @@ async function removeType(type: string): Promise<void> {
   }
 }
 
+/** 细分开关：请求 / 元事件。空 = 全收（与通知白名单的语义相反） */
+const requestCatalog = computed<Record<string, string>>(
+  () => state.value?.request_catalog ?? { friend: '好友请求', group: '群请求 / 邀请' },
+)
+const metaEventCatalog = computed<Record<string, string>>(
+  () => state.value?.meta_event_catalog ?? { lifecycle: '生命周期', heartbeat: '心跳' },
+)
+
+function toggleFine(field: 'request_types' | 'meta_event_types', key: string): void {
+  if (!state.value) return
+  const list = state.value[field]
+  const idx = list.indexOf(key)
+  if (idx >= 0) list.splice(idx, 1)
+  else list.push(key)
+  markDirty()
+}
+
+function setFine(field: 'request_types' | 'meta_event_types', keys: string[]): void {
+  if (!state.value) return
+  state.value[field] = [...keys]
+  markDirty()
+}
+
+/** 按群覆盖列表 */
+const overrideList = computed(() =>
+  Object.entries(state.value?.group_overrides ?? {}).map(([groupId, item]) => ({
+    groupId,
+    mute: item.mute,
+    message: item.message,
+    notice_types: item.notice_types ?? [],
+  })),
+)
+
+function openGroupTypes(groupId: string, types: string[]): void {
+  editingGroup.value = groupId
+  editingTypes.value = [...types]
+  groupDialog.value = true
+}
+
+async function saveGroupTypes(): Promise<void> {
+  const target = overrideList.value.find((g) => g.groupId === editingGroup.value)
+  await patchGroup(editingGroup.value, {
+    mute: target?.mute ?? false,
+    message: target?.message ?? true,
+    notice_types: editingTypes.value,
+  })
+  groupDialog.value = false
+}
+
+async function addGroupOverride(): Promise<void> {
+  if (!state.value) return
+  const gid = newGroupId.value.trim()
+  if (gid === '') {
+    toast.warn('请填写群号')
+    return
+  }
+  addingGroup.value = true
+  try {
+    const res = await subscriptionApi.setGroupOverride(gid, {
+      mute: newGroupMute.value,
+      message: true,
+      notice_types: [],
+    })
+    state.value.group_overrides = res.groups
+    newGroupId.value = ''
+    toast.ok('已保存该群的覆盖配置')
+  } catch (e) {
+    toast.fromError(e, '保存失败')
+  } finally {
+    addingGroup.value = false
+  }
+}
+
+async function patchGroup(groupId: string, patch: Partial<GroupOverride>): Promise<void> {
+  if (!state.value) return
+  busyGroup.value = groupId
+  try {
+    const res = await subscriptionApi.setGroupOverride(groupId, patch)
+    state.value.group_overrides = res.groups
+    toast.ok('已更新群 ' + groupId)
+  } catch (e) {
+    toast.fromError(e, '更新失败')
+  } finally {
+    busyGroup.value = ''
+  }
+}
+
+async function removeGroupOverride(groupId: string): Promise<void> {
+  if (!state.value) return
+  busyGroup.value = groupId
+  try {
+    const res = await subscriptionApi.removeGroupOverride(groupId)
+    state.value.group_overrides = res.groups
+    toast.ok('已恢复该群跟随全局')
+  } catch (e) {
+    toast.fromError(e, '删除失败')
+  } finally {
+    busyGroup.value = ''
+  }
+}
+
 const SCOPES = [
   { value: 'group', label: '仅群聊' },
   { value: 'private', label: '仅私聊' },
@@ -231,6 +355,10 @@ const CHANNELS = [
     </UiCard>
 
     <template v-else-if="state">
+      <UiAlert v-if="receivesEvents === false" type="warning" :closable="false" class="arch-warn">
+        {{ archHint || '当前架构不接收协议事件流，下面的订阅配置保存后不会生效。' }}
+      </UiAlert>
+
       <div class="section-title">事件通道</div>
       <UiCard>
         <div class="chan-grid">
@@ -276,6 +404,99 @@ const CHANNELS = [
             </div>
           </UiFormItem>
         </UiForm>
+      </UiCard>
+
+      <div class="section-title">请求与元事件细分</div>
+      <UiCard>
+        <div class="fine-block">
+          <div class="fine-head">
+            <span class="fine-title">请求 request</span>
+            <button type="button" class="link-btn" @click="setFine('request_types', Object.keys(requestCatalog))">全选</button>
+            <button type="button" class="link-btn" @click="setFine('request_types', [])">清空</button>
+            <span class="fine-hint">
+              {{ state.request_types.length ? '只接收勾选的 ' + state.request_types.length + ' 种' : '未限制：全部请求都接收' }}
+            </span>
+          </div>
+          <div class="notice-grid">
+            <button
+              v-for="(label, key) in requestCatalog"
+              :key="key"
+              type="button"
+              class="notice-chip"
+              :class="{ active: state.request_types.includes(key) }"
+              @click="toggleFine('request_types', key)"
+            >
+              <span class="notice-key">{{ key }}</span>
+              <span class="notice-label">{{ label }}</span>
+            </button>
+          </div>
+        </div>
+
+        <UiDivider />
+
+        <div class="fine-block">
+          <div class="fine-head">
+            <span class="fine-title">元事件 meta_event</span>
+            <button type="button" class="link-btn" @click="setFine('meta_event_types', Object.keys(metaEventCatalog))">全选</button>
+            <button type="button" class="link-btn" @click="setFine('meta_event_types', [])">清空</button>
+            <span class="fine-hint">
+              {{ state.meta_event_types.length ? '只接收勾选的 ' + state.meta_event_types.length + ' 种' : '未限制：全部元事件都接收' }}
+            </span>
+          </div>
+          <div class="notice-grid">
+            <button
+              v-for="(label, key) in metaEventCatalog"
+              :key="key"
+              type="button"
+              class="notice-chip"
+              :class="{ active: state.meta_event_types.includes(key) }"
+              @click="toggleFine('meta_event_types', key)"
+            >
+              <span class="notice-key">{{ key }}</span>
+              <span class="notice-label">{{ label }}</span>
+            </button>
+          </div>
+        </div>
+      </UiCard>
+
+      <div class="section-title">
+        按群覆盖
+        <span class="count">{{ overrideList.length }} 个群</span>
+      </div>
+      <UiCard>
+        <div class="field-hint group-hint">
+          不在列表里的群跟随上面的全局配置。静音 = 该群任何事件都不推进框架；通知白名单 = 该群只收勾选的通知类型。
+        </div>
+
+        <div v-if="canWrite" class="notice-add">
+          <UiInput v-model="newGroupId" class="add-type" placeholder="群号，如 123456789" />
+          <UiCheckbox v-model="newGroupMute" label="静音" />
+          <UiButton size="small" :loading="addingGroup" @click="addGroupOverride">添加群覆盖</UiButton>
+        </div>
+
+        <div v-if="overrideList.length" class="override-list">
+          <div v-for="g in overrideList" :key="g.groupId" class="override-row">
+            <span class="override-id">{{ g.groupId }}</span>
+            <span class="override-tag" :class="{ on: g.mute }">{{ g.mute ? '静音' : '不静音' }}</span>
+            <span class="override-hint">
+              {{ g.message ? '接收消息' : '不接收消息' }} · 通知
+              {{ g.notice_types.length ? '白名单 ' + g.notice_types.length + ' 项' : '跟随全局' }}
+            </span>
+            <UiSwitch
+              v-if="canWrite"
+              :model-value="g.mute"
+              :disabled="busyGroup === g.groupId"
+              @update:model-value="(v: boolean) => patchGroup(g.groupId, { mute: Boolean(v), message: g.message, notice_types: g.notice_types })"
+            />
+            <UiButton v-if="canWrite" size="small" text @click="openGroupTypes(g.groupId, g.notice_types)">
+              通知白名单
+            </UiButton>
+            <UiButton v-if="canWrite" size="small" text type="danger" @click="removeGroupOverride(g.groupId)">
+              删除
+            </UiButton>
+          </div>
+        </div>
+        <UiEmpty v-else description="还没有按群覆盖，所有群都跟随全局配置" />
       </UiCard>
 
       <div class="section-title">
@@ -372,6 +593,29 @@ const CHANNELS = [
         </ul>
         <div class="subtle">{{ explain.compatible }}</div>
       </UiCard>
+
+      <UiDialog v-model="groupDialog" :title="'群 ' + editingGroup + ' 的通知白名单'" width="640px">
+        <div class="field-hint">
+          不勾选任何项 = 该群跟随全局通知白名单；勾选后该群只接收勾选的类型。
+        </div>
+        <div class="notice-grid dialog-grid">
+          <button
+            v-for="(label, key) in state.notice_catalog"
+            :key="key"
+            type="button"
+            class="notice-chip"
+            :class="{ active: editingTypes.includes(key) }"
+            @click="editingTypes.includes(key) ? editingTypes.splice(editingTypes.indexOf(key), 1) : editingTypes.push(key)"
+          >
+            <span class="notice-key">{{ key }}</span>
+            <span class="notice-label">{{ label }}</span>
+          </button>
+        </div>
+        <template #footer>
+          <UiButton size="small" @click="groupDialog = false">取消</UiButton>
+          <UiButton size="small" type="primary" @click="saveGroupTypes">保存</UiButton>
+        </template>
+      </UiDialog>
     </template>
   </div>
 </template>
@@ -464,6 +708,37 @@ p.sub { margin: 3px 0 0; font-size: 12.5px; color: var(--text-faint); }
   cursor: pointer;
   font-family: inherit;
 }
+
+.arch-warn { margin-bottom: 10px; }
+
+.fine-block { display: flex; flex-direction: column; gap: 8px; }
+.fine-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fine-title { font-size: 12.5px; font-weight: 550; color: var(--text-dim); }
+.fine-hint { font-size: 11px; color: var(--text-faint); }
+
+.group-hint { margin-bottom: 10px; display: block; }
+.override-list { display: flex; flex-direction: column; gap: 6px; }
+.override-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  flex-wrap: wrap;
+}
+.override-id { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
+.override-tag {
+  padding: 0 6px;
+  font-size: 10.5px;
+  line-height: 17px;
+  border-radius: 3px;
+  border: 1px solid var(--border-soft);
+  color: var(--text-faint);
+}
+.override-tag.on { color: var(--danger, #d33); border-color: currentColor; }
+.override-hint { font-size: 11px; color: var(--text-faint); flex: 1 1 auto; }
+.dialog-grid { margin-top: 10px; max-height: 320px; overflow-y: auto; }
 
 .why-list { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.85; color: var(--text-dim); }
 .subtle { margin-top: 10px; font-size: 11.5px; color: var(--text-faint); }

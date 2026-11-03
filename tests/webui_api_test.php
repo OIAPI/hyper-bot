@@ -232,6 +232,29 @@ $ok('删除自定义类型', ($delCustom['json']['code'] ?? 0) === 1);
 @unlink($catTmp);
 \Core\Bot\SubscriptionCatalog::path((defined('__root__') ? __root__ : getcwd()) . '/runtime/subscription-custom.json');
 
+echo "== 细分开关与按群覆盖 ==\n";
+$subInfo = $call('GET', '/webui/api/subscription', [], $viewerToken);
+$ok('订阅返回细分开关', array_key_exists('request_types', $subInfo['json']['data']['subscription'] ?? []));
+$ok('订阅返回按群覆盖', array_key_exists('group_overrides', $subInfo['json']['data']['subscription'] ?? []));
+$ok('订阅返回架构字段', array_key_exists('receives_events', $subInfo['json']['data'] ?? []));
+$ok('订阅返回架构模式', is_string($subInfo['json']['data']['arch'] ?? null));
+
+$ovTmp = sys_get_temp_dir() . '/sub-groups-' . bin2hex(random_bytes(3)) . '.json';
+\Core\Bot\SubscriptionOverride::path($ovTmp);
+$g0 = $call('GET', '/webui/api/subscription/groups', [], $viewerToken);
+$ok('viewer 可读按群覆盖', $g0['status'] === 200 && ($g0['json']['data']['groups'] ?? null) === []);
+$vSet = $call('PUT', '/webui/api/subscription/groups/100', ['mute' => true], $viewerToken);
+$ok('viewer 写按群覆盖 → 403', $vSet['status'] === 403);
+$oSet = $call('PUT', '/webui/api/subscription/groups/100', ['mute' => true], $ownerToken);
+$ok('owner 写入按群覆盖', ($oSet['json']['code'] ?? 0) === 1);
+$ok('返回里带上该群', isset($oSet['json']['data']['groups']['100']));
+$oBadType = $call('PUT', '/webui/api/subscription/groups/100', ['notice_types' => ['nope']], $ownerToken);
+$ok('未知通知类型 → 400', $oBadType['status'] === 400);
+$oDelGroup = $call('DELETE', '/webui/api/subscription/groups/100', [], $ownerToken);
+$ok('owner 删按群覆盖', ($oDelGroup['json']['code'] ?? 0) === 1);
+@unlink($ovTmp);
+\Core\Bot\SubscriptionOverride::path((defined('__root__') ? __root__ : getcwd()) . '/runtime/subscription-groups.json');
+
 // 恢复成单个管理员账号，后面的登出用例继续用它
 \Webui\Auth::setUsersForTest(['admin' => ['password' => password_hash('secret123', PASSWORD_BCRYPT), 'role' => 'admin', 'created' => time()]]);
 

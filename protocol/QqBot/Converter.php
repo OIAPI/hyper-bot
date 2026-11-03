@@ -52,6 +52,8 @@ class Converter {
 			'MESSAGE_REACTION_REMOVE'                         => self::reaction($d, $time, $self, false),
 			'MESSAGE_AUDIT_PASS'                              => self::audit($d, $time, $self, true),
 			'MESSAGE_AUDIT_REJECT'                            => self::audit($d, $time, $self, false),
+			'MESSAGE_DELETE', 'PUBLIC_MESSAGE_DELETE'          => self::channelMessageDelete($d, $time, $self),
+			'AUDIO_START', 'AUDIO_FINISH'                     => self::channelAudio($d, $time, $self, $t),
 			'GUILD_MEMBER_ADD'                                => self::guildMember($d, $time, $self, 'guild_member_add'),
 			'GUILD_MEMBER_UPDATE'                             => self::guildMember($d, $time, $self, 'guild_member_update'),
 			'GUILD_MEMBER_REMOVE'                             => self::guildMember($d, $time, $self, 'guild_member_remove'),
@@ -476,6 +478,42 @@ class Converter {
 	 * 原始事件名放在 event_name 里。这样订阅页能给出开关，
 	 * 插件也能先接住新事件，而不用改核心代码。
 	 */
+	/** 频道消息删除（MESSAGE_DELETE / PUBLIC_MESSAGE_DELETE） */
+	private static function channelMessageDelete(array $d, int $time, int $self): array {
+		$operator = (string)($d['op_user']['id'] ?? '');
+		return [
+			'post_type'   => 'notice',
+			'notice_type' => 'channel_message_delete',
+			'sub_type'    => 'delete',
+			'time'        => self::parseTime($d['timestamp'] ?? null, $time),
+			'self_id'     => $self,
+			'guild_id'    => (string)($d['guild_id'] ?? ''),
+			'channel_id'  => (string)($d['channel_id'] ?? ''),
+			'group_id'    => (string)($d['guild_id'] ?? ''),
+			'user_id'     => $operator,
+			'operator_id' => $operator,
+			'message_id'  => (string)($d['message_id'] ?? ($d['id'] ?? '')),
+		];
+	}
+
+	/** 频道语音（AUDIO_START / AUDIO_FINISH） */
+	private static function channelAudio(array $d, int $time, int $self, string $eventName): array {
+		$audio = (array)($d['audio'] ?? []);
+		return [
+			'post_type'   => 'notice',
+			'notice_type' => 'channel_audio',
+			'sub_type'    => str_ends_with($eventName, 'START') ? 'start' : 'finish',
+			'time'        => self::parseTime($d['timestamp'] ?? null, $time),
+			'self_id'     => $self,
+			'guild_id'    => (string)($d['guild_id'] ?? ''),
+			'channel_id'  => (string)($d['channel_id'] ?? ($audio['channel_id'] ?? '')),
+			'group_id'    => (string)($d['guild_id'] ?? ''),
+			'user_id'     => (string)($d['author']['id'] ?? ''),
+			'url'         => (string)($audio['url'] ?? ''),
+			'text'        => (string)($audio['text'] ?? ''),
+		];
+	}
+
 	private static function generic(string $t, array $d, int $time, int $self): ?array {
 		if ($t === '') {
 			return null;

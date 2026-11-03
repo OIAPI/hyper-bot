@@ -34,6 +34,10 @@ final class Subscription
         public string $messageScope = 'group',
         /** 空数组 = 不接收任何通知（与 v1 语义一致：notice 必须显式 =1 才开） */
         public array $noticeTypes = [],
+        /** 请求白名单（friend / group）；空数组 = 不限制 */
+        public array $requestTypes = [],
+        /** 元事件白名单（lifecycle / heartbeat）；空数组 = 不限制 */
+        public array $metaEventTypes = [],
         public bool $ignoreSelf = true,
         public bool $ignoreRobots = true,
         /** 机器人 ID 前缀，支持多个：'3889,4000'（v1 只有 '3889'） */
@@ -55,6 +59,19 @@ final class Subscription
             }
         }
         return $list;
+    }
+
+    /** 归一化类型列表：小写、去空白、去重 */
+    private static function normalizeList(array $list): array
+    {
+        $clean = [];
+        foreach ($list as $item) {
+            $item = strtolower(trim((string)$item));
+            if ($item !== '' && !in_array($item, $clean, true)) {
+                $clean[] = $item;
+            }
+        }
+        return $clean;
     }
 
     /** 从配置构建：优先读 [subscription]（v2），缺失时回退 v1 的三个小节 */
@@ -121,6 +138,16 @@ final class Subscription
             array_map(static fn($v) => strtolower(trim((string)$v)), $noticeTypes)
         )));
 
+        // 细分开关：请求 / 元事件。空数组 = 不限制。
+        // 与通知白名单相反（空 = 全关），因为「整类开关已开、细分项没勾」的
+        // 默认预期是「全收」，否则用户会以为打开后没生效。
+        $requestTypes = ($hasV2 && Config::has('subscription.request_types'))
+            ? self::normalizeList(Config::list('subscription.request_types', []))
+            : [];
+        $metaEventTypes = ($hasV2 && Config::has('subscription.meta_event_types'))
+            ? self::normalizeList(Config::list('subscription.meta_event_types', []))
+            : [];
+
         return new self(
             message: $message,
             notice: $notice,
@@ -128,6 +155,8 @@ final class Subscription
             metaEvent: $meta,
             messageScope: $scope,
             noticeTypes: $noticeTypes,
+            requestTypes: $requestTypes,
+            metaEventTypes: $metaEventTypes,
             ignoreSelf: $bool('subscription.ignore_self', 'type.ignore_self', true),
             ignoreRobots: $bool('subscription.ignore_robots', 'type.ignore_robots', true),
             // 显式清空（空串）= 不按前缀忽略；只有键不存在才用默认 3889
@@ -177,6 +206,24 @@ final class Subscription
             }
         }
 
+        // 3.5 按群覆盖：静音 / 关消息 / 该群通知白名单
+        $groupId = $event->groupId();
+        if ($groupId !== '' && ($override = SubscriptionOverride::get($groupId)) !== null) {
+            if (!empty($override['mute'])) {
+                return "群 {$groupId} 已静音";
+            }
+            if ($post === 'message' && ($override['message'] ?? true) === false) {
+                return "群 {$groupId} 已关闭消息接收";
+            }
+            $groupTypes = (array)($override['notice_types'] ?? []);
+            if ($post === 'notice' && $groupTypes !== []) {
+                $groupNotice = $event->noticeType();
+                if ($groupNotice !== '' && !in_array($groupNotice, $groupTypes, true)) {
+                    return "群 {$groupId} 未启用通知 {$groupNotice}";
+                }
+            }
+        }
+
         // 4. 消息范围
         if ($post === 'message') {
             $type = $event->messageType();
@@ -215,9 +262,23 @@ final class Subscription
             }
         }
 
-        // 6. 请求类型
-        if ($post === 'request' && $event->requestType() === '') {
-            return '缺少 request_type';
+        // 6. 请求类型（白名单为空 = 不限制）
+        if ($post === 'request') {
+            $requestType = $event->requestType();
+            if ($requestType === '') {
+                return '缺少 request_type';
+            }
+            if ($this->requestTypes !== [] && !in_array($requestType, $this->requestTypes, true)) {
+                return "请求类型 {$requestType} 未启用";
+            }
+        }
+
+        // 7. 元事件类型（白名单为空 = 不限制）
+        if ($post === 'meta_event' && $this->metaEventTypes !== []) {
+            $metaType = $event->metaEventType();
+            if ($metaType !== '' && !in_array($metaType, $this->metaEventTypes, true)) {
+                return "元事件类型 {$metaType} 未启用";
+            }
         }
 
         return null;
@@ -247,7 +308,26 @@ final class Subscription
             'notice_groups'   => SubscriptionCatalog::groups(),
             'notice_stats'    => SubscriptionCatalog::stats(),
             'notice_defaults' => SubscriptionCatalog::types(),
+            // 细分开关（空 = 全收）
+            'request_types'      => $this->requestTypes,
+            'meta_event_types'   => $this->metaEventTypes,
+            'request_catalog'    => self::requestCatalog(),
+            'meta_event_catalog' => self::metaEventCatalog(),
+            // 按群覆盖（runtime/subscription-groups.json）
+            'group_overrides'    => SubscriptionOverride::all(),
         ];
+    }
+
+    /** 请求类型目录（OneBot11 request.request_type 的取值） */
+    public static function requestCatalog(): array
+    {
+        return ['friend' => '好友请求', 'group' => '群请求 / 邀请'];
+    }
+
+    /** 元事件目录（OneBot11 meta_event.meta_event_type 的取值） */
+    public static function metaEventCatalog(): array
+    {
+        return ['lifecycle' => '生命周期（连接 / 断开）', 'heartbeat' => '心跳'];
     }
 
     /**
@@ -400,6 +480,18 @@ final class Subscription
                 (array)$types
             )));
             $ok = Config::set('subscription.notice_types', implode(',', $types)) && $ok;
+        }
+
+        // 细分开关：空数组 = 全收；写空串保持「键存在但无限制」
+        foreach (['request_types' => 'subscription.request_types', 'meta_event_types' => 'subscription.meta_event_types'] as $field => $key) {
+            if (!array_key_exists($field, $input)) {
+                continue;
+            }
+            $list = $input[$field];
+            if (is_string($list)) {
+                $list = preg_split('/[,，\s]+/u', $list) ?: [];
+            }
+            $ok = Config::set($key, implode(',', self::normalizeList((array)$list))) && $ok;
         }
 
         if (array_key_exists('robot_prefix', $input)) {

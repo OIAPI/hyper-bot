@@ -3,7 +3,9 @@ namespace Webui\Controller;
 
 use Core\Bot\Subscription;
 use Core\Bot\SubscriptionCatalog;
+use Core\Bot\SubscriptionOverride;
 use Core\Config;
+use Core\Runtime;
 use Core\Http\Request;
 use Core\Http\Response;
 
@@ -19,10 +21,61 @@ final class SubscriptionController extends Base
     public function index(Request $request): Response
     {
         $subscription = Subscription::fromConfig();
+        $arch = Runtime::fromConfig()->mode;
         return $this->ok([
             'subscription' => $subscription->toArray(),
             'configured_from' => $this->detectSource(),
+            // 架构提示：webui-only 不起协议连接，订阅写得再对也收不到事件
+            'arch' => $arch,
+            'receives_events' => $arch !== Runtime::WEBUI,
+            'arch_hint' => $arch === Runtime::WEBUI
+                ? '当前是 webui-only 架构：面板只提供 REST，不接协议事件流。切到 php 或 swoole 后订阅才会生效。'
+                : null,
         ]);
+    }
+
+    /** 按群覆盖列表 */
+    public function groupOverrides(Request $request): Response
+    {
+        return $this->ok([
+            'groups' => SubscriptionOverride::all(),
+            'path'   => SubscriptionOverride::path(),
+        ]);
+    }
+
+    /** 新增 / 修改一个群的覆盖 */
+    public function setGroupOverride(Request $request, array $params): Response
+    {
+        if ($deny = $this->guard($request, 'settings.write')) {
+            return $deny;
+        }
+        $groupId = (string)($params['group'] ?? '');
+        $input = $request->params();
+        $result = SubscriptionOverride::set($groupId, [
+            'mute'         => (bool)($input['mute'] ?? false),
+            'message'      => (bool)($input['message'] ?? true),
+            'notice_types' => $input['notice_types'] ?? [],
+        ]);
+        if (!$result['ok']) {
+            return $this->fail($result['msg'], -1, 400);
+        }
+        return $this->ok([
+            'groups' => SubscriptionOverride::all(),
+            'saved'  => $result['data'],
+        ], $result['msg']);
+    }
+
+    /** 删除一个群的覆盖（恢复跟随全局） */
+    public function removeGroupOverride(Request $request, array $params): Response
+    {
+        if ($deny = $this->guard($request, 'settings.write')) {
+            return $deny;
+        }
+        $result = SubscriptionOverride::remove((string)($params['group'] ?? ''));
+        if (!$result['ok']) {
+            return $this->fail($result['msg'], -1, 400);
+        }
+        return $this->ok(['groups' => SubscriptionOverride::all()], $result['msg']);
     }
 
     /** 保存订阅 */

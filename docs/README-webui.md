@@ -81,7 +81,7 @@ message / notice / request / meta_event 全开，消息范围 all，通知勾选
 
 | 来源 | 说明 |
 |---|---|
-| builtin | 内置 44 项，覆盖 OneBot 11 / Milky / QQ 官方转换器能产出的全部 notice_type |
+| builtin | 内置 46 项，覆盖 OneBot 11 / Milky / QQ 官方转换器能产出的全部 notice_type |
 | plugin | 插件类注释中的 @subscribe 声明，Registry 加载时自动收录 |
 | custom | 面板「添加」按钮写入，持久化在 runtime/subscription-custom.json |
 
@@ -97,6 +97,9 @@ Config.ini 只保存「用户选中了哪些」（[subscription] 小节），不
 | GET | /webui/api/subscription/catalog | 目录（分组 / 来源 / 统计） |
 | POST | /webui/api/subscription/catalog | 添加自定义类型，body: type / label / group |
 | DELETE | /webui/api/subscription/catalog/{type} | 删除自定义类型（内置与插件的不可删） |
+| GET | /webui/api/subscription/groups | 按群覆盖列表 |
+| PUT | /webui/api/subscription/groups/{group} | 设置某个群的覆盖（mute / message / notice_types） |
+| DELETE | /webui/api/subscription/groups/{group} | 删除某个群的覆盖 |
 
 权限：读取需登录；增删需要 settings.write（owner / admin），viewer 返回 403。
 
@@ -104,6 +107,37 @@ Config.ini 只保存「用户选中了哪些」（[subscription] 小节），不
 
     @subscribeGroup 我的插件
     @subscribe my_event 我的事件
+
+### 请求与元事件细分
+
+message / notice 之外，request 与 meta_event 也可以按类型细分（默认不细分 = 全收）：
+
+| 配置键 | 取值 | 说明 |
+|---|---|---|
+| subscription.request_types | friend / group | 为空表示所有请求都接收 |
+| subscription.meta_event_types | lifecycle / heartbeat | 为空表示所有元事件都接收 |
+
+注意这里的「空」与 notice_types 语义相反：notice_types 为空 = 全关（历史行为），
+细分列表为空 = 不限制（因为整类开关已经打开，用户没勾就是不想被限制）。
+
+### 按群覆盖
+
+全局订阅之外，可以给单个群单独设置，落在 runtime/subscription-groups.json：
+
+| 字段 | 说明 |
+|---|---|
+| mute | true = 该群任何事件都不推进框架（等价整群静音） |
+| message | false = 该群的消息事件丢弃（通知仍按 notice_types 判定） |
+| notice_types | 非空 = 该群只接收这些通知类型；空 = 跟随全局 |
+
+判定顺序：通道开关 → 自身 / 机器人前缀 → 按群覆盖 → 消息范围 → 通知白名单。
+群号只允许可打印字符（长度 <= 64），通知白名单必须是目录里已有的类型，未知类型返回 400。
+
+### 架构提示
+
+只有 swoole / php 架构会真正接收上游事件流；webui-only 架构下订阅配置照常保存，
+但事件不会进来。面板会在订阅页顶部显示一条橙色提示，接口里对应字段是
+arch / receives_events / arch_hint。
 
 ### 机器人前缀过滤
 

@@ -30,7 +30,7 @@ export const THEME_PRESETS: ThemePreset[] = [
  * 界面框架：不是 CSS 抄外观，而是真的把整套组件库内置换掉。
  * 每个 id 对应 src/ui/adapters/<id>.ts 里的一份适配器，视图只认 UiXxx 抽象。
  */
-export type FrameworkId = 'element' | 'antd' | 'naive' | 'arco'
+export type FrameworkId = 'native' | 'element' | 'antd' | 'naive' | 'arco'
 
 export interface Framework {
   id: FrameworkId
@@ -40,6 +40,7 @@ export interface Framework {
 }
 
 export const FRAMEWORKS: Framework[] = [
+  { id: 'native', name: '轻量（无组件库）', vendor: '内置', hint: '几 KB 秒开 · 跟随主题 · 弱网/手机首选' },
   { id: 'element', name: 'Element Plus', vendor: 'Eleme', hint: '国内后台标准件 · 边框清晰 · 密度适中' },
   { id: 'antd', name: 'Ant Design', vendor: 'Ant Group', hint: '专业克制 · 灰底表头 · 14px 正文' },
   { id: 'naive', name: 'Naive UI', vendor: 'TuSimple', hint: '清爽留白 · 轻阴影 · 圆润控件' },

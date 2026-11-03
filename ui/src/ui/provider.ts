@@ -67,5 +67,11 @@ export async function initUi(app: App): Promise<void> {
   syncTokens()
   watch(() => [theme.hue, theme.sat, theme.light, theme.effective] as const, syncTokens)
   watch(() => theme.framework, (id) => void loadFramework(id))
-  await loadFramework(theme.framework)
+
+  // 先上轻量适配器（几 KB，几乎立刻可交互），用户选的组件库在后台下载完再替换。
+  // 视图只认 UiXxx，换适配器不会重挂组件，页面状态也不丢。
+  await loadFramework('native')
+  if (theme.framework !== 'native') {
+    void loadFramework(theme.framework)
+  }
 }

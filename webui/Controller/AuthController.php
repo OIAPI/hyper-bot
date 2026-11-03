@@ -55,7 +55,7 @@ final class AuthController extends Base {
         $user = Auth::verify($username, $password);
         if ($user === null) {
             $this->store->set($key, $fails + 1, 300);
-            return $this->fail('用户名或密码错误', -3, 401);
+            return $this->fail('用户名或密码错误。忘记密码可在服务器执行：php bin/hyper passwd admin', -3, 401);
         }
 
         $this->store->del($key);

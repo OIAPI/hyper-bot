@@ -176,6 +176,32 @@ arch / receives_events / arch_hint。
 - **读取**：`MessageLog::read($date, $type, $limit)` 支持 `Ymd` 与 `Y-m-d`，非协程环境（php 架构）同样可用。
 - 日志写失败**绝不影响业务**：所有写入路径都吞掉异常，只落到 `error_log`。
 
+## 忘记密码（重置面板账号）
+
+面板账号存在 `runtime/webui/users.json`，密码是 bcrypt 哈希。下面三种情况都会让「原来那个密码」失效：
+
+1. 首次启动且 `webui.password` 为空 —— 系统生成随机密码，写在 `runtime/webui/initial-password.txt`；
+2. 换了发布包并清空或替换了 `runtime/` 目录 —— 账号被重新初始化；
+3. 用不同的工作目录启动 —— `__runtime__` 指向了别处的 users.json。
+
+不用删文件，直接重置：
+
+```bash
+php bin/hyper passwd admin '你的新密码'   # 用户不存在会自动创建
+php bin/hyper passwd --list               # 看有哪些账号、角色、绑定了哪些第三方
+php bin/hyper passwd admin                # 不给密码则生成随机强密码并回显
+```
+
+登录页报「用户名或密码错误」时也会提示这条命令。重置后请到「账号设置」再改一次。
+
+> 注意：`webui.password` 只在 **users.json 不存在**时用于初始化，之后改 Config.ini 不会改密码。
+
+## 版本号
+
+版本号只有一个来源：仓库根目录的 `VERSION` 文件。启动横幅、WebUI 系统页、`/webui/api/health` 都读它；发布包文件名也带上它，形如 `hyper-bot-v2.1.0-<short-sha>.zip`。
+
+发版时只改 `VERSION` 一处（补丁号自增），`core/Version.php` 只保留一个兜底值。
+
 ## 安全
 
 - 会话是**服务端存储**的，Cookie 为 `HttpOnly` + `SameSite=Lax`，JS 读不到 token。

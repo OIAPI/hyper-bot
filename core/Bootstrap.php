@@ -232,6 +232,11 @@ final class Bootstrap
             "插件      " . count($app->registry->plugins()) . ' 个',
             "配置      " . Config::path(),
         ];
+        // 首启随机密码只写在这个文件里，横幅里提一句，省得用户对着登录页发懵
+        $initial = \Webui\Auth::dir() . '/initial-password.txt';
+        if (is_file($initial)) {
+            $lines[] = "首启密码  " . $initial . "（登录后请到账号设置修改）";
+        }
         echo PHP_EOL;
         foreach ($lines as $line) {
             echo '  ' . $line . PHP_EOL;

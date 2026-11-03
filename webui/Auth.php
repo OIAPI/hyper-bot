@@ -119,6 +119,45 @@ final class Auth {
         return self::save();
     }
 
+    /**
+     * 命令行/后台设置密码（可直接建号，用于忘记密码的兜底）。
+     *
+     * 为什么要有它：面板密码是 bcrypt 存在 runtime/webui/users.json 里的，
+     * 一旦这台机器上的文件被清掉或换了 runtime 目录，默认账号就变成随机密码，
+     * 用户只能靠这个命令救回来，不必手动删文件。
+     *
+     * @return string|null 失败原因；成功返回 null
+     */
+    public static function setPassword(string $username, string $password, string $role = ''): ?string {
+        $username = trim($username);
+        if ($username === '') {
+            return '用户名不能为空';
+        }
+        if (strlen($password) < 8) {
+            return '密码至少 8 位';
+        }
+        if (!preg_match('/^[A-Za-z0-9_.-]{2,32}$/', $username)) {
+            return '用户名只能包含字母、数字、下划线、点和短横线（2-32 位）';
+        }
+        $users = self::users();
+        $exists = isset($users[$username]);
+        if ($role === '') {
+            $role = (string)($users[$username]['role'] ?? ($users === [] ? 'owner' : 'admin'));
+        }
+        $record = [
+            'password' => password_hash($password, PASSWORD_BCRYPT),
+            'role'     => self::normalizeRole($role),
+            'created'  => (int)($users[$username]['created'] ?? time()),
+        ];
+        // 保留第三方绑定，免得改密码把人家的 GitHub 登录弄丢
+        if ($exists && is_array($users[$username]['bindings'] ?? null)) {
+            $record['bindings'] = $users[$username]['bindings'];
+        }
+        $users[$username] = $record;
+        self::$users = $users;
+        return self::save() ? null : '保存失败（runtime/webui 不可写）';
+    }
+
     // ------------------------------------------------------- 第三方登录绑定
 
     /**
@@ -352,7 +391,7 @@ final class Auth {
         return self::users() === [];
     }
 
-    private static function randomPassword(): string {
+    public static function randomPassword(): string {
         $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
         $out = '';
         for ($i = 0; $i < 16; $i++) {

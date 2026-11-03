@@ -29,24 +29,26 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "tag=v$V" >> "$GITHUB_OUTPUT"
 
-      - name: Check tag
-        id: tag
+      - name: Check release
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if git rev-parse -q --verify "refs/tags/${{ steps.ver.outputs.tag }}" >/dev/null; then
+          if gh release view "${{ steps.ver.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "标签 ${{ steps.ver.outputs.tag }} 已存在，跳过构建与发布"
+            echo "${{ steps.ver.outputs.tag }} 已发布，跳过"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Setup Node
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.rel.outputs.exists == 'false'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Build webUI
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.rel.outputs.exists == 'false'
         working-directory: ui
         run: |
           npm install --no-audit --no-fund
@@ -54,26 +56,36 @@ jobs:
           ls -la ../public/webui | head -5
 
       - name: Commit built assets
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.rel.outputs.exists == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/webui
           if git diff --cached --quiet; then
             echo "webUI 产物无变化"
-          else
-            git commit -m "chore(webui): 重新构建前端产物 (${{ steps.ver.outputs.tag }}) [skip ci]"
-            git push origin HEAD:main
+            exit 0
           fi
+          git commit -m "chore(webui): 重新构建前端产物 (${{ steps.ver.outputs.tag }}) [skip ci]"
+          for i in 1 2 3; do
+            git fetch origin main --quiet
+            git rebase origin/main || { git rebase --abort; exit 1; }
+            if git push origin HEAD:main; then
+              echo "产物已推送"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "产物推送失败（远端在此期间有更新）" >&2
+          exit 1
 
       - name: Create tag
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.rel.outputs.exists == 'false'
         run: |
-          git tag -a "${{ steps.ver.outputs.tag }}" -m "release ${{ steps.ver.outputs.tag }}"
-          git push origin "${{ steps.ver.outputs.tag }}"
+          git tag -f -a "${{ steps.ver.outputs.tag }}" -m "release ${{ steps.ver.outputs.tag }}"
+          git push -f origin "${{ steps.ver.outputs.tag }}"
 
       - name: Setup PHP
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.rel.outputs.exists == 'false'
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
@@ -81,11 +93,15 @@ jobs:
           tools: composer
 
       - name: Install composer deps
-        if: steps.tag.outputs.exists == 'false'
-        run: composer install --no-dev --optimize-autoloader --no-interaction --no-progress --ignore-platform-reqs
+        if: steps.rel.outputs.exists == 'false'
+        run: |
+          # composer.lock 里的 dist 地址是国内镜像，Actions 机器拉不到；
+          # 删掉 lock 让 composer 按 composer.json 从上游重新解析（打包用，不影响仓库）
+          rm -f composer.lock
+          composer install --no-dev --optimize-autoloader --no-interaction --no-progress --ignore-platform-reqs
 
       - name: Package
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.rel.outputs.exists == 'false'
         run: |
           V="${{ steps.ver.outputs.version }}"
           mkdir -p dist runtime/log runtime/store runtime/webui runtime/github runtime/schedule runtime/update
@@ -95,8 +111,9 @@ jobs:
           unzip -l "dist/hyper-bot-v$V.zip" | tail -1
 
       - name: Publish release
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.rel.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.ver.outputs.tag }}" "dist/hyper-bot-v${{ steps.ver.outputs.version }}.zip" "dist/hyper-bot-v${{ steps.ver.outputs.version }}.zip.sha256" --title "v${{ steps.ver.outputs.version }}" --notes "自动构建自 ${{ github.sha }}。包含 vendor 与前端产物，解压后 php bin/hyper install && php bin/hyper serve 即可。runtime/ 与 Config.ini 不会被覆盖。"
+          V="${{ steps.ver.outputs.version }}"
+          gh release create "${{ steps.ver.outputs.tag }}" "dist/hyper-bot-v$V.zip" "dist/hyper-bot-v$V.zip.sha256" --title "v$V" --notes "自动构建自 ${{ github.sha }}：包含 vendor 与前端产物，解压后执行 php bin/hyper install 与 php bin/hyper serve。runtime/ 与 Config.ini 不会被覆盖，升级前请备份。"

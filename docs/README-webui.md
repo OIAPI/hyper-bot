@@ -116,3 +116,22 @@ php tests/webui_api_test.php      # 36 条路由的端到端行为
 php tests/webui_bridge_test.php   # Swoole 桥接（桩对象）
 php tests/kernel_test.php         # 内核各组件
 ```
+
+## 部署
+
+面板是「预构建静态产物 + PHP 接口」，生产机不需要 node：
+
+1. **环境**：PHP ≥ 8.1，ext-json / mbstring / curl / openssl；先跑 `php bin/hyper doctor`。
+2. **依赖**：`composer install --no-dev -o`（`vendor/` 不入库）。
+3. **站点**：文档根指向 `public/`，非静态请求全部交给 `public/index.php`：
+   ```bash
+   php -S 0.0.0.0:8080 -t public public/index.php
+   ```
+   Nginx 等价写法：`try_files $uri /index.php?$query_string;`。
+4. **静态**：`public/webui/` 就是构建产物（约 3.3 MB）。重新构建在 `ui/` 目录：`npm i && npm run build`。
+5. **路径固定**：面板在 `/webui/`，接口在 `/webui/api`（前端写死 `BASE = '/webui/api'`）。
+   反向代理若要加前缀，需要同时改前端与路由，不建议。
+6. **可写**：`Config.ini` 与 `runtime/`（首次启动自动创建，含 users.json / 日志 / 缓存）。
+7. **首次启动**：没有任何账号时，bootstrap 会把首个登录账号建为 owner；之后在「账号」页管理。
+8. **可选扩展**：sodium（QQ 官方 Webhook 验签）、redis（可省，缺失走文件存储）、swoole（php 架构不需要）。
+9. **自检**：`php bin/hyper doctor`、`php tests/webui_api_test.php`（67 项）。

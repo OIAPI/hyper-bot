@@ -16,7 +16,9 @@ use Webui\Controller\OAuthController;
 use Webui\Controller\OverviewController;
 use Webui\Controller\PluginsController;
 use Webui\Controller\ProtocolsController;
+use Webui\Controller\PermissionsController;
 use Webui\Controller\RuntimeController;
+use Webui\Controller\ScheduleController;
 use Webui\Controller\SettingsController;
 use Webui\Controller\SubscriptionController;
 use Webui\Controller\UsersController;
@@ -57,6 +59,8 @@ final class Routes {
             $users    = new UsersController();
             $accounts = new AccountsController();
             $oauth    = new OAuthController($auth);
+            $schedule = new ScheduleController();
+            $permissions = new PermissionsController();
 
             // ---- 公开（无需登录） ----
             $r->post('/auth/login', [$authCtl, 'login'], 'auth.login');
@@ -67,7 +71,7 @@ final class Routes {
             $r->get('/auth/oauth/{provider}/callback', [$oauth, 'callback'], 'auth.oauth.callback');
 
             // ---- 需要登录 ----
-            $r->group('', function (Router $r) use ($authCtl, $overview, $groups, $plugins, $protocols, $logs, $settings, $system, $runtime, $subscription, $users, $accounts, $oauth): void {
+            $r->group('', function (Router $r) use ($authCtl, $overview, $groups, $plugins, $protocols, $logs, $settings, $system, $runtime, $subscription, $users, $accounts, $oauth, $schedule, $permissions): void {
                 // 账号
                 $r->post('/auth/logout', [$authCtl, 'logout'], 'auth.logout');
                 $r->get('/auth/me', [$authCtl, 'me'], 'auth.me');
@@ -127,6 +131,19 @@ final class Routes {
                 $r->get('/settings/raw', [$settings, 'raw'], 'settings.raw');
                 $r->post('/settings/reload', [$settings, 'reload'], 'settings.reload');
                 $r->put('/settings', [$settings, 'update'], 'settings.update');
+
+                // 定时任务（管理面；执行在 Core\Schedule\Runner）
+                $r->get('/schedule', [$schedule, 'index'], 'schedule.index');
+                $r->post('/schedule/preview', [$schedule, 'preview'], 'schedule.preview');
+                $r->post('/schedule', [$schedule, 'create'], 'schedule.create');
+                $r->put('/schedule/{id}', [$schedule, 'update'], 'schedule.update');
+                $r->delete('/schedule/{id}', [$schedule, 'destroy'], 'schedule.destroy');
+                $r->post('/schedule/{id}/run', [$schedule, 'run'], 'schedule.run');
+
+                // QQ 成员权限（机器人使用权限，不是后台登录权限）
+                $r->get('/permissions', [$permissions, 'index'], 'permissions.index');
+                $r->post('/permissions', [$permissions, 'save'], 'permissions.save');
+                $r->delete('/permissions/{qq}', [$permissions, 'destroy'], 'permissions.destroy');
 
                 // 运行架构（v2）
                 $r->get('/runtime', [$runtime, 'index'], 'runtime.index');

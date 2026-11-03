@@ -544,6 +544,16 @@ HELP;
 	 * @param int $workerId Worker进程ID
 	 */
 	public function onWorkerStart(SwooleHttpServer $server, int $workerId): void {
+		// 定时任务只在 worker 0 里跑，避免多 worker 重复执行
+		if ($workerId === 0 && class_exists(\Swoole\Timer::class)) {
+			\Swoole\Timer::tick(30000, static function (): void {
+				try {
+					\Core\Schedule\Runner::tick(true);
+				} catch (\Throwable $e) {
+					\Utils\Logger::error('[定时任务] tick 异常：' . $e->getMessage());
+				}
+			});
+		}
 		Timer::clearAll();
 		
 		$this->registerErrorHandler();

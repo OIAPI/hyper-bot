@@ -453,3 +453,48 @@ export interface OAuthProviders {
   callback: string
   redirect_uri_required: boolean
 }
+/** 定时任务 */
+export interface ScheduleAction {
+  type: 'message' | 'handler'
+  target?: string
+  target_type?: 'group' | 'private'
+  text?: string
+  handler?: string
+  account?: string
+}
+
+export interface ScheduleJob {
+  id: string
+  name: string
+  cron: string
+  enabled: boolean
+  action: ScheduleAction
+  next_run_at?: number
+  next_run_text?: string
+  last_run_at?: number
+  last_run_text?: string
+  last_status?: string
+  last_message?: string
+  overdue?: boolean
+}
+
+export interface ScheduleData {
+  items: ScheduleJob[]
+  presets: Array<{ expression: string; label: string }>
+  stats: { total: number; enabled: number; failed: number }
+  path: string
+  arch?: string
+}
+
+/** QQ 成员权限（机器人使用权限，与后台登录无关） */
+export interface MemberPermission {
+  qq: string
+  level: string
+  label: string
+}
+
+export interface PermissionsData {
+  items: MemberPermission[]
+  levels: Record<string, string>
+  stats: { total: number; by_level: Record<string, number> }
+}

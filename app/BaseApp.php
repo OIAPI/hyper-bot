@@ -190,6 +190,26 @@ abstract class BaseApp {
 		return $isArray ? $info : (object)$info;
 	}
 
+	/**
+	 * v1 兼容：群配置不存在时补一份默认值，已存在则原样返回。
+	 *
+	 * 老插件（如 System 插件的 reload）会直接调这个方法，v2 重构时漏掉了，
+	 * 结果 /restart 执行到一半抛「Call to undefined method」。
+	 */
+	public function initGroupInfoIfNeed(string|float|int|null $group = null): object
+	{
+		$gid = $group ?? ($this->group ?? 0);
+		$key = "{$gid}.info";
+		$raw = $this->redis->get($key);
+		if ($raw !== false) {
+			$data = json_decode((string)$raw);
+			if (is_object($data)) {
+				return $this->getGroupInfo($gid);
+			}
+		}
+		return $this->initGroupInfo($gid);
+	}
+
 	public function updateGroupInfo(string|float|int $group, object|array $info): bool
 	{
 		$key = "{$group}.info";

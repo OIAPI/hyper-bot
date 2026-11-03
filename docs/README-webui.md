@@ -487,6 +487,35 @@ WebUI 与聊天共用一个落盘器 `Webui\PluginInstaller`：
 包落到 `runtime/github/<name>`，按 `composer.json` 的 `autoload.psr-4` 推导命名空间；入口类需与文件名同名、
 位于 psr-4 根目录（Registry 只扫一层）。缺 composer.json 也能装，只是扫不到——接口用 `warnings` 告诉用户缺什么。
 
+## 定时任务
+
+存 `runtime/schedule/jobs.json`，面板「系统 → 定时任务」可增删改、启停、立即执行。
+
+- **表达式**：标准 5 段（分 时 日 月 周），支持 `*`、`*/n`、`a-b`、`a-b/n`、`a,b`，以及 `@hourly @daily @midnight @weekly @monthly @yearly`。
+  日和周同时限定时按 crontab 语义「满足其一」。面板里点「预览」会给出接下来三次执行时间。
+- **动作**：
+  - `message`：往群或好友发一条文本（走当前账号的 OneBot HTTP API，多账号时用 `action.account` 指定）；
+  - `handler`：调用插件里的静态方法，格式 `Class@method` 或 `Class::method`（必须是静态方法）。
+- **谁在跑**：
+  - `arch=swoole`：worker 0 里挂 `Swoole\Timer::tick(30000)`，30 秒检查一次；
+  - `arch=php` / php-fpm：没有常驻进程，只能靠 HTTP 请求顺带触发（20 秒节流）——**没人访问面板就不会准点执行**，需要准点请用 swoole 或 worker；
+  - `php bin/hyper worker`：命令行常驻，适合 cron 守护或容器里的独立进程。
+- 失败会写进任务的 `last_status=last_message`，面板上标红，日志里也有 `[schedule]` 记录。
+
+## QQ 成员权限
+
+控制「谁能在群里用机器人的管理命令」，**和后台登录账号是两套东西**：
+
+| | 后台账号 | QQ 成员权限 |
+|---|---|---|
+| 用途 | 登录 WebUI 面板 | 机器人在群里认人 |
+| 身份 | 用户名 + 密码 / 第三方登录 | QQ 号 |
+| 存储 | `runtime/webui/users.json` | `memberPermission.<QQ>`（沿用 v1 键） |
+| 管理 | 账号设置（owner/admin/viewer） | 业务 → QQ 权限 |
+
+等级：`super`（主人）、`admin`（管理员）、`editor`（编辑）、`default`（普通成员）。
+不在列表里的 QQ 按群角色判定（群主 / 管理员），插件里 `BaseApp::getUserPermission()` 与 `comparePermission()` 会直接读到面板配的值，无需改插件。
+
 ## 自检
 
 ```bash

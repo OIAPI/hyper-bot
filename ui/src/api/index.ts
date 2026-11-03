@@ -11,6 +11,7 @@ import type {
   LogTail, LogDates, MessageRecord,
   RuntimeData, HealthData, DiskData, RouteItem,
   BotAccount, BotAccountList, OAuthProviders,
+  ScheduleData, ScheduleJob, PermissionsData,
 } from '@/types/api'
 
 /** 鉴权 */
@@ -53,6 +54,24 @@ export const oauthApi = {
   /** 浏览器整页跳转，所以这里只拼 URL，不走 XHR */
   startUrl: (id: string, bind: boolean) =>
     '/webui/api/auth/oauth/' + encodeURIComponent(id) + '/start' + (bind ? '?bind=1' : ''),
+}
+
+/** 定时任务 */
+export const scheduleApi = {
+  list: () => http.get<ScheduleData>('/schedule'),
+  create: (payload: Partial<ScheduleJob>) => http.post<{ saved: ScheduleJob }>('/schedule', payload),
+  update: (id: string, payload: Partial<ScheduleJob>) =>
+    http.put<{ saved: ScheduleJob }>('/schedule/' + encodeURIComponent(id), payload),
+  remove: (id: string) => http.del<null>('/schedule/' + encodeURIComponent(id)),
+  run: (id: string) => http.post<{ ok: boolean; message: string }>('/schedule/' + encodeURIComponent(id) + '/run'),
+  preview: (cron: string) => http.post<{ ok: boolean; runs: string[]; msg: string }>('/schedule/preview', { cron }),
+}
+
+/** QQ 成员权限（机器人使用权限） */
+export const permissionApi = {
+  list: () => http.get<PermissionsData>('/permissions'),
+  save: (qq: string, level: string) => http.post<PermissionsData>('/permissions', { qq, level }),
+  remove: (qq: string) => http.del<PermissionsData>('/permissions/' + encodeURIComponent(qq)),
 }
 
 /** 概览 */

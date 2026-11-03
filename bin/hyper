@@ -334,10 +334,12 @@ function commandWorker(array $ctx): void
     $once = (bool)option($ctx, 'once', false);
     do {
         $count = 0;
-        foreach (\Core\Scheduler::due() as $entry) {
-            \Core\Scheduler::run($entry);
+        // 延迟队列 + cron 任务一起跑（Runner 内部会先清 Scheduler 的队列）
+        foreach (\Core\Schedule\Runner::tick(true) as $item) {
             $count++;
+            $logger->info('执行任务：' . ($item['name'] ?? $item['id'] ?? '?'));
         }
+        $count += count(\Core\Scheduler::due());
         if ($count > 0) {
             $logger->info("本轮执行 {$count} 个到期任务");
         }

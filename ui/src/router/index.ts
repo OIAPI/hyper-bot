@@ -65,6 +65,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '账号', icon: '⌬', group: '业务' },
       },
       {
+        path: 'schedule',
+        name: 'schedule',
+        component: () => import('@/views/ScheduleView.vue'),
+        meta: { title: '定时任务', icon: '⏱', group: '系统' },
+      },
+      {
+        path: 'permissions',
+        name: 'permissions',
+        component: () => import('@/views/PermissionsView.vue'),
+        meta: { title: 'QQ 权限', icon: '⚿', group: '业务' },
+      },
+      {
         path: 'subscription',
         name: 'subscription',
         component: () => import('@/views/SubscriptionView.vue'),

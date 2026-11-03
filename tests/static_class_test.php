@@ -30,9 +30,18 @@ foreach ($files as $file) {
     $uses = [];
     $declared = [];
     $n = count($tokens);
+    $depth = 0;
     for ($i = 0; $i < $n; $i++) {
         $t = $tokens[$i];
-        if (!is_array($t)) continue;
+        if (!is_array($t)) {
+            // 花括号深度：只解析文件顶层的 use，避开类里的 trait use
+            if ($t === '{') {
+                $depth++;
+            } elseif ($t === '}') {
+                $depth--;
+            }
+            continue;
+        }
         if ($t[0] === T_NAMESPACE) {
             $buf = '';
             for ($j = $i + 1; $j < $n; $j++) {
@@ -42,7 +51,7 @@ foreach ($files as $file) {
             }
             $ns = trim($buf, '\\');
         }
-        if ($t[0] === T_USE && $ns !== '') {
+        if ($t[0] === T_USE && $depth === 0) {
             $buf = '';
             for ($j = $i + 1; $j < $n; $j++) {
                 $x = $tokens[$j];
@@ -122,12 +131,46 @@ foreach ($files as $file) {
     }
 }
 $bad = array_values(array_unique($bad));
-if ($bad === []) {
-    echo "全部通过（类引用全部可解析）\n";
+
+// ---- 2) $this->method() 是否有对应方法（注释里的调用不算）----
+// 这类错误只在运行到那一行时才炸（例如插件 /restart 调了 v2 已删除的 initGroupInfoIfNeed）。
+$methodBad = [];
+foreach ($files as $file) {
+    $src = (string)file_get_contents($file);
+    if (!preg_match('/namespace\s+([^;]+);/', $src, $nm)) continue;
+    if (!preg_match('/(?:class|abstract class|final class)\s+(\w+)/', $src, $cm)) continue;
+    $cls = trim($nm[1]) . '\\' . $cm[1];
+    if (!class_exists($cls) || method_exists($cls, '__call')) continue;
+
+    // 去掉注释再找调用，避免被注释掉的旧代码误报
+    $clean = '';
+    foreach (token_get_all($src) as $t) {
+        $clean .= is_array($t) ? (in_array($t[0], [T_COMMENT, T_DOC_COMMENT], true) ? "\n" : $t[1]) : $t;
+    }
+    preg_match_all('/\$this->(\w+)\s*\(/', $clean, $mm);
+    foreach (array_unique($mm[1]) as $name) {
+        if (in_array($name, ['__construct', '__destruct', '__call', '__get'], true)) continue;
+        if (!method_exists($cls, $name)) {
+            $methodBad[] = str_replace($root . '/', '', $file) . ' -> ' . $name . '()';
+        }
+    }
+}
+$methodBad = array_values(array_unique($methodBad));
+
+if ($bad === [] && $methodBad === []) {
+    echo "全部通过（类引用可解析、this 方法都存在）\n";
     exit(0);
 }
-echo "无法解析 " . count($bad) . " 处类引用：\n";
-foreach ($bad as $line) {
-    echo "  - " . $line . "\n";
+if ($bad !== []) {
+    echo "无法解析 " . count($bad) . " 处类引用：\n";
+    foreach ($bad as $line) {
+        echo "  - " . $line . "\n";
+    }
+}
+if ($methodBad !== []) {
+    echo "调用了不存在的 $this 方法 " . count($methodBad) . " 处：\n";
+    foreach ($methodBad as $line) {
+        echo "  - " . $line . "\n";
+    }
 }
 exit(1);

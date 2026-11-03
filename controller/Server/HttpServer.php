@@ -463,6 +463,22 @@ HELP;
 				return;
 			}
 
+			// SPA 深链兜底：静态处理器对 /webui/groups 找不到文件，这里回 index.html
+			if (
+				str_starts_with($path, '/webui/')
+				&& !str_starts_with($path, '/webui/api/')
+				&& !str_contains(basename($path), '.')
+				&& !is_file(__root__ . '/public' . $path)
+			) {
+				$index = __root__ . '/public/webui/index.html';
+				if (is_file($index)) {
+					$response->status(200);
+					$response->header('Content-Type', 'text/html; charset=utf-8');
+					$response->end((string)file_get_contents($index));
+					return;
+				}
+			}
+
 			// v2：所有请求走统一内核路由（WebUI + 协议 Webhook + 健康检查），
 			// 与 php 架构完全同一条管线，不再有第二套注解路由。
 			$core = CoreRequest::fromSwoole((object)[

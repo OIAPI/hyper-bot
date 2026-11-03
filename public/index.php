@@ -36,6 +36,19 @@ if ($path === '/webui' || $path === '/webui/') {
     return true;
 }
 
+// 2.1 SPA 深链兜底：/webui/groups 这类前端路由在刷新时返回 index.html，
+//     否则用户刷新一次就 404（前端 history 模式必须有这个兜底）。
+if (
+    str_starts_with($path, '/webui/')
+    && !str_starts_with($path, '/webui/api/')
+    && !str_contains(basename($path), '.')
+    && !is_file(dirname(__DIR__) . '/public' . $path)
+) {
+    header('Content-Type: text/html; charset=utf-8', true, 200);
+    readfile(dirname(__DIR__) . '/public/webui/index.html');
+    return true;
+}
+
 // 3. 构造内核请求
 $request = Request::fromSwoole((object)[
     'server' => [

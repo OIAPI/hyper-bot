@@ -60,7 +60,14 @@ final class AuthController extends Base {
 
         $this->store->del($key);
         $token = $this->auth->createSession($user);
-        return Response::ok(['token' => $token, 'user' => $user], '登录成功')
+        $role = Auth::normalizeRole((string)($user['role'] ?? 'viewer'));
+        return Response::ok([
+            'token'       => $token,
+            'user'        => ['username' => $user['username'], 'role' => $role],
+            'role'        => $role,
+            'is_owner'    => $role === 'owner',
+            'permissions' => Auth::permissions($role),
+        ], '登录成功')
             ->withCookie(AuthMiddleware::COOKIE, $token, AuthMiddleware::SESSION_TTL);
     }
 
@@ -89,8 +96,20 @@ final class AuthController extends Base {
             : $this->fail('密码保存失败（runtime/webui 不可写）', -3, 500);
     }
 
-    /** 当前登录用户 */
+    /**
+     * 当前登录用户。
+     *
+     * 角色与能力一起下发，前端据此隐藏入口；真正的拦截仍在服务端 guard()，
+     * 这里只是少让用户点到「点了才 403」的按钮。
+     */
     public function me(Request $request): Response {
-        return $this->ok(['user' => $request->user()]);
+        $user = $request->user();
+        $role = Auth::normalizeRole((string)($user['role'] ?? 'viewer'));
+        return $this->ok([
+            'user'        => $user,
+            'role'        => $role,
+            'is_owner'    => $role === 'owner',
+            'permissions' => Auth::permissions($role),
+        ]);
     }
 }

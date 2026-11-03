@@ -37,6 +37,9 @@ final class SettingsController extends Base {
 
     /** 修改单个配置项 */
     public function update(Request $request): Response {
+        if ($deny = $this->guard($request, 'settings.write')) {
+            return $deny;
+        }
         $key = (string)$request->input('key', '');
         if ($key === '' || str_starts_with($key, '_')) {
             return $this->fail('配置键不合法', -1, 400);
@@ -60,6 +63,9 @@ final class SettingsController extends Base {
 
     /** 重新加载配置缓存 */
     public function reload(Request $request): Response {
+        if ($deny = $this->guard($request, 'settings.write')) {
+            return $deny;
+        }
         Env::refreshCache();
         return $this->ok(['warnings' => Config::warnings()], '配置已重新加载');
     }

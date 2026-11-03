@@ -1,0 +1,225 @@
+/**
+ * 设计令牌 · V6「纸感」
+ * 底色是暖纸白/暖炭灰（物性中性色），个性交给唯一一个低饱和强调色 --accent。
+ * 强调色由 --brand-h/s/l 三个运行时变量派生，换主题色 = 改三个数。
+ * 原则：不用纯 #fff/#000 做底、不用荧光语义色、不用灰蓝紫渐变、阴影只做柔和分层。
+ */
+:root {
+  --brand-h: 147;
+  --brand-s: 20%;
+  --brand-l: 33%;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
+
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-full: 999px;
+  --radius-btn: var(--radius-sm);
+
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 0.14s;
+  --dur: 0.2s;
+  --dur-slow: 0.32s;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+
+  --sidebar-w: 224px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 56px;
+  --shell-gap: 0px;
+}
+
+:root,
+html[data-theme='light'] {
+  color-scheme: light;
+
+  /* 暖纸底 + 白卡：canvas 偏暖、卡片仍是最亮的白，层次靠明度差而不是灰边框 */
+  --bg-canvas: #f4f2ec;
+  --bg: #f4f2ec;
+  --bg-rail: #fbfaf6;
+  --bg-rail-hover: #f1eee6;
+  --bg-rail-active: hsl(var(--brand-h) var(--brand-s) 93%);
+  --rail-border: #e8e3d8;
+
+  --bg-card: #fffefb;
+  --bg-card-2: #f8f6f0;
+  --bg-elev: #fffefb;
+  --bg-input: #fbf9f4;
+  --bg-input-focus: #fffefb;
+  --bg-hover: #f4f1e9;
+  --bg-active: #edeae1;
+
+  --border: #e7e1d5;
+  --border-soft: #f0ebe0;
+  --border-strong: #d6cebe;
+  --border-accent: hsl(var(--brand-h) var(--brand-s) 72%);
+
+  --text: #23211d;
+  --text-dim: #5b564d;
+  --text-faint: #948d80;
+  --text-inverse: #fffefb;
+
+  --shadow-sm: 0 1px 1px rgb(60 50 30 / 0.04);
+  --shadow: 0 1px 2px rgb(60 50 30 / 0.05), 0 8px 20px -12px rgb(60 50 30 / 0.14);
+  --shadow-lg: 0 12px 32px -16px rgb(60 50 30 / 0.2);
+  --shadow-glow: 0 0 0 3px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.12);
+
+  --scroll-thumb: #d5cdbf;
+  --grid-line: #f0ebe0;
+  --hairline: rgb(60 50 30 / 0.08);
+
+  /* 语义色：去荧光，向纸感靠 */
+  --ok: #3f7a52;
+  --ok-soft: #ebf2ea;
+  --warn: #a9762b;
+  --warn-soft: #f8f0dd;
+  --danger: #a8483b;
+  --danger-soft: #f7e9e5;
+  --info: #3f6076;
+  --info-soft: #e9eff2;
+
+  /* 强调色派生 */
+  --accent: hsl(var(--brand-h) var(--brand-s) var(--brand-l));
+  --accent-hover: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) - 6%));
+  --accent-press: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) - 11%));
+  --accent-soft: hsl(var(--brand-h) var(--brand-s) 94%);
+  --accent-soft-2: hsl(var(--brand-h) var(--brand-s) 88%);
+  --accent-line: hsl(var(--brand-h) var(--brand-s) 74%);
+  --accent-glow: hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.18);
+  --accent-ink: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) - 4%));
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* 暖炭灰，不是蓝黑；避免整屏泛蓝光的「赛博后台」感 */
+  --bg-canvas: #141311;
+  --bg: #141311;
+  --bg-rail: #1a1917;
+  --bg-rail-hover: #232120;
+  --bg-rail-active: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 6%) / 0.18);
+  --rail-border: #262422;
+
+  --bg-card: #1c1b18;
+  --bg-card-2: #211f1c;
+  --bg-elev: #242220;
+  --bg-input: #1f1e1b;
+  --bg-input-focus: #242220;
+  --bg-hover: #262421;
+  --bg-active: #2d2a26;
+
+  --border: #2b2825;
+  --border-soft: #242220;
+  --border-strong: #3b3733;
+  --border-accent: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 14%));
+
+  --text: #e9e5dc;
+  --text-dim: #a49e92;
+  --text-faint: #736d63;
+  --text-inverse: #171614;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.32);
+  --shadow: 0 2px 6px rgb(0 0 0 / 0.34), 0 12px 26px -14px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 14px 40px -14px rgb(0 0 0 / 0.65);
+  --shadow-glow: 0 0 0 3px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.22);
+
+  --scroll-thumb: #3a3733;
+  --grid-line: #262421;
+  --hairline: rgb(255 255 255 / 0.06);
+
+  --ok: #6faf82;
+  --ok-soft: rgb(111 175 130 / 0.14);
+  --warn: #d3a45c;
+  --warn-soft: rgb(211 164 92 / 0.14);
+  --danger: #cd7a6c;
+  --danger-soft: rgb(205 122 108 / 0.14);
+  --info: #7f9fb3;
+  --info-soft: rgb(127 159 179 / 0.14);
+
+  --accent: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 10%));
+  --accent-hover: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 16%));
+  --accent-press: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 4%));
+  --accent-soft: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 10%) / 0.16);
+  --accent-soft-2: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 10%) / 0.26);
+  --accent-line: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 10%) / 0.42);
+  --accent-glow: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 10%) / 0.26);
+  --accent-ink: hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 20%));
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.56;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#app {
+  height: 100%;
+}
+
+code,
+.mono,
+kbd,
+pre {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+}
+
+::selection {
+  background: var(--accent-soft-2);
+  color: var(--accent-ink);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: var(--radius-full);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: content-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

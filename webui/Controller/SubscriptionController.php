@@ -28,6 +28,9 @@ final class SubscriptionController extends Base
     /** 保存订阅 */
     public function update(Request $request): Response
     {
+        if ($deny = $this->guard($request, 'settings.write')) {
+            return $deny;
+        }
         $input = $request->params();
         $subscription = Subscription::fromConfig();
         if (!$subscription->save($input)) {

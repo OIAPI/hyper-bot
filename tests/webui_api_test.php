@@ -140,6 +140,73 @@ $ok('清理缓存需 confirm', ($cache['json']['code'] ?? 0) !== 1);
 $cache2 = $call('POST', '/webui/api/system/cache', ['confirm' => true], $token);
 $ok('confirm 后清理成功', ($cache2['json']['code'] ?? 0) === 1);
 
+echo "== 权限（RBAC）==\n";
+// 三档账号：主人 / 管理员 / 只读
+\Webui\Auth::setUsersForTest([
+    'boss'    => ['password' => password_hash('secret123', PASSWORD_BCRYPT), 'role' => 'owner',  'created' => 1],
+    'manager' => ['password' => password_hash('secret123', PASSWORD_BCRYPT), 'role' => 'admin',  'created' => 2],
+    'guest'   => ['password' => password_hash('secret123', PASSWORD_BCRYPT), 'role' => 'viewer', 'created' => 3],
+]);
+$loginAs = function (string $u) use ($call): string {
+    $r = $call('POST', '/webui/api/auth/login', ['username' => $u, 'password' => 'secret123']);
+    return (string)($r['json']['data']['token'] ?? '');
+};
+$ownerToken = $loginAs('boss');
+$adminToken = $loginAs('manager');
+$viewerToken = $loginAs('guest');
+$ok('三种角色都能登录', $ownerToken !== '' && $adminToken !== '' && $viewerToken !== '');
+
+$meV = $call('GET', '/webui/api/auth/me', [], $viewerToken);
+$ok('me 带 role / permissions / is_owner', ($meV['json']['data']['role'] ?? '') === 'viewer'
+    && is_array($meV['json']['data']['permissions'] ?? null)
+    && ($meV['json']['data']['is_owner'] ?? true) === false);
+$ok('viewer 没有写权限', !in_array('settings.write', $meV['json']['data']['permissions'] ?? [], true));
+$meO = $call('GET', '/webui/api/auth/me', [], $ownerToken);
+$ok('owner is_owner=true', ($meO['json']['data']['is_owner'] ?? false) === true);
+
+$vList = $call('GET', '/webui/api/users', [], $viewerToken);
+$ok('viewer 看账号列表 → 403', $vList['status'] === 403);
+$aList = $call('GET', '/webui/api/users', [], $adminToken);
+$ok('admin 看账号列表 → 403（仅主人）', $aList['status'] === 403);
+$oList = $call('GET', '/webui/api/users', [], $ownerToken);
+$items = $oList['json']['data']['items'] ?? [];
+$ok('owner 看账号列表', $oList['status'] === 200 && count($items) === 3);
+$ok('列表不含密码哈希', !isset($items[0]['password']));
+$ok('角色表随列表返回', ($oList['json']['data']['roles'] ?? []) === ['owner', 'admin', 'viewer']);
+
+$vCache = $call('POST', '/webui/api/system/cache', ['confirm' => true], $viewerToken);
+$ok('viewer 清缓存 → 403', $vCache['status'] === 403);
+$aCache = $call('POST', '/webui/api/system/cache', ['confirm' => true], $adminToken);
+$ok('admin 清缓存 → 200', ($aCache['json']['code'] ?? 0) === 1);
+
+$new = $call('POST', '/webui/api/users', ['username' => 'temp', 'password' => 'temp1234', 'role' => 'viewer'], $ownerToken);
+$ok('owner 建账号', ($new['json']['code'] ?? 0) === 1 && count($new['json']['data']['items'] ?? []) === 4);
+$dup = $call('POST', '/webui/api/users', ['username' => 'temp', 'password' => 'temp1234', 'role' => 'viewer'], $ownerToken);
+$ok('重名被拒', ($dup['json']['code'] ?? 1) !== 1);
+$weak = $call('POST', '/webui/api/users', ['username' => 'shortpw', 'password' => '123', 'role' => 'viewer'], $ownerToken);
+$ok('弱密码被拒', ($weak['json']['code'] ?? 1) !== 1);
+
+$promote = $call('PATCH', '/webui/api/users/temp', ['role' => 'admin'], $ownerToken);
+$ok('改角色', ($promote['json']['code'] ?? 0) === 1);
+$demote = $call('PATCH', '/webui/api/users/boss', ['role' => 'viewer'], $ownerToken);
+$ok('唯一 owner 不能被降级', ($demote['json']['code'] ?? 0) !== 1);
+$selfDel = $call('DELETE', '/webui/api/users/boss', [], $ownerToken);
+$ok('不能删自己 / 唯一 owner', ($selfDel['json']['code'] ?? 0) !== 1);
+$del = $call('DELETE', '/webui/api/users/temp', [], $ownerToken);
+$ok('删账号', ($del['json']['code'] ?? 0) === 1);
+
+$vGit = $call('POST', '/webui/api/plugins/import/git', ['url' => 'https://example.com/x.git'], $viewerToken);
+$ok('viewer 导入插件 → 403', $vGit['status'] === 403);
+$vZip = $call('POST', '/webui/api/plugins/import/zip', ['name' => 'x'], $viewerToken);
+$ok('viewer 上传插件 → 403', $vZip['status'] === 403);
+$oEmpty = $call('POST', '/webui/api/plugins/import/git', ['url' => ''], $ownerToken);
+$ok('owner 空地址 → 400', $oEmpty['status'] === 400 && ($oEmpty['json']['code'] ?? 0) !== 1);
+$oPkg = $call('POST', '/webui/api/plugins/import/git', ['url' => 'https://example.invalid/nope.git'], $adminToken);
+$ok('admin 有导入权限（网络失败而非 403）', $oPkg['status'] !== 403);
+
+// 恢复成单个管理员账号，后面的登出用例继续用它
+\Webui\Auth::setUsersForTest(['admin' => ['password' => password_hash('secret123', PASSWORD_BCRYPT), 'role' => 'admin', 'created' => time()]]);
+
 echo "== 错误处理 ==\n";
 $notFound = $call('GET', '/webui/api/nope', [], $token);
 $ok('未知接口 404', $notFound['status'] === 404);

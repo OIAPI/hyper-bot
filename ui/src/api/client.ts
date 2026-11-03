@@ -1,0 +1,134 @@
+/**
+ * HTTP 客户端。
+ *
+ * 两个约定必须记住：
+ *  1. 后端统一返回 { code, message, data }，code === 1 才是成功；
+ *  2. 鉴权用 Bearer token，401 时要踢回登录页（不能只弹个错就完事，
+ *     否则用户会盯着一个永远空的页面）。
+ */
+
+import type { ApiEnvelope } from '@/types/api'
+
+const TOKEN_KEY = 'hyper-token'
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly code: number = -1,
+    readonly status: number = 0,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+export function getToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? ''
+}
+
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token)
+}
+
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY)
+}
+
+/** 401 时由路由层注册的处理器接管（跳登录页） */
+let unauthorizedHandler: (() => void) | null = null
+export function onUnauthorized(fn: () => void): void {
+  unauthorizedHandler = fn
+}
+
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'POST' | 'PUT' | 'DELETE'
+
+interface RequestOptions {
+  query?: Record<string, string | number | boolean | undefined>
+  body?: unknown
+  /**
+   * 原始请求体（File / Blob / string）。
+   * 插件 zip 上传走这里：Swoole 默认的 multipart 解析要落盘到 upload_tmp_dir，
+   * 本机 /tmp 不可写，所以干脆整包当 raw body 发，后端自己写文件。
+   */
+  raw?: Blob | string
+  /** raw 的 Content-Type，缺省 application/octet-stream */
+  contentType?: string
+  /** 登录接口本身不需要带 token，也不该在 401 时触发跳转 */
+  anonymous?: boolean
+  signal?: AbortSignal
+}
+
+const BASE = '/webui/api'
+
+async function request<T>(method: Method, path: string, opts: RequestOptions = {}): Promise<T> {
+  const url = new URL(BASE + path, window.location.origin)
+  if (opts.query) {
+    for (const [k, v] of Object.entries(opts.query)) {
+      if (v !== undefined && v !== '') url.searchParams.set(k, String(v))
+    }
+  }
+
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  const token = getToken()
+  if (token && !opts.anonymous) headers.Authorization = 'Bearer ' + token
+
+  let payloadBody: BodyInit | undefined
+  if (opts.raw !== undefined) {
+    payloadBody = opts.raw
+    headers['Content-Type'] = opts.contentType ?? 'application/octet-stream'
+  } else if (opts.body !== undefined) {
+    payloadBody = JSON.stringify(opts.body)
+    headers['Content-Type'] = 'application/json'
+  }
+
+  let res: Response
+  try {
+    res = await fetch(url.toString(), {
+      method,
+      headers,
+      body: payloadBody,
+      signal: opts.signal,
+    })
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') throw e
+    throw new ApiError('网络请求失败，请检查服务是否在运行', -1, 0)
+  }
+
+  // 401：只有非匿名请求才踢人
+  if (res.status === 401 && !opts.anonymous) {
+    clearToken()
+    unauthorizedHandler?.()
+    throw new ApiError('登录已过期，请重新登录', -401, 401)
+  }
+
+  const text = await res.text()
+  let payload: ApiEnvelope<T> | null = null
+  if (text) {
+    try {
+      payload = JSON.parse(text) as ApiEnvelope<T>
+    } catch {
+      throw new ApiError('服务端返回了非 JSON 内容：' + text.slice(0, 120), -1, res.status)
+    }
+  }
+
+  if (!payload) throw new ApiError('服务端返回空响应', -1, res.status)
+
+  if (payload.code !== 1) {
+    throw new ApiError(payload.message || '请求失败', payload.code, res.status)
+  }
+  return payload.data
+}
+
+export const http = {
+  get: <T>(path: string, opts?: RequestOptions) => request<T>('GET', path, opts),
+  post: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    request<T>('POST', path, { ...opts, body }),
+  put: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    request<T>('PUT', path, { ...opts, body }),
+  patch: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    request<T>('PATCH', path, { ...opts, body }),
+  del: <T>(path: string, opts?: RequestOptions) => request<T>('DELETE', path, opts),
+  /** 原始字节上传：不转 JSON，直接把 Blob/File 塞进 body */
+  postRaw: <T>(path: string, raw: Blob | string, opts?: RequestOptions) =>
+    request<T>('POST', path, { ...opts, raw }),
+}

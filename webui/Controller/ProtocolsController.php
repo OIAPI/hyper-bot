@@ -31,6 +31,9 @@ final class ProtocolsController extends Base {
 
     /** 修改协议配置项（白名单，逐项写回 Config.ini） */
     public function update(Request $request, array $params): Response {
+        if ($deny = $this->guard($request, 'protocol.write')) {
+            return $deny;
+        }
         $name = (string)($params['protocol'] ?? '');
         if (!in_array($name, ['onebot', 'milky', 'qqbot'], true)) {
             return $this->fail('未知协议', -404, 404);

@@ -1,0 +1,232 @@
+/**
+ * Element Plus × 本项目令牌 的桥接层。
+ * 只做两件事：
+ *  1) 把 EP 的 CSS 变量指到我们的令牌上，于是换主题色/明暗时 EP 组件一起变；
+ *  2) 少量"去默认感"的细节修正（圆角、表头、卡片间距、按钮字重）。
+ * 不覆盖 EP 的组件逻辑样式，只调皮。
+ */
+:root,
+html[data-theme='light'],
+html[data-theme='dark'] {
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-3: color-mix(in srgb, var(--accent) 70%, var(--bg-card));
+  --el-color-primary-light-5: color-mix(in srgb, var(--accent) 50%, var(--bg-card));
+  --el-color-primary-light-7: color-mix(in srgb, var(--accent) 30%, var(--bg-card));
+  --el-color-primary-light-8: color-mix(in srgb, var(--accent) 20%, var(--bg-card));
+  --el-color-primary-light-9: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+  --el-color-primary-dark-2: color-mix(in srgb, var(--accent) 82%, #000);
+
+  --el-color-success: var(--ok);
+  --el-color-success-light-9: var(--ok-soft);
+  --el-color-warning: var(--warn);
+  --el-color-warning-light-9: var(--warn-soft);
+  --el-color-danger: var(--danger);
+  --el-color-danger-light-9: var(--danger-soft);
+  --el-color-error: var(--danger);
+  --el-color-error-light-9: var(--danger-soft);
+  --el-color-info: var(--text-faint);
+  --el-color-info-light-9: var(--bg-hover);
+
+  --el-bg-color: var(--bg-card);
+  --el-bg-color-page: var(--bg);
+  --el-bg-color-overlay: var(--bg-elev);
+
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text-dim);
+  --el-text-color-secondary: var(--text-faint);
+  --el-text-color-placeholder: var(--text-faint);
+  --el-text-color-disabled: var(--text-faint);
+
+  --el-border-color: var(--border);
+  --el-border-color-light: var(--border-soft);
+  --el-border-color-lighter: var(--border-soft);
+  --el-border-color-extra-light: var(--border-soft);
+  --el-border-color-dark: var(--border-strong);
+  --el-border-color-darker: var(--border-strong);
+
+  --el-fill-color: var(--bg-hover);
+  --el-fill-color-light: var(--bg-hover);
+  --el-fill-color-lighter: var(--bg-active);
+  --el-fill-color-extra-light: var(--bg-card-2);
+  --el-fill-color-dark: var(--bg-active);
+  --el-fill-color-darker: var(--bg-active);
+  --el-fill-color-blank: var(--bg-card);
+
+  --el-disabled-bg-color: var(--bg-active);
+  --el-disabled-text-color: var(--text-faint);
+  --el-disabled-border-color: var(--border);
+
+  --el-border-radius-base: var(--radius-sm);
+  --el-border-radius-small: var(--radius-xs);
+  --el-border-radius-round: var(--radius-full);
+
+  --el-font-size-base: 13.5px;
+  --el-font-size-small: 12.5px;
+  --el-font-size-extra-small: 11.5px;
+
+  --el-box-shadow: var(--shadow);
+  --el-box-shadow-light: var(--shadow-sm);
+  --el-box-shadow-lighter: var(--shadow-sm);
+  --el-box-shadow-dark: var(--shadow-lg);
+
+  --el-mask-color: rgb(15 17 21 / 0.45);
+  --el-overlay-color-lighter: rgb(15 17 21 / 0.4);
+  --el-transition-duration: var(--dur);
+}
+
+html[data-theme='dark'] {
+  --el-mask-color: rgb(0 0 0 / 0.65);
+  --el-bg-color-page: var(--bg);
+}
+
+/* ---------- 细节修正 ---------- */
+.el-button {
+  font-weight: 500;
+  border-radius: var(--radius-btn, var(--radius-sm));
+}
+.el-button--primary {
+  box-shadow: 0 1px 2px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.28);
+}
+.el-button--primary:not(.is-disabled):hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.el-button.is-text {
+  padding: 6px 8px;
+}
+
+.el-card {
+  border-radius: var(--radius-lg);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.el-card__header {
+  padding: 12px 16px;
+  font-weight: 600;
+  border-bottom-color: var(--border-soft);
+}
+.el-card__body {
+  padding: 16px;
+}
+
+.el-table {
+  --el-table-border-color: var(--border-soft);
+  --el-table-header-bg-color: var(--bg-card-2);
+  --el-table-row-hover-bg-color: var(--bg-hover);
+  --el-table-header-text-color: var(--text-dim);
+  font-size: 12.8px;
+}
+.el-table th.el-table__cell {
+  font-weight: 560;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.el-table .el-table__cell {
+  padding: 8px 0;
+}
+
+.el-menu {
+  border-right: none !important;
+  background: transparent;
+}
+.el-menu-item,
+.el-sub-menu__title {
+  height: 38px;
+  line-height: 38px;
+  margin: 1px 0;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.el-menu-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.el-menu-item:not(.is-active):hover {
+  background: var(--bg-rail-hover);
+}
+.el-menu-item-group__title {
+  padding: 12px 12px 4px !important;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+
+.el-tag {
+  border-radius: var(--radius-xs);
+  font-weight: 500;
+}
+.el-progress-bar__outer {
+  background-color: var(--bg-active);
+}
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--border) inset;
+}
+.el-input__wrapper:hover,
+.el-select__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--border-strong) inset;
+}
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.el-drawer,
+.el-dialog {
+  border-radius: var(--radius-lg);
+}
+.el-dialog__header {
+  font-weight: 600;
+}
+
+.el-pagination {
+  --el-pagination-button-bg-color: transparent;
+  font-weight: 500;
+}
+
+/* 页头：各页面统一用 .page-head */
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.page-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.page-head .sub {
+  font-size: 12px;
+  color: var(--text-faint);
+  padding-bottom: 2px;
+}
+
+/* 页面骨架：所有视图统一用它 */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.card-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.spacer {
+  flex: 1;
+}
+.subtle {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}

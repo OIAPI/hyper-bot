@@ -71,7 +71,7 @@ final class Auth {
 
         $user = [
             'password' => password_hash($password, PASSWORD_BCRYPT),
-            'role'     => 'admin',
+            'role'     => 'owner',
             'created'  => time(),
         ];
         self::$users = ['admin' => $user];
@@ -117,6 +117,152 @@ final class Auth {
         $users[$username]['password'] = password_hash($newPassword, PASSWORD_BCRYPT);
         self::$users = $users;
         return self::save();
+    }
+
+    // ------------------------------------------------------------------ RBAC
+
+    /** 角色从高到低：主人 > 管理员 > 只读 */
+    public const ROLES = ['owner', 'admin', 'viewer'];
+
+    /**
+     * 能力表（RBAC-lite）。
+     *
+     * 为什么不做完整 RBAC（角色-权限-资源三张表）：这个面板只有三种人、
+     * 十来个能力点，做成可配置表只会让「谁能改什么」变得不可读。
+     * 能力 -> 允许角色写死在这里，新增能力只改这一处。
+     */
+    public const CAPABILITIES = [
+        'view'           => ['owner', 'admin', 'viewer'],
+        'plugin.install' => ['owner', 'admin'],
+        'plugin.reload'  => ['owner', 'admin'],
+        'settings.write' => ['owner', 'admin'],
+        'protocol.write' => ['owner', 'admin'],
+        'group.write'    => ['owner', 'admin'],
+        'system.cache'   => ['owner', 'admin'],
+        'runtime.write'  => ['owner'],
+        'user.manage'    => ['owner'],
+    ];
+
+    public static function normalizeRole(string $role): string {
+        $role = strtolower(trim($role));
+        // 历史数据里只有 admin；未知值一律降级为只读，避免越权
+        return in_array($role, self::ROLES, true) ? $role : 'viewer';
+    }
+
+    /** @return list<string> */
+    public static function permissions(string $role): array {
+        $role = self::normalizeRole($role);
+        $out = [];
+        foreach (self::CAPABILITIES as $cap => $roles) {
+            if (in_array($role, $roles, true)) {
+                $out[] = $cap;
+            }
+        }
+        return $out;
+    }
+
+    public static function can(string $role, string $capability): bool {
+        $roles = self::CAPABILITIES[$capability] ?? [];
+        return in_array(self::normalizeRole($role), $roles, true);
+    }
+
+    /**
+     * 保证系统里始终有一个 owner。
+     *
+     * 老版本把首个账号存成 admin，升级后若没人能做「用户管理」，
+     * 面板会永久锁死在半权限状态——所以这里做一次就地提升。
+     */
+    public static function ensureOwner(): void {
+        $users = self::users();
+        if ($users === []) {
+            return;
+        }
+        foreach ($users as $record) {
+            if (self::normalizeRole((string)($record['role'] ?? '')) === 'owner') {
+                return;
+            }
+        }
+        $first = null;
+        $firstAt = PHP_INT_MAX;
+        foreach ($users as $name => $record) {
+            $created = (int)($record['created'] ?? 0);
+            if ($created < $firstAt) {
+                $firstAt = $created;
+                $first = (string)$name;
+            }
+        }
+        if ($first === null) {
+            return;
+        }
+        $users[$first]['role'] = 'owner';
+        self::$users = $users;
+        self::save();
+    }
+
+    /** @return list<array{username:string,role:string,created:int}> */
+    public static function listUsers(): array {
+        $out = [];
+        foreach (self::users() as $name => $record) {
+            $out[] = [
+                'username' => (string)$name,
+                'role'     => self::normalizeRole((string)($record['role'] ?? 'viewer')),
+                'created'  => (int)($record['created'] ?? 0),
+            ];
+        }
+        usort($out, static fn(array $a, array $b): int => $a['created'] <=> $b['created']);
+        return $out;
+    }
+
+    /** 创建账号；成功返回 null，失败返回错误文案 */
+    public static function createUser(string $username, string $password, string $role): ?string {
+        $username = trim($username);
+        if (!preg_match('/^[A-Za-z0-9_.-]{3,32}$/', $username)) {
+            return '用户名只能用字母、数字、下划线、点和横线，长度 3-32';
+        }
+        if (strlen($password) < 8) {
+            return '密码至少 8 位';
+        }
+        $users = self::users();
+        if (isset($users[$username])) {
+            return '用户名已存在';
+        }
+        $users[$username] = [
+            'password' => password_hash($password, PASSWORD_BCRYPT),
+            'role'     => self::normalizeRole($role),
+            'created'  => time(),
+        ];
+        self::$users = $users;
+        return self::save() ? null : '账号保存失败（runtime/webui 不可写）';
+    }
+
+    public static function setRole(string $username, string $role): ?string {
+        $users = self::users();
+        if (!isset($users[$username])) {
+            return '账号不存在';
+        }
+        $users[$username]['role'] = self::normalizeRole($role);
+        self::$users = $users;
+        return self::save() ? null : '账号保存失败';
+    }
+
+    public static function deleteUser(string $username): ?string {
+        $users = self::users();
+        if (!isset($users[$username])) {
+            return '账号不存在';
+        }
+        $owners = array_filter($users, static fn(array $u): bool => self::normalizeRole((string)($u['role'] ?? '')) === 'owner');
+        if (count($owners) <= 1 && isset($owners[$username])) {
+            return '不能删除唯一的主人账号';
+        }
+        unset($users[$username]);
+        self::$users = $users;
+        return self::save() ? null : '账号保存失败';
+    }
+
+    public static function isOnlyOwner(string $username): bool {
+        $users = self::users();
+        $owners = array_filter($users, static fn(array $u): bool => self::normalizeRole((string)($u['role'] ?? '')) === 'owner');
+        return count($owners) === 1 && isset($owners[$username]);
     }
 
     /** 测试注入：直接设置账号表（不落盘） */

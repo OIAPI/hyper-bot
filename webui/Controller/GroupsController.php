@@ -25,6 +25,9 @@ final class GroupsController extends Base {
 
     /** 开关单个插件 */
     public function togglePlugin(Request $request, array $params): Response {
+        if ($deny = $this->guard($request, 'group.write')) {
+            return $deny;
+        }
         $groupId = (string)($params['group_id'] ?? '');
         $plugin = (string)($params['plugin'] ?? '');
         $enabled = (bool)$request->input('enabled', false);
@@ -49,6 +52,9 @@ final class GroupsController extends Base {
 
     /** 群总开关 */
     public function toggleStatus(Request $request, array $params): Response {
+        if ($deny = $this->guard($request, 'group.write')) {
+            return $deny;
+        }
         $groupId = (string)($params['group_id'] ?? '');
         $key = $groupId . '.info';
         $info = $this->store->get($key);
@@ -60,6 +66,9 @@ final class GroupsController extends Base {
 
     /** 更新 WebUI 维护的元数据（备注 / 标签 / 名称） */
     public function updateMeta(Request $request, array $params): Response {
+        if ($deny = $this->guard($request, 'group.write')) {
+            return $deny;
+        }
         $groupId = (string)($params['group_id'] ?? '');
         if ($groupId === '') {
             return $this->fail('缺少群号', -1, 400);
@@ -77,6 +86,9 @@ final class GroupsController extends Base {
 
     /** 新建/登记一个群 */
     public function create(Request $request): Response {
+        if ($deny = $this->guard($request, 'group.write')) {
+            return $deny;
+        }
         $groupId = trim((string)$request->input('group_id', ''));
         if ($groupId === '' || !preg_match('/^[0-9a-zA-Z_-]+$/', $groupId)) {
             return $this->fail('群号格式不正确', -1, 400);
@@ -90,6 +102,9 @@ final class GroupsController extends Base {
 
     /** 移除群的配置（不影响 QQ 侧） */
     public function destroy(Request $request, array $params): Response {
+        if ($deny = $this->guard($request, 'group.write')) {
+            return $deny;
+        }
         $groupId = (string)($params['group_id'] ?? '');
         $this->store->del($groupId . '.info');
         $meta = (array)($this->store->get('webui:groups') ?? []);

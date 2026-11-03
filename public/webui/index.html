@@ -1,21 +1,42 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="light dark">
-<title>Hyper Bot 控制台</title>
-<link rel="stylesheet" href="./assets/app.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233b6ef6'/%3E%3Ctext x='16' y='22' font-size='16' font-family='sans-serif' font-weight='700' fill='white' text-anchor='middle'%3EH%3C/text%3E%3C/svg%3E">
-</head>
-<body>
-<div id="app"></div>
-<div id="toasts" class="toasts"></div>
-<script type="module" src="./assets/main.js"></script>
-<noscript>
-  <div style="padding:40px;text-align:center;font-family:sans-serif">
-    本控制台需要启用 JavaScript。
-  </div>
-</noscript>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#f4f2ec" />
+    <title>Hyper Bot</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%232f4f42'/%3E%3Ctext x='16' y='22' font-family='system-ui' font-size='17' font-weight='700' fill='white' text-anchor='middle'%3EH%3C/text%3E%3C/svg%3E"
+    />
+    <script>
+      // 首屏前预置主题，避免刷新时闪一下默认配色
+      (function () {
+        try {
+          if (localStorage.getItem('hyper-style-version') !== 'v7') {
+            ;['hyper-theme', 'hyper-hue', 'hyper-sat', 'hyper-light', 'hyper-preset', 'hyper-skin', 'hyper-framework'].forEach(function (k) {
+              localStorage.removeItem(k)
+            })
+            localStorage.setItem('hyper-style-version', 'v7')
+          }
+          var mode = localStorage.getItem('hyper-theme') || 'light'
+          var light = mode === 'light' || (mode === 'auto' && window.matchMedia('(prefers-color-scheme: light)').matches)
+          document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark')
+          document.documentElement.classList.toggle('dark', !light)
+          document.documentElement.setAttribute('data-framework', localStorage.getItem('hyper-framework') || 'element')
+          document.documentElement.style.setProperty('--brand-h', localStorage.getItem('hyper-hue') || '147')
+          document.documentElement.style.setProperty('--brand-s', (localStorage.getItem('hyper-sat') || '20') + '%')
+          document.documentElement.style.setProperty('--brand-l', (localStorage.getItem('hyper-light') || '33') + '%')
+        } catch (e) {}
+      })()
+    </script>
+    <script type="module" crossorigin src="/webui/assets/index-8eLu0j-p.js"></script>
+    <link rel="modulepreload" crossorigin href="/webui/assets/vendor-CVP1pi1a.js">
+    <link rel="stylesheet" crossorigin href="/webui/assets/index-C9XNIH6D.css">
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
 </html>

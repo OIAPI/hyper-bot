@@ -55,6 +55,9 @@ final class SystemController extends Base {
 
     /** 清理过期缓存（破坏性，需要显式 confirm） */
     public function cacheClear(Request $request): Response {
+        if ($deny = $this->guard($request, 'system.cache')) {
+            return $deny;
+        }
         if ($request->input('confirm') !== true) {
             return $this->fail('请传 confirm=true 以确认清理', -1, 400);
         }

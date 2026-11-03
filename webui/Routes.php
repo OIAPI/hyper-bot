@@ -17,6 +17,7 @@ use Webui\Controller\ProtocolsController;
 use Webui\Controller\RuntimeController;
 use Webui\Controller\SettingsController;
 use Webui\Controller\SubscriptionController;
+use Webui\Controller\UsersController;
 use Webui\Controller\SystemController;
 
 /**
@@ -51,6 +52,7 @@ final class Routes {
             $system   = new SystemController();
             $runtime  = new RuntimeController();
             $subscription = new SubscriptionController();
+            $users    = new UsersController();
 
             // ---- 公开（无需登录） ----
             $r->post('/auth/login', [$authCtl, 'login'], 'auth.login');
@@ -58,7 +60,7 @@ final class Routes {
             $r->get('/health', [$system, 'health'], 'system.health');
 
             // ---- 需要登录 ----
-            $r->group('', function (Router $r) use ($authCtl, $overview, $groups, $plugins, $protocols, $logs, $settings, $system, $runtime, $subscription): void {
+            $r->group('', function (Router $r) use ($authCtl, $overview, $groups, $plugins, $protocols, $logs, $settings, $system, $runtime, $subscription, $users): void {
                 // 账号
                 $r->post('/auth/logout', [$authCtl, 'logout'], 'auth.logout');
                 $r->get('/auth/me', [$authCtl, 'me'], 'auth.me');
@@ -83,6 +85,16 @@ final class Routes {
                 $r->get('/plugins', [$plugins, 'index'], 'plugins.index');
                 $r->post('/plugins/reload', [$plugins, 'reload'], 'plugins.reload');
                 $r->get('/plugins/{plugin}', [$plugins, 'show'], 'plugins.show');
+                // 导入：zip 走 raw body（见 PluginsController::zipPayload），git 走 JSON
+                $r->post('/plugins/import/zip', [$plugins, 'importZip'], 'plugins.importZip');
+                $r->post('/plugins/import/git', [$plugins, 'importGit'], 'plugins.importGit');
+
+                // 账号管理（仅主人）
+                $r->get('/users', [$users, 'index'], 'users.index');
+                $r->post('/users', [$users, 'create'], 'users.create');
+                $r->patch('/users/{username}', [$users, 'update'], 'users.update');
+                $r->delete('/users/{username}', [$users, 'destroy'], 'users.destroy');
+                $r->post('/users/{username}/password', [$users, 'resetPassword'], 'users.resetPassword');
                 $r->post('/groups/{group_id}/plugins', [$plugins, 'bulkToggle'], 'plugins.bulk');
 
                 // 协议
@@ -127,6 +139,8 @@ final class Routes {
      */
     public static function kernel(?\Closure $fallback = null): Kernel {
         $app = App::boot();
+        // 老数据里首个账号可能是 admin：保证系统始终有一个 owner
+        \Webui\Auth::ensureOwner();
         $auth = new AuthMiddleware($app->store);
         $app->router->middleware('webui.auth', fn($req, $next) => $auth->process($req, $next));
         self::register($app->router, $auth);

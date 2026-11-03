@@ -50,6 +50,9 @@ final class RuntimeController extends Base
     /** 切换架构（写入 Config.ini，需重启生效） */
     public function update(Request $request): Response
     {
+        if ($deny = $this->guard($request, 'runtime.write')) {
+            return $deny;
+        }
         $arch = strtolower(trim((string)$request->input('arch', '')));
         $valid = array_keys(Runtime::catalog());
         if (!in_array($arch, $valid, true) && $arch !== 'auto') {

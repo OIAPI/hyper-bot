@@ -78,6 +78,37 @@ public/webui/
 - 配置回显全程脱敏：`token|secret|password|authorization|client_secret|access_token`。
 - 账号存于 `runtime/webui/users.json`（bcrypt），权限 0600。
 
+## 角色与权限
+
+三角色：`owner`（主人）/ `admin`（管理员）/ `viewer`（只读）。能力表写在 `Webui\Auth::CAPABILITIES`，
+「能力 -> 允许角色」只有一处定义，加能力不用翻控制器。
+
+| 能力 | owner | admin | viewer |
+| --- | :-: | :-: | :-: |
+| view | ✓ | ✓ | ✓ |
+| plugin.install / plugin.reload | ✓ | ✓ | |
+| settings.write / protocol.write / group.write / system.cache | ✓ | ✓ | |
+| runtime.write | ✓ | | |
+| user.manage | ✓ | | |
+
+- 控制器用 `Base::guard($request, 'plugin.install')` 兜底（返回 `null` 表示通过），真正的拦截在服务端。
+- 角色**按 `users.json` 现查**而不是读会话：主人把人降级后，对方 12 小时的旧会话立刻失去写权限。
+- 账号接口（仅 owner）：`GET/POST /webui/api/users`、`PATCH/DELETE /webui/api/users/{username}`、`POST /webui/api/users/{username}/password`。
+- 升级兼容：老版本首个账号存的是 `admin`，`Auth::ensureOwner()` 启动时把最早创建的账号提升为 `owner`，避免面板永久失去账号管理能力。
+- 前端 `GET /webui/api/auth/me` 返回 `{user, role, is_owner, permissions}`，`auth.can('plugin.install')` 只用来隐藏入口。
+
+## 插件导入
+
+WebUI 与聊天共用一个落盘器 `Webui\PluginInstaller`：
+
+- WebUI：`POST /webui/api/plugins/import/zip`（raw body，`content-type: application/zip`，上限 32 MB）、
+  `POST /webui/api/plugins/import/git`（`{url, branch?, name?}`），需要 `plugin.install`。
+- 聊天（主人专用，`app/Plugins/PluginImport.php`）：`插件导入 git <url> [分支]`、`插件导入 zip <直链>`、
+  `插件导入 列表`、`插件导入 重载`。
+
+包落到 `runtime/github/<name>`，按 `composer.json` 的 `autoload.psr-4` 推导命名空间；入口类需与文件名同名、
+位于 psr-4 根目录（Registry 只扫一层）。缺 composer.json 也能装，只是扫不到——接口用 `warnings` 告诉用户缺什么。
+
 ## 自检
 
 ```bash

@@ -263,15 +263,32 @@ final class Metrics {
             return [];
         }
         $out = [];
+        $labels = ['Rule' => '命令', 'Notice' => '通知', 'Request' => '请求', 'Meta_event' => '元事件'];
         foreach ($registry->allHooks() as $attrClass => $rules) {
             $type = substr(strrchr($attrClass, '\\') ?: $attrClass, 1);
             foreach ($rules as $rule) {
-                if (($rule['class'] ?? '') !== $class) {
+                if (strcasecmp((string)($rule['class'] ?? ''), $class) !== 0) {
                     continue;
                 }
-                $out[] = ['type' => $type, 'method' => $rule['func'] ?? '', 'match' => $rule['match'] ?? ''];
+                // Notice / Request 的第一个参数是事件类型（如 group_increase），
+                // Rule 的是命令正则；统一放到 trigger 里，面板直接展示更有意义
+                $trigger = (string)($rule['match'] ?? '');
+                if ($trigger === '/.*/' || $trigger === '') {
+                    $trigger = $type === 'Request' ? '任意请求（好友 / 群）' : ($type === 'Notice' ? '任意通知' : '任意消息');
+                }
+                $out[] = [
+                    'type'    => $type,
+                    'label'   => $labels[$type] ?? $type,
+                    'method'  => $rule['func'] ?? '',
+                    'trigger' => $trigger,
+                    'match'   => $trigger,
+                    'scope'   => (string)($rule['pattern'] ?? ''),
+                    'name'    => $rule['name'] ?? null,
+                    'permission' => is_object($rule['permission'] ?? null) ? 'owner' : (string)($rule['permission'] ?? 'default'),
+                ];
             }
         }
+        usort($out, static fn($a, $b) => strcmp($a['type'] . $a['method'], $b['type'] . $b['method']));
         return $out;
     }
 

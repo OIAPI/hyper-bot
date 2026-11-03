@@ -90,6 +90,10 @@ final class Registry
             return;
         }
 
+        // 一律用反射得到的真实类名做键：v1 插件经常「文件名 Group.php、类名 group」，
+        // 用文件名推出来的名字会让元数据（真实类名）和钩子（文件名）对不上，
+        // 面板就表现为「插件在、钩子 0 个」。
+        $class = $ref->getName();
         $this->plugins[$class] = self::metadata($ref, $this->logger);
         $this->labels[$class] = $this->plugins[$class]['displayName'] ?: basename(str_replace('\\', '/', $class));
         // 全局关闭的插件仍然要被列出（面板上还要能重新打开），但不注册钩子，
@@ -108,13 +112,17 @@ final class Registry
                     continue;
                 }
                 $instance = $attr->newInstance();
+                $perm = $instance->permission ?? 'default';
+                if ($perm instanceof \Controller\Enum\PermRule) {
+                    $perm = $perm->value;
+                }
                 $this->hooks[$attrClass][] = [
                     'class'      => $class,
                     'func'       => $method->getName(),
                     'match'      => (string)($instance->match ?? '/.*/'),
                     'name'       => $instance->name ?? null,
                     'pattern'    => (string)($instance->pattern ?? 'group'),
-                    'permission' => $instance->permission ?? 'default',
+                    'permission' => $perm,
                     'plugin'     => $class,
                 ];
             }
@@ -208,13 +216,30 @@ final class Registry
     public function plugin(string $class): ?array
     {
         $this->load();
-        return $this->plugins[$class] ?? null;
+        if (isset($this->plugins[$class])) {
+            return $this->plugins[$class];
+        }
+        // PHP 类名不区分大小写，查找也保持同样语义
+        foreach ($this->plugins as $name => $meta) {
+            if (strcasecmp($name, $class) === 0) {
+                return $meta;
+            }
+        }
+        return null;
     }
 
     public function label(string $class): string
     {
         $this->load();
-        return $this->labels[$class] ?? $class;
+        if (isset($this->labels[$class])) {
+            return $this->labels[$class];
+        }
+        foreach ($this->labels as $name => $label) {
+            if (strcasecmp($name, $class) === 0) {
+                return $label;
+            }
+        }
+        return $class;
     }
 
     /** 菜单项（v1 的 Router::getMenu()） */

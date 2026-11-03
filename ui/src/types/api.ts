@@ -288,8 +288,16 @@ export interface GroupList {
 
 export interface PluginHook {
   type: string
+  /** 中文类型：命令 / 通知 / 请求 */
+  label?: string
   method: string
+  /** 触发条件：命令正则，或通知/请求的事件类型 */
+  trigger?: string
   match?: string
+  /** group | private */
+  scope?: string
+  name?: string | null
+  permission?: string
 }
 
 export interface Plugin {

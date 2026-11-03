@@ -34,9 +34,10 @@ const visible = ref(false)
 const count = computed(() => items.value.length)
 
 const hookColumns: UiColumn[] = [
-  { key: 'type', title: '类型', width: 100 },
-  { key: 'method', title: '方法', minWidth: 180 },
-  { key: 'match', title: '匹配', minWidth: 140 },
+  { key: 'type', title: '类型', width: 86 },
+  { key: 'trigger', title: '触发条件', minWidth: 200 },
+  { key: 'method', title: '处理方法', minWidth: 120 },
+  { key: 'scope', title: '范围', width: 74 },
 ]
 
 async function load(): Promise<void> {
@@ -261,13 +262,16 @@ async function submit(): Promise<void> {
         max-height="360"
       >
         <template #cell-type="{ row }">
-          <UiTag size="small" type="info">{{ asHook(row).type }}</UiTag>
+          <UiTag size="small" type="info">{{ asHook(row).label || asHook(row).type }}</UiTag>
+        </template>
+        <template #cell-trigger="{ row }">
+          <span class="mono tiny">{{ asHook(row).trigger || asHook(row).match || '—' }}</span>
         </template>
         <template #cell-method="{ row }">
           <span class="mono">{{ asHook(row).method }}</span>
         </template>
-        <template #cell-match="{ row }">
-          <span class="mono tiny">{{ asHook(row).match ?? '—' }}</span>
+        <template #cell-scope="{ row }">
+          <span class="tiny dim">{{ asHook(row).scope === 'private' ? '好友' : (asHook(row).scope === 'group' ? '群' : asHook(row).scope || '—') }}</span>
         </template>
       </UiTable>
     </UiDialog>

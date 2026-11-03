@@ -95,6 +95,26 @@ if ($firstPlugin !== '') {
 $helpToggle = $call('POST', '/webui/api/groups/123456/plugins/' . rawurlencode('App\\Plugins\\Help'), ['enabled' => false], $token);
 $ok('help 插件拒绝关闭', ($helpToggle['json']['code'] ?? 0) !== 1);
 
+// v1 插件的钩子必须能被索引出来（文件名 Group.php、类名 group，两处大小写不一致，
+// 曾经因此面板显示「插件在、钩子 0 个」）
+$byShort = [];
+foreach ($items as $it) {
+    $byShort[strtolower((string)($it['short'] ?? ''))] = $it;
+}
+foreach (['group' => 5, 'help' => 6, 'sys' => 5] as $short => $min) {
+    $hooks = $byShort[$short]['hooks'] ?? [];
+    $ok("v1 插件 {$short} 有钩子", count($hooks) >= $min, 'hooks=' . count($hooks));
+}
+$allHooks = 0;
+foreach ($items as $it) {
+    $allHooks += count($it['hooks'] ?? []);
+}
+$ok('插件钩子总数合理', $allHooks >= 16, 'total=' . $allHooks);
+$sample = $byShort['group']['hooks'][0] ?? [];
+$ok('钩子带类型与方法', ($sample['type'] ?? '') !== '' && ($sample['method'] ?? '') !== '', json_encode($sample));
+$ok('钩子带可读触发条件', ($sample['trigger'] ?? '') !== '', json_encode($sample));
+$ok('钩子带中文类型', ($sample['label'] ?? '') !== '', json_encode($sample));
+
 $del = $call('DELETE', '/webui/api/groups/123456', [], $token);
 $ok('删除群', ($del['json']['code'] ?? 0) === 1);
 

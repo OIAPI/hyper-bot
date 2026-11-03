@@ -83,6 +83,16 @@ try {
     check('损坏时不重建账号', Auth::bootstrap() === null);
     check('损坏时文件未被覆盖', trim((string)file_get_contents($file)) === '{broken json');
 
+    // 7.5 账号文件存在但为空（上次没落盘）：先备份再重建，不能静默换密码
+    $bakGlob = glob($file . '.bak-*') ?: [];
+    foreach ($bakGlob as $f) { @unlink($f); }
+    file_put_contents($file, '[]');
+    auth_reset();
+    $again = Auth::bootstrap();
+    check('空账号文件也会重建 admin', is_array($again) && ($again['username'] ?? '') === 'admin');
+    check('重建前留下备份', (glob($file . '.bak-*') ?: []) !== []);
+    foreach (glob($file . '.bak-*') ?: [] as $f) { @unlink($f); }
+
     // 8. 重置密码不会把账号降级
     file_put_contents($file, $backup ?? '{}');
     auth_reset();

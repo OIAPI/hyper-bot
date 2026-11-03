@@ -35,6 +35,18 @@ final class Auth {
         return self::dir() . '/users.json';
     }
 
+    /** 账号目录是否可写（不可写时 bootstrap 只能生成内存里的临时账号，重启即失效） */
+    public static function dirWritable(): bool {
+        $dir = self::dir();
+        return is_dir($dir) && is_writable($dir);
+    }
+
+    /** 账号文件是否可写（文件不存在时看目录） */
+    public static function fileWritable(): bool {
+        $file = self::usersFile();
+        return is_file($file) ? is_writable($file) : self::dirWritable();
+    }
+
     /** @return array<string, array{password:string, role:string, created:int}> */
     public static function users(): array {
         if (self::$users !== null) {
@@ -69,9 +81,17 @@ final class Auth {
         if (self::users() !== []) {
             return null;
         }
-        // 文件在但读不出来时绝不能「重建」：那会把原账号覆盖成随机密码
         if (self::$storageError !== null) {
+            // 文件存在但读不出来：绝不能覆盖重建，否则每次重启都换一次密码
             return null;
+        }
+        $existing = self::usersFile();
+        if (is_file($existing)) {
+            // 文件在、但里面没有账号（上次写入没落盘 / 被清空）：先备份再重建，事后可查
+            @copy($existing, $existing . '.bak-' . date('Ymd-His'));
+            if (class_exists(\Utils\Logger::class)) {
+                \Utils\Logger::warning('检测到账号文件存在但没有账号，已备份并重建 admin：' . $existing);
+            }
         }
 
         $password = Config::string('webui.password', '');
@@ -98,7 +118,14 @@ final class Auth {
             'created'  => time(),
         ];
         self::$users = ['admin' => $user];
-        self::save();
+        if (!self::save()) {
+            // 写不进去 = 这个账号只存在于当前进程的内存里，重启就没了。
+            // 此时必须报错，不能让人以为「密码被改了」，否则每次重启都换一次密码。
+            self::$users = [];
+            self::$storageError = '账号文件写入失败：' . self::usersFile()
+                . '（检查 runtime/webui 是否存在且可写，属主是否与运行用户一致）';
+            return null;
+        }
 
         return [
             'username'    => 'admin',

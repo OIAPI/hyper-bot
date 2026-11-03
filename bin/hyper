@@ -369,6 +369,9 @@ function commandPasswd(array $ctx): void
         if ($exists) {
             echo '  大小    ' . (int)@filesize($file) . ' 字节，' . count(\Webui\Auth::users()) . ' 个账号' . PHP_EOL;
             echo '  属主    ' . (function_exists('posix_getpwuid') ? (@posix_getpwuid(@fileowner($file))['name'] ?? '?') : '?') . PHP_EOL;
+            $writable = \Webui\Auth::fileWritable();
+            echo '  可写    ' . ($writable ? '是' : '否（重启会重建账号 → 表现为「每次重启密码都变」）') . PHP_EOL;
+            echo '  运行用户 ' . (function_exists('posix_geteuid') ? (@posix_getpwuid(posix_geteuid())['name'] ?? '?') : '?') . PHP_EOL;
         }
         $err = \Webui\Auth::storageError();
         if ($err !== null) {
@@ -456,6 +459,14 @@ function commandDoctor(array $ctx): void
 
     // 配置
     $path = Config::path();
+    // 账号库排在 Config 之前：这一项坏了会表现成「每次重启密码都变」
+    $users = \Webui\Auth::usersFile();
+    if (is_file($users)) {
+        $check('账号库可读', is_readable($users), $users);
+        $check('账号库可写（否则重启会重建账号）', is_writable($users), $users);
+    } else {
+        $check('账号库可写（首次启动要创建 admin）', is_writable(dirname($users)), dirname($users));
+    }
     $check('Config.ini 可读', is_readable($path), $path);
     $check('Config.ini 可写（WebUI 改配置需要）', is_writable($path), $path);
 

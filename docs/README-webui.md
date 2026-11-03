@@ -206,6 +206,15 @@ php bin/hyper passwd --verify admin '密码'  # 直接用 users.json 里的哈�
 - `--verify` 返回「密码正确」但网页仍登不上 → 问题在会话/接口层，不在密码；
 - `--path` 显示「存在但不可读」→ 属主或权限不对。CLI 用 root 建的文件是 `0600 root`，而 php-fpm 以 www 运行就读不到，此时面板会报「账号文件不可用」而不是「密码错误」。修法：`chown -R www:www runtime`（把 www 换成实际的 FPM 用户）。
 
+**「每次重启密码都不一样」**：这是账号库不可读/不可写导致的——读不到就以为没有账号，于是在内存里重建 admin，密码只对当前进程有效，重启即换。`php bin/hyper passwd --path` 会同时打印「属主 / 可写 / 运行用户」，三者不一致（典型：CLI 用 root 建 0600，面板以 www 跑）就是它。修法：
+
+```bash
+chown -R www:www runtime        # www 换成 php-fpm 的实际用户
+chmod 600 runtime/webui/users.json
+```
+
+账号目录不可写时，系统会直接报「账号文件写入失败」，不再静默生成临时账号。账号文件存在但没有账号（`[]`）时会先备份成 `users.json.bak-<时间>` 再重建，事后可查。
+
 **首次启动会自动建号**：`users.json` 不存在时，第一个请求会创建 `admin`（owner），随机密码写入 `runtime/webui/initial-password.txt`（0600），启动横幅与日志会打印该路径。不想用随机密码就先跑 `php bin/hyper passwd admin '密码'`。
 
 > 注意：`webui.password` 只在 **users.json 不存在**时用于初始化，之后改 Config.ini 不会改密码。

@@ -163,7 +163,7 @@ arch / receives_events / arch_hint。
 
 | 类 | 文件 | 职责 |
 |---|---|---|
-| `Core\Log\Logger` | `runtime/log/<Y-m-d>.log` | 结构化日志（level / channel / context），带内存环形缓冲供面板实时读取 |
+| `Core\Log\Logger` | `runtime/log/<Y-M>/<Y-m-d>.jsonl` | 结构化日志（level / channel / context），带内存环形缓冲供面板实时读取 |
 | `Utils\Logger` | `runtime/log/logger.log` | 终端彩色输出 + 文件追加，协程通道异步刷盘 |
 | `Utils\MessageLog` | `runtime/message/Y/m/d/<type>.log` | 事件审计（JSON Lines），在订阅过滤**之前**写，被丢弃的事件也能查 |
 
@@ -175,6 +175,8 @@ arch / receives_events / arch_hint。
 - **截断**：单条消息超过 256KB 会被截断并标注 `[truncated N bytes]`，避免面板一次载入几 MB 的单行。
 - **读取**：`MessageLog::read($date, $type, $limit)` 支持 `Ymd` 与 `Y-m-d`，非协程环境（php 架构）同样可用。
 - 日志写失败**绝不影响业务**：所有写入路径都吞掉异常，只落到 `error_log`。
+- **面板读两套**：JSONL 与 `logger.log`（含轮转备份）都读，纯文本按 `[时间] [级别] [通道] 内容` 解析后与 JSONL 合并、按时间倒序。只读 JSONL 会导致「业务日志一大堆，日志页永远空白」。
+- **消息记录默认给最近有数据的那天**：不传日期时按 `runtime/message/*/*/*` 里最新的目录返回，并在响应里带 `date` 与 `dates`，避免打开页面就是空的。
 
 ## 忘记密码（重置面板账号）
 

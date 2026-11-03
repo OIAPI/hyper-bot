@@ -154,7 +154,8 @@ class WsHub {
 	public static function onClose(\Swoole\WebSocket\Server $server, int $fd): void {
 		$role = self::$sessions[$fd]['role'] ?? 'reverse';
 		unset(self::$sessions[$fd]);
-		Logger::warning(($role === 'milky' ? '[Milky-WS] 客户端断开' : '[OneBot-WS] 反向 WS 客户端断开') . " | fd={$fd}");
+		// 客户端断开是常态（实现端重启、网络抖动都会触发），不能打成 WARNING 吓人
+		Logger::debug(($role === 'milky' ? '[Milky-WS] 客户端断开' : '[OneBot-WS] 反向 WS 客户端断开') . " | fd={$fd}");
 	}
 
 	/** 已连接的反向 WS 会话数（不包含 Milky 等仅推送端点） */

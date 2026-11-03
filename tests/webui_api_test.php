@@ -140,6 +140,23 @@ $ok('磁盘统计含 total/free/used/dirs', isset($disk['json']['data']['total']
 $dates = $call('GET', '/webui/api/logs/dates', [], $token);
 $ok('日志日期同时给 dates 与 items', is_array($dates['json']['data']['dates'] ?? null) && is_array($dates['json']['data']['items'] ?? null));
 
+// 日志项必须带 time/level/channel/message：前端表格按这四个字段渲染
+$first = $tail['json']['data']['items'][0] ?? [];
+$ok('日志项含 time/level/channel/message', isset($first['time'], $first['level'], $first['channel'], $first['message']), json_encode(array_keys($first)));
+$ok('日志 time 是可读时间', is_string($first['time'] ?? null) && str_contains((string)($first['time'] ?? ''), ':'));
+
+// 纯文本 logger.log 也要读出来（大量业务日志只写这里，曾经导致日志页永远空白）
+$plainHit = false;
+foreach ($day['json']['data']['items'] ?? [] as $row) {
+    if (is_string($row['time'] ?? null) && str_contains((string)$row['time'], ':')) { $plainHit = true; break; }
+}
+$ok('按天日志含可读时间项', $plainHit);
+
+// 消息记录：字段名与前端约定一致，且默认回落到最近有数据的那天
+$msgs = $call('GET', '/webui/api/messages', [], $token);
+$ok('消息记录返回 date/items/total', isset($msgs['json']['data']['date'], $msgs['json']['data']['total']) && is_array($msgs['json']['data']['items'] ?? null));
+$ok('消息记录带可选日期列表', is_array($msgs['json']['data']['dates'] ?? null));
+
 // 插件全局开关：停用后不再参与分发，重新启用恢复
 $pOff = $call('PUT', '/webui/api/plugins/' . rawurlencode('App\Plugins\Group') . '/enable', ['enabled' => false], $token);
 $ok('停用插件', ($pOff['json']['data']['enabled'] ?? null) === false);

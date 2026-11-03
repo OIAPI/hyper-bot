@@ -25,14 +25,22 @@ const cols: UiColumn[] = [
 ]
 
 const dateOptions = computed(() => [
-  { label: '今日', value: '' },
+  { label: '最近', value: '' },
   ...dates.value.map((d) => ({ label: d, value: d })),
 ])
 
 async function load(): Promise<void> {
   loading.value = true
   try {
-    items.value = await logApi.messages(selectedDate.value || undefined)
+    const res = await logApi.messages(selectedDate.value || undefined)
+    items.value = res.items ?? []
+    // 后端对「最近」会返回实际日期，顺手把下拉对齐，避免用户以为筛的是今天
+    if (!selectedDate.value && res.date) {
+      selectedDate.value = res.date
+    }
+    if (res.dates?.length) {
+      dates.value = Array.from(new Set([...dates.value, ...res.dates])).sort().reverse()
+    }
   } catch (e) {
     toast.fromError(e, '加载消息记录失败')
   } finally {

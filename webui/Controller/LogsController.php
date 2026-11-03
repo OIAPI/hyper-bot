@@ -68,7 +68,7 @@ final class LogsController extends Base {
 
     public function dates(Request $request): Response {
         $days = $this->handler()->days(60);
-        foreach (array_keys($this->plainIndex()) as $day) {
+        foreach ($this->plainDates() as $day) {
             if (!in_array($day, $days, true)) {
                 $days[] = $day;
             }
@@ -170,6 +170,26 @@ final class LogsController extends Base {
             }
         }
         return $out;
+    }
+
+    /**
+     * 纯文本日志里出现过的日期。
+     * 轮转文件按文件名取；当前文件只能扫行内时间戳（只扫末尾 2MB，够用且不拖慢页面）。
+     * @return string[]
+     */
+    private function plainDates(): array {
+        $days = array_keys($this->plainIndex());
+        $current = $this->plainDir() . '/logger.log';
+        if (is_file($current) && is_readable($current)) {
+            foreach ($this->tailLines($current, self::PLAIN_TAIL_BYTES) as $line) {
+                if (preg_match('/^[(d{4}-d{2}-d{2}) d{2}:d{2}:d{2}/', $line, $m)) {
+                    $days[] = $m[1];
+                }
+            }
+        }
+        $days = array_values(array_unique($days));
+        rsort($days, SORT_STRING);
+        return $days;
     }
 
     /** 读某天纯文本日志（倒序），按时间戳过滤日期 */

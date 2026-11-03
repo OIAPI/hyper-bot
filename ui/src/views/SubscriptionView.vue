@@ -11,7 +11,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { subscriptionApi } from '@/api'
 import { useToastStore } from '@/stores/toast'
-import type { SubscriptionState, SubscriptionExplain } from '@/types/api'
+import type { NoticeGroup, SubscriptionState, SubscriptionExplain } from '@/types/api'
 
 const toast = useToastStore()
 const state = ref<SubscriptionState | null>(null)
@@ -75,7 +75,49 @@ async function save(): Promise<void> {
   }
 }
 
-const noticeCatalog = computed(() => (state.value?.notice_catalog ?? {}) as Record<string, string>)
+/** 分区目录；后端没返回 groups 时把扁平目录包成一组，保证老数据也能看 */
+const noticeGroups = computed<NoticeGroup[]>(() => {
+  const s = state.value
+  if (!s) return []
+  if (s.notice_groups?.length) return s.notice_groups
+  const flat = s.notice_catalog ?? {}
+  return Object.keys(flat).length ? [{ title: '通知类型', types: flat }] : []
+})
+
+/** 目录里出现过的全部键（用于识别「配置里有、目录里没有」的旧值） */
+const knownTypes = computed<string[]>(() =>
+  noticeGroups.value.flatMap((g) => Object.keys(g.types)),
+)
+
+/** 配置里存在但目录未收录的类型：仍然显示出来，否则用户看不到它开着 */
+const extraTypes = computed<string[]>(() =>
+  (state.value?.notice_types ?? []).filter((k) => !knownTypes.value.includes(k)),
+)
+
+/** 通知通道开着但一个类型都没选：实际等于全关，必须显式提示 */
+const noticeEmpty = computed<boolean>(
+  () => Boolean(state.value?.notice) && (state.value?.notice_types.length ?? 0) === 0,
+)
+
+function selectAll(): void {
+  if (!state.value) return
+  state.value.notice_types = [...knownTypes.value, ...extraTypes.value]
+  markDirty()
+}
+
+function clearAll(): void {
+  if (!state.value) return
+  state.value.notice_types = []
+  markDirty()
+}
+
+function selectGroup(group: NoticeGroup, on: boolean): void {
+  if (!state.value) return
+  const keys = Object.keys(group.types)
+  const rest = state.value.notice_types.filter((k) => !keys.includes(k))
+  state.value.notice_types = on ? [...rest, ...keys] : rest
+  markDirty()
+}
 
 const SCOPES = [
   { value: 'group', label: '仅群聊' },
@@ -165,22 +207,61 @@ const CHANNELS = [
         </UiForm>
       </UiCard>
 
-      <div class="section-title">通知类型</div>
+      <div class="section-title">
+        通知类型
+        <span class="count">已选 {{ state.notice_types.length }}</span>
+      </div>
       <UiCard>
-        <div class="notice-grid">
-          <button
-            v-for="(label, key) in noticeCatalog"
-            :key="key"
-            type="button"
-            class="notice-chip"
-            :class="{ active: state.notice_types.includes(key) }"
-            @click="toggleNoticeType(key)"
-          >
-            <span class="notice-key">{{ key }}</span>
-            <span class="notice-label">{{ label }}</span>
-          </button>
+        <UiAlert v-if="noticeEmpty" type="warning" :closable="false" class="notice-warn">
+          通知通道已开启，但一个类型都没勾选 —— 所有通知都会被丢弃。点「全选」或至少勾选一个。
+        </UiAlert>
+
+        <div class="notice-toolbar">
+          <UiButton size="small" @click="selectAll">全选</UiButton>
+          <UiButton size="small" @click="clearAll">清空</UiButton>
         </div>
-        <UiEmpty v-if="!Object.keys(noticeCatalog).length" description="没有可配置的通知类型" />
+
+        <div v-for="g in noticeGroups" :key="g.title" class="notice-group">
+          <div class="notice-group-head">
+            <span class="notice-group-title">{{ g.title }}</span>
+            <button type="button" class="link-btn" @click="selectGroup(g, true)">全选</button>
+            <button type="button" class="link-btn" @click="selectGroup(g, false)">清空</button>
+          </div>
+          <div class="notice-grid">
+            <button
+              v-for="(label, key) in g.types"
+              :key="key"
+              type="button"
+              class="notice-chip"
+              :class="{ active: state.notice_types.includes(key) }"
+              @click="toggleNoticeType(key)"
+            >
+              <span class="notice-key">{{ key }}</span>
+              <span class="notice-label">{{ label }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-if="extraTypes.length" class="notice-group">
+          <div class="notice-group-head">
+            <span class="notice-group-title">配置中存在、目录未收录</span>
+            <span class="notice-group-hint">多为老版本或新协议写入的值，可点掉</span>
+          </div>
+          <div class="notice-grid">
+            <button
+              v-for="key in extraTypes"
+              :key="key"
+              type="button"
+              class="notice-chip active"
+              @click="toggleNoticeType(key)"
+            >
+              <span class="notice-key">{{ key }}</span>
+              <span class="notice-label">未知类型</span>
+            </button>
+          </div>
+        </div>
+
+        <UiEmpty v-if="!noticeGroups.length" description="没有可配置的通知类型" />
       </UiCard>
 
       <div v-if="explain" class="section-title">为什么需要订阅</div>
@@ -240,6 +321,24 @@ p.sub { margin: 3px 0 0; font-size: 12.5px; color: var(--text-faint); }
 .notice-chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .notice-key { font-family: var(--font-mono); font-size: 11px; }
 .notice-label { font-size: 11.5px; }
+
+.count { margin-left: 6px; font-size: 11.5px; font-weight: 400; color: var(--text-faint); }
+.notice-warn { margin-bottom: 10px; }
+.notice-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.notice-group { margin-bottom: 14px; }
+.notice-group:last-of-type { margin-bottom: 0; }
+.notice-group-head { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.notice-group-title { font-size: 12px; font-weight: 550; color: var(--text-dim); }
+.notice-group-hint { font-size: 11px; color: var(--text-faint); }
+.link-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 11.5px;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: inherit;
+}
 
 .why-list { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.85; color: var(--text-dim); }
 .subtle { margin-top: 10px; font-size: 11.5px; color: var(--text-faint); }

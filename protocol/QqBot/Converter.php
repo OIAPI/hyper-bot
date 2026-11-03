@@ -48,9 +48,16 @@ class Converter {
 			'FRIEND_ADD'                                      => self::friendAdd($d, $time, $self),
 			'FRIEND_DEL'                                      => self::friendDel($d, $time, $self),
 			'INTERACTION_CREATE'                              => self::interaction($d, $time, $self),
+			'MESSAGE_REACTION_ADD'                            => self::reaction($d, $time, $self, true),
+			'MESSAGE_REACTION_REMOVE'                         => self::reaction($d, $time, $self, false),
+			'MESSAGE_AUDIT_PASS'                              => self::audit($d, $time, $self, true),
+			'MESSAGE_AUDIT_REJECT'                            => self::audit($d, $time, $self, false),
+			'GUILD_MEMBER_ADD'                                => self::guildMember($d, $time, $self, 'guild_member_add'),
+			'GUILD_MEMBER_UPDATE'                             => self::guildMember($d, $time, $self, 'guild_member_update'),
+			'GUILD_MEMBER_REMOVE'                             => self::guildMember($d, $time, $self, 'guild_member_remove'),
 			'READY'                                           => self::ready($d, $time, $self),
 			'RESUMED'                                         => self::resumed($d, $time, $self),
-			default                                           => null, // 未知事件忽略
+			default                                           => self::generic($t, $d, $time, $self),
 		};
 	}
 
@@ -333,7 +340,7 @@ class Converter {
 	private static function friendDel(array $d, int $time, int $self): array {
 		return [
 			'post_type'   => 'notice',
-			'notice_type' => 'friend_recall_placeholder',
+			'notice_type' => 'friend_del',
 			'time'        => $time,
 			'self_id'     => $self,
 			'user_id'     => (string)($d['openid'] ?? ''),
@@ -407,5 +414,84 @@ class Converter {
 			}
 		}
 		return null;
+	}
+	// ---------------- 频道附加事件 ----------------
+
+	/** 频道表情表态（MESSAGE_REACTION_ADD / REMOVE） */
+	private static function reaction(array $d, int $time, int $self, bool $added): array {
+		$emoji = (array)($d['emoji'] ?? []);
+		return [
+			'post_type'   => 'notice',
+			'notice_type' => $added ? 'message_reaction_add' : 'message_reaction_remove',
+			'sub_type'    => (string)($emoji['type'] ?? ''),
+			'time'        => $time,
+			'self_id'     => $self,
+			'user_id'     => (string)($d['user_id'] ?? ''),
+			'group_id'    => (string)($d['guild_id'] ?? ''),
+			'guild_id'    => (string)($d['guild_id'] ?? ''),
+			'channel_id'  => (string)($d['channel_id'] ?? ''),
+			'message_id'  => (string)($d['target']['id'] ?? ''),
+			'target_type' => (string)($d['target']['type'] ?? ''),
+			'emoji_id'    => (string)($emoji['id'] ?? ''),
+			'emoji_type'  => (int)($emoji['type'] ?? 0),
+		];
+	}
+
+	/** 主动消息审核结果（MESSAGE_AUDIT_PASS / REJECT） */
+	private static function audit(array $d, int $time, int $self, bool $passed): array {
+		return [
+			'post_type'   => 'notice',
+			'notice_type' => $passed ? 'message_audit_pass' : 'message_audit_reject',
+			'time'        => $time,
+			'self_id'     => $self,
+			'group_id'    => (string)($d['guild_id'] ?? ''),
+			'guild_id'    => (string)($d['guild_id'] ?? ''),
+			'channel_id'  => (string)($d['channel_id'] ?? ''),
+			'message_id'  => (string)($d['message_id'] ?? ''),
+			'audit_id'    => (string)($d['audit_id'] ?? ''),
+			'audit_time'  => $d['audit_time'] ?? null,
+		];
+	}
+
+	/** 频道成员变更（GUILD_MEMBER_ADD / UPDATE / REMOVE） */
+	private static function guildMember(array $d, int $time, int $self, string $type): array {
+		$user = (array)($d['user'] ?? []);
+		return [
+			'post_type'   => 'notice',
+			'notice_type' => $type,
+			'time'        => $time,
+			'self_id'     => $self,
+			'group_id'    => (string)($d['guild_id'] ?? ''),
+			'guild_id'    => (string)($d['guild_id'] ?? ''),
+			'user_id'     => (string)($user['id'] ?? ''),
+			'nickname'    => (string)($user['username'] ?? ''),
+			'joined_at'   => $d['joined_at'] ?? null,
+		];
+	}
+
+	/**
+	 * 兜底：协议新增了我们还没显式适配的事件。
+	 *
+	 * 不丢事件，而是压成有限几个 notice_type（forum_event / guild_event / unknown_event），
+	 * 原始事件名放在 event_name 里。这样订阅页能给出开关，
+	 * 插件也能先接住新事件，而不用改核心代码。
+	 */
+	private static function generic(string $t, array $d, int $time, int $self): ?array {
+		if ($t === '') {
+			return null;
+		}
+		$noticeType = str_starts_with($t, 'FORUM_')
+			? 'forum_event'
+			: ((str_starts_with($t, 'GUILD_') || str_starts_with($t, 'CHANNEL_')) ? 'guild_event' : 'unknown_event');
+		return [
+			'post_type'   => 'notice',
+			'notice_type' => $noticeType,
+			'time'        => $time,
+			'self_id'     => $self,
+			'event_name'  => $t,
+			'group_id'    => (string)($d['guild_id'] ?? ($d['group_openid'] ?? '')),
+			'user_id'     => (string)($d['user_id'] ?? ($d['openid'] ?? '')),
+			'raw'         => $d,
+		];
 	}
 }

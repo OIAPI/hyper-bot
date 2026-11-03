@@ -101,6 +101,29 @@ final class Config {
         return $default;
     }
 
+    /**
+     * 配置键是否**实际存在**。
+     *
+     * get() 会把空字符串归一成默认值（历史语义：空 = 未填写），
+     * 于是「显式写成空」和「键根本不存在」在 get() 里无法区分。
+     * 订阅的「取消全部通知」正需要这个区分，所以单独提供 has()。
+     */
+    public static function has(string $key): bool
+    {
+        $segments = array_values(array_filter(explode('.', trim($key)), fn($v) => $v !== ''));
+        if ($segments === []) {
+            return false;
+        }
+        $tree = self::tree();
+        if (self::dig($tree, $segments) !== null) {
+            return true;
+        }
+        if (($segments[0] ?? '') !== 'protocol') {
+            return self::dig($tree, array_merge(['protocol'], $segments)) !== null;
+        }
+        return false;
+    }
+
     /** 读取整个小节（不存在返回空数组） */
     public static function section(string $name): array {
         $value = self::dig(self::tree(), array_values(array_filter(explode('.', trim($name)), fn($v) => $v !== '')));

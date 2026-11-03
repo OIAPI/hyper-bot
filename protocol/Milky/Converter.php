@@ -43,7 +43,8 @@ class Converter {
 			'group_disband'            => self::groupDisband($data, $time, $self),
 			'peer_pin_change'          => self::peerPinChange($data, $time, $self),
 			'bot_offline'              => self::offline($data, $time, $self),
-			default                    => null,
+			// 兜底：Milky 后续新增的事件不丢，交给订阅层决定收不收
+			default                    => self::generic($type, $data, $time, $self),
 		};
 	}
 
@@ -477,6 +478,25 @@ class Converter {
 			'time'           => $time,
 			'self_id'        => $self,
 			'reason'         => (string)($d['reason'] ?? ''),
+		];
+	}
+	/**
+	 * 兜底转换：未显式适配的 Milky 事件压成 notice/unknown_event。
+	 * 原始事件名保留在 event_type 字段，插件与订阅页都能看到。
+	 */
+	private static function generic(string $type, array $d, int $time, int $self): ?array {
+		if ($type === '') {
+			return null;
+		}
+		return [
+			'post_type'   => 'notice',
+			'notice_type' => 'unknown_event',
+			'event_type'  => $type,
+			'time'        => $time,
+			'self_id'     => $self,
+			'group_id'    => (string)($d['group']['group_id'] ?? ($d['group_id'] ?? '')),
+			'user_id'     => (string)($d['sender_id'] ?? ($d['user_id'] ?? '')),
+			'raw'         => $d,
 		];
 	}
 }

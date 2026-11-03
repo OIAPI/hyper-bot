@@ -203,7 +203,15 @@ export interface SubscriptionState {
   ignore_self: boolean
   ignore_robots: boolean
   robot_prefix: string
+  /** 扁平目录（兼容旧后端） */
   notice_catalog: Record<string, string>
+  /** 分区目录（后端 v2 返回；缺失时前端退回扁平目录） */
+  notice_groups?: NoticeGroup[]
+}
+
+export interface NoticeGroup {
+  title: string
+  types: Record<string, string>
 }
 
 export interface SubscriptionData {

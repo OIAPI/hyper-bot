@@ -77,8 +77,14 @@ final class Subscription
         }
 
         // 通知类型白名单：v2 用逗号分隔，v1 用 notice.{type} = 1
-        $noticeTypes = Config::list('subscription.notice_types', []);
-        if ($noticeTypes === []) {
+        //
+        // 关键区分：v2 的「键存在但为空」= 用户主动取消全部通知，必须保持空；
+        // 只有「键根本不存在」才回退 v1。否则在 WebUI 清空勾选、重启后会被 v1 的
+        // [notice] 老键复活，用户看到的现象就是「关了又自己开了」。
+        // 用 has() 而不是 get()：get() 把空串归一成默认值，无法区分「显式清空」。
+        $hasV2NoticeTypes = $hasV2 && Config::has('subscription.notice_types');
+        $noticeTypes = $hasV2NoticeTypes ? Config::list('subscription.notice_types', []) : [];
+        if (!$hasV2NoticeTypes) {
             foreach (Config::section('notice') as $type => $value) {
                 if (!is_scalar($value)) {
                     continue;
@@ -146,10 +152,13 @@ final class Subscription
             if ($type === '') {
                 return '缺少 message_type';
             }
-            if ($this->messageScope === 'group' && $type !== 'group') {
+            // 频道（guild）在订阅语义里并入群聊：都是「一个群/频道里的人在说话」，
+            // 否则选「仅群聊」时 QQ 官方频道的消息会被整体丢掉，用户却看不出原因。
+            $scopeType = $type === 'guild' ? 'group' : $type;
+            if ($this->messageScope === 'group' && $scopeType !== 'group') {
                 return "消息范围仅群聊，当前 {$type}";
             }
-            if ($this->messageScope === 'private' && $type !== 'private') {
+            if ($this->messageScope === 'private' && $scopeType !== 'private') {
                 return "消息范围仅私聊，当前 {$type}";
             }
             if ($event->rawMessage() === '') {
@@ -201,27 +210,109 @@ final class Subscription
             'ignore_self'   => $this->ignoreSelf,
             'ignore_robots' => $this->ignoreRobots,
             'robot_prefix'  => $this->robotPrefix,
-            // 常见通知类型清单，供前端渲染复选框
+            // 通知类型清单：catalog 用于兼容旧前端，groups 用于分区渲染
             'notice_catalog' => self::noticeCatalog(),
+            'notice_groups'  => self::noticeGroups(),
         ];
     }
 
-    /** 已知通知类型（OneBot11 标准 + Milky/官方机器人转换后的类型） */
+    /**
+     * 已知通知类型（OneBot11 标准 + Milky + QQ 官方机器人转换后的类型）。
+     *
+     * 这份目录必须覆盖三个转换器能产出的**全部** notice_type：
+     * 漏一个，WebUI 里就没有对应勾选项，该通知在用户视角就是「永远收不到」。
+     * tests/subscription_test.php 会扫描三个 Converter 的字面量并断言无遗漏。
+     */
     public static function noticeCatalog(): array
     {
+        $flat = [];
+        foreach (self::noticeGroups() as $group) {
+            foreach ($group['types'] as $key => $label) {
+                $flat[$key] = $label;
+            }
+        }
+        return $flat;
+    }
+
+    /** 分组后的目录：WebUI 按「群成员 / 群消息 / 群状态 / 好友私聊 / 频道 / 系统」分区展示 */
+    public static function noticeGroups(): array
+    {
         return [
-            'group_increase'   => '群成员增加',
-            'group_decrease'   => '群成员减少（退群/被踢）',
-            'group_admin'      => '群管理员变动',
-            'group_ban'        => '群禁言',
-            'group_recall'     => '群消息撤回',
-            'group_upload'     => '群文件上传',
-            'group_card'       => '群名片变更',
-            'friend_recall'    => '私聊消息撤回',
-            'friend_add'       => '好友添加',
-            'notify'           => '提醒（如戳一戳）',
-            'poke'             => '戳一戳',
-            'bot_offline'      => '机器人离线（Milky）',
+            [
+                'title' => '群成员',
+                'types' => [
+                    'group_increase' => '成员增加（含机器人入群）',
+                    'group_decrease' => '成员减少（退群 / 被踢）',
+                    'group_admin'    => '管理员变动',
+                    'group_ban'      => '禁言 / 解除禁言',
+                    'group_card'     => '群名片变更',
+                    'group_title'    => '群头衔变更',
+                ],
+            ],
+            [
+                'title' => '群消息',
+                'types' => [
+                    'group_recall'        => '消息撤回',
+                    'group_upload'        => '群文件上传',
+                    'group_msg_emoji_like'=> '消息表情表态',
+                    'group_lucky_king'    => '运气王',
+                    'honor'               => '群荣誉变更',
+                    'notify'              => '戳一戳 / 提醒（OneBot 标准写法）',
+                    'poke'                => '戳一戳（Milky 转换写法）',
+                ],
+            ],
+            [
+                'title' => '群状态',
+                'types' => [
+                    'group_name_change' => '群名变更',
+                    'group_disband'     => '群解散',
+                    'peer_pin_change'   => '群待办 / 置顶变更',
+                    'essence'           => '群精华消息变更',
+                ],
+            ],
+            [
+                'title' => '好友与私聊',
+                'types' => [
+                    'friend_add'      => '好友添加',
+                    'friend_del'      => '好友删除',
+                    'friend_recall'   => '私聊消息撤回',
+                    'offline_file'    => '私聊文件上传',
+                    'private_msg_receive' => '私聊消息接收开关变更（QQ 官方）',
+                    // 早期版本把好友删除写成了这个（语义错但已落库），保留以便老配置可读
+                    'friend_recall_placeholder' => '好友删除（旧版兼容键）',
+                ],
+            ],
+            [
+                'title' => '频道（QQ 官方）',
+                'types' => [
+                    'message_reaction_add'    => '频道表情表态',
+                    'message_reaction_remove' => '频道表情取消',
+                    'message_audit_pass'      => '频道消息审核通过',
+                    'message_audit_reject'    => '频道消息审核拒绝',
+                    'guild_member_add'        => '频道成员加入',
+                    'guild_member_update'     => '频道成员变更',
+                    'guild_member_remove'     => '频道成员离开',
+                    'guild_create'            => '频道服务器创建',
+                    'guild_update'            => '频道服务器更新',
+                    'guild_delete'            => '频道服务器删除',
+                    'channel_create'          => '子频道创建',
+                    'channel_update'          => '子频道更新',
+                    'channel_delete'          => '子频道删除',
+                    'forum_event'             => '论坛事件（帖子 / 回复）',
+                    'guild_event'             => '其它频道生命周期事件',
+                ],
+            ],
+            [
+                'title' => '系统',
+                'types' => [
+                    'group_msg_receive'   => '群消息接收开关变更（QQ 官方）',
+                    'subscribe_message_status' => '订阅消息授权状态（QQ 官方）',
+                    'interaction'         => '互动事件 / 按钮回调（QQ 官方）',
+                    'client_status'       => '客户端上下线',
+                    'bot_offline'         => '机器人离线（Milky）',
+                    'unknown_event'       => '未知事件（协议新增，兜底入口）',
+                ],
+            ],
         ];
     }
 

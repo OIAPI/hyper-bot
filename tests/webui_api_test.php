@@ -258,6 +258,67 @@ $ok('owner 删按群覆盖', ($oDelGroup['json']['code'] ?? 0) === 1);
 // 恢复成单个管理员账号，后面的登出用例继续用它
 \Webui\Auth::setUsersForTest(['admin' => ['password' => password_hash('secret123', PASSWORD_BCRYPT), 'role' => 'admin', 'created' => time()]]);
 
+echo "== 机器人账号（多账号） ==\n";
+$accTmp = $tmp . '/accounts.json';
+\Core\Bot\Accounts::path($accTmp);
+$al = $call('GET', '/webui/api/accounts', [], $token);
+$ok('账号列表 200', $al['status'] === 200 && is_array($al['json']['data']['accounts'] ?? null), $al['raw']);
+$ok('带协议字典', isset($al['json']['data']['protocols']['onebot']));
+$ok('带统计', isset($al['json']['data']['stats']['total']));
+
+$ac = $call('POST', '/webui/api/accounts', [
+    'id' => 'onebot-1001', 'name' => '测试号', 'protocol' => 'onebot',
+    'self_id' => '1001001', 'api' => 'http://127.0.0.1:3000', 'token' => 'secret-token',
+], $token);
+$ok('创建账号', ($ac['json']['code'] ?? 0) === 1, $ac['raw']);
+$ok('响应不回显 token', !isset($ac['json']['data']['saved']['token']));
+$ok('响应标记 token_set', ($ac['json']['data']['saved']['token_set'] ?? false) === true);
+$ok('账号落盘', is_file($accTmp));
+
+$dup = $call('POST', '/webui/api/accounts', ['protocol' => 'onebot', 'self_id' => '1001001'], $token);
+$ok('同协议 self_id 重复 → 400', $dup['status'] === 400);
+
+$badProto = $call('POST', '/webui/api/accounts', ['protocol' => 'nope', 'self_id' => '1002002'], $token);
+$ok('未知协议 → 400', $badProto['status'] === 400);
+
+$badApi = $call('POST', '/webui/api/accounts', ['protocol' => 'milky', 'self_id' => '1003003', 'api' => 'ftp://x'], $token);
+$ok('非 http api → 400', $badApi['status'] === 400);
+
+$au = $call('PUT', '/webui/api/accounts/onebot-1001', ['remark' => '改过备注'], $token);
+$ok('更新账号', ($au['json']['code'] ?? 0) === 1);
+$ok('更新后仍保留 token_set', (bool)($au['json']['data']['saved']['token_set'] ?? false));
+
+$viewerAcc = $call('GET', '/webui/api/accounts', [], $viewerToken);
+$ok('viewer 可读账号', $viewerAcc['status'] === 200);
+$viewerWrite = $call('POST', '/webui/api/accounts', ['protocol' => 'qqbot', 'self_id' => '1004004'], $viewerToken);
+$ok('viewer 建号 → 403', $viewerWrite['status'] === 403);
+
+$ac2 = $call('POST', '/webui/api/accounts', ['protocol' => 'qqbot', 'self_id' => '1002002', 'name' => '第二个号'], $token);
+$ok('同一机器人可加多个协议账号', ($ac2['json']['code'] ?? 0) === 1);
+
+$ad = $call('DELETE', '/webui/api/accounts/onebot-1001', [], $token);
+$ok('删除账号', ($ad['json']['code'] ?? 0) === 1);
+$adLast = $call('DELETE', '/webui/api/accounts/1002002', [], $token);
+$ok('删到剩一个 → 拒绝（至少保留一个账号）', $adLast['status'] === 400);
+
+echo "== 第三方登录 ==\n";
+$pv = $call('GET', '/webui/api/auth/oauth/providers', [], $token);
+$ok('provider 列表 200', $pv['status'] === 200, $pv['raw']);
+$ids = array_column($pv['json']['data']['providers'] ?? [], 'id');
+$ok('含 github/gitee/linuxdo', $ids === ['github', 'gitee', 'linuxdo'], implode(',', $ids));
+$ok('未配密钥时 enabled=false', ($pv['json']['data']['providers'][0]['enabled'] ?? true) === false);
+$ok('回调地址带 provider 占位', str_contains((string)($pv['json']['data']['callback'] ?? ''), '{provider}'));
+
+$startAnon = $call('GET', '/webui/api/auth/oauth/github/start');
+$ok('未配置时 start 拒绝（400/302）', in_array($startAnon['status'], [400, 302], true));
+$startBad = $call('GET', '/webui/api/auth/oauth/nope/start');
+$ok('未知 provider → 404', $startBad['status'] === 404);
+
+$unbind = $call('DELETE', '/webui/api/auth/oauth/github', [], $token);
+$ok('未绑定解绑 → 404', $unbind['status'] === 404);
+
+@unlink($accTmp);
+
 echo "== 错误处理 ==\n";
 $notFound = $call('GET', '/webui/api/nope', [], $token);
 $ok('未知接口 404', $notFound['status'] === 404);

@@ -119,6 +119,83 @@ final class Auth {
         return self::save();
     }
 
+    // ------------------------------------------------------- 第三方登录绑定
+
+    /**
+     * 某个账号已绑定的第三方身份。
+     * @return array<string, array{sub:string,label:string,bound_at:int}>
+     */
+    public static function bindings(string $username): array {
+        $record = self::users()[$username] ?? null;
+        if (!is_array($record) || !is_array($record['bindings'] ?? null)) {
+            return [];
+        }
+        $out = [];
+        foreach ($record['bindings'] as $provider => $row) {
+            if (!is_array($row) || (string)($row['sub'] ?? '') === '') {
+                continue;
+            }
+            $out[(string)$provider] = [
+                'sub'      => (string)$row['sub'],
+                'label'    => (string)($row['label'] ?? ''),
+                'bound_at' => (int)($row['bound_at'] ?? 0),
+            ];
+        }
+        return $out;
+    }
+
+    /** 反查：某个第三方身份绑到了哪个账号 */
+    public static function userByOauth(string $provider, string $sub): ?string {
+        if ($sub === '') {
+            return null;
+        }
+        foreach (self::users() as $username => $record) {
+            $bindings = is_array($record['bindings'] ?? null) ? $record['bindings'] : [];
+            if (isset($bindings[$provider]['sub']) && (string)$bindings[$provider]['sub'] === $sub) {
+                return (string)$username;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 绑定第三方身份。
+     * @return string|null 失败原因；成功返回 null
+     */
+    public static function bindOauth(string $username, string $provider, string $sub, string $label = ''): ?string {
+        $users = self::users();
+        if (!isset($users[$username])) {
+            return '账号不存在';
+        }
+        if ($sub === '') {
+            return '第三方返回的身份为空';
+        }
+        $owner = self::userByOauth($provider, $sub);
+        if ($owner !== null && $owner !== $username) {
+            return '该 ' . $provider . ' 身份已绑定到账号 ' . $owner;
+        }
+        $bindings = is_array($users[$username]['bindings'] ?? null) ? $users[$username]['bindings'] : [];
+        $bindings[$provider] = [
+            'sub'      => $sub,
+            'label'    => $label,
+            'bound_at' => time(),
+        ];
+        $users[$username]['bindings'] = $bindings;
+        self::$users = $users;
+        return self::save() ? null : '保存失败（runtime/webui 不可写）';
+    }
+
+    /** 解绑；返回是否真的删掉了一条绑定 */
+    public static function unbindOauth(string $username, string $provider): bool {
+        $users = self::users();
+        if (!isset($users[$username]['bindings'][$provider])) {
+            return false;
+        }
+        unset($users[$username]['bindings'][$provider]);
+        self::$users = $users;
+        return self::save();
+    }
+
     // ------------------------------------------------------------------ RBAC
 
     /** 角色从高到低：主人 > 管理员 > 只读 */

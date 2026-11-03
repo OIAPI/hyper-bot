@@ -1,6 +1,8 @@
 <?php
 namespace Core\Http;
 
+use Core\Bot\AccountContext;
+use Core\Bot\Accounts;
 use Core\Bot\Subscription;
 use Core\Config;
 use Core\Http\Request;
@@ -52,15 +54,68 @@ final class AppRoutes
         if (!isset($event['post_type'])) {
             return Response::fail('缺少 post_type', -1, 400);
         }
-        \Protocol\Core\EventDispatcher::dispatch($event, new \Protocol\OneBot\Adapter());
+        $account = self::resolveAccount($req, 'onebot', $event);
+        self::withAccount($account, static function () use ($event): void {
+            \Protocol\Core\EventDispatcher::dispatch($event, new \Protocol\OneBot\Adapter());
+        });
         return Response::json(['status' => 'ok', 'retcode' => 0, 'data' => ['status' => 'accepted']]);
+    }
+
+    /**
+     * 解析请求指向哪个机器人账号。
+     *
+     * 优先级：?account=<id> → X-Account-Id 头 → X-Self-Id 头 → 事件体里的 self_id。
+     * 找不到就返回 null，走单账号行为（读 Config.ini），保证老部署不改配置也能跑。
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>|null
+     */
+    private static function resolveAccount(Request $req, string $protocol, array $payload = []): ?array
+    {
+        $id = (string)($req->query['account'] ?? $req->header('x-account-id'));
+        if ($id !== '') {
+            $account = Accounts::get($id);
+            if ($account !== null && strtolower((string)$account['protocol']) === $protocol) {
+                return $account;
+            }
+        }
+
+        $selfId = (string)$req->header('x-self-id');
+        if ($selfId === '') {
+            $selfId = (string)($payload['self_id'] ?? '');
+        }
+        if ($selfId === '' || $selfId === '0') {
+            return null;
+        }
+        $account = Accounts::bySelfId($selfId);
+        if ($account === null || strtolower((string)$account['protocol']) !== $protocol) {
+            return null;
+        }
+        return (bool)($account['enable'] ?? true) ? $account : null;
+    }
+
+    /** 在账号上下文里执行一段逻辑（出栈由这里保证） */
+    private static function withAccount(?array $account, callable $fn): void
+    {
+        $previous = AccountContext::current();
+        AccountContext::use($account);
+        try {
+            $fn();
+        } finally {
+            AccountContext::use($previous);
+        }
     }
 
     // ---------------- Milky Webhook ----------------
 
     private static function milkyWebhook(Request $req): Response
     {
-        $expect = Config::string('protocol.milky.token', '');
+        $payload = $req->params();
+        $account = self::resolveAccount($req, 'milky', $payload);
+        // 多账号时用该账号自己的 token 校验；没有账号上下文才退回全局配置
+        $expect = $account !== null
+            ? (string)($account['token'] ?? '')
+            : Config::string('protocol.milky.token', '');
         if ($expect !== '') {
             $auth = $req->header('authorization');
             $token = str_starts_with(strtolower($auth), 'bearer ') ? trim(substr($auth, 7)) : '';
@@ -69,8 +124,11 @@ final class AppRoutes
             }
         }
 
-        $result = MilkyClient::handleEvent($req->params(), 'webhook');
-        return Response::json($result);
+        $result = null;
+        self::withAccount($account, static function () use ($payload, &$result): void {
+            $result = MilkyClient::handleEvent($payload, 'webhook');
+        });
+        return Response::json($result ?? ['status' => 'ok', 'retcode' => 0, 'data' => new \stdClass()]);
     }
 
     // ---------------- QQ 官方机器人 Webhook ----------------
@@ -97,7 +155,10 @@ final class AppRoutes
             }
         }
 
-        QqBotClient::handlePayload($payload, 'webhook');
+        $account = self::resolveAccount($req, 'qqbot', $payload);
+        self::withAccount($account, static function () use ($payload): void {
+            QqBotClient::handlePayload($payload, 'webhook');
+        });
         return Response::json(['op' => 12, 'd' => new \stdClass()]);
     }
 

@@ -400,3 +400,46 @@ export interface RouteItem {
   path: string
   name: string
 }
+
+/** 机器人账号（多账号）：同一协议可以挂多个号，各自一套地址与凭据 */
+export interface BotAccount {
+  id: string
+  name: string
+  protocol: string
+  self_id: string
+  enable: boolean
+  api?: string
+  forward_url?: string
+  remark?: string
+  /** 只写：提交时带上表示要改令牌，响应里永远不回显 */
+  token?: string
+  forward_token?: string
+  token_set?: boolean
+  forward_token_set?: boolean
+  created_at?: number
+  updated_at?: number
+}
+
+export interface BotAccountList {
+  accounts: BotAccount[]
+  protocols: Record<string, string>
+  stats: { total: number; enabled: number; protocols: Record<string, number> }
+  path: string
+}
+
+/** 第三方登录 */
+export interface OAuthProvider {
+  id: string
+  label: string
+  enabled: boolean
+  bound: boolean
+  bound_label: string
+  bound_at: number
+}
+
+export interface OAuthProviders {
+  providers: OAuthProvider[]
+  callback: string
+  redirect_uri_required: boolean
+}
+

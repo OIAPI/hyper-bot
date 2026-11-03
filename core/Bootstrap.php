@@ -129,30 +129,52 @@ final class Bootstrap
         }
 
         $started = [];
+        $accounts = \Core\Bot\Accounts::enabled();
 
-        // ---------- OneBot11 正向 WS ----------
-        if (Config::bool('protocol.onebot.enable', false)) {
-            $url = Config::string('protocol.onebot.forward.url', '');
-            if (Config::bool('protocol.onebot.forward.enable', false) && $url !== '') {
-                \Protocol\OneBot\WsHub::startForward($url, Config::string('protocol.onebot.forward.token', ''));
-                $started[] = "OneBot 正向 WS → {$url}";
-            } elseif (Config::bool('protocol.onebot.forward.enable', false)) {
-                $app->logger->warning('[OneBot] 已开启正向 WS 但未配置 url（protocol.onebot.forward.url）');
+        if ($accounts === []) {
+            // 没有账号表（老部署 / 刚从 ini 迁移）：沿用全局配置
+            self::startLegacyClients($app, $started);
+        } else {
+            $startedProtocols = [];
+            foreach ($accounts as $account) {
+                $protocol = strtolower((string)($account['protocol'] ?? ''));
+                $label = (string)($account['name'] ?? $account['id'] ?? $protocol);
+                if (isset($startedProtocols[$protocol])) {
+                    // 常驻客户端是进程级单例：同协议只能起一条。其余账号靠 webhook 接入，
+                    // 事件按 self_id 路由到对应账号，仍是多账号同时在跑。
+                    $app->logger->info('[协议] 账号 ' . $label . ' 走事件推送接入（同协议常驻连接已由前一个账号占用）');
+                    continue;
+                }
+                $startedProtocols[$protocol] = true;
+                \Core\Bot\AccountContext::use($account);
+                try {
+                    switch ($protocol) {
+                        case 'onebot':
+                            $url = \Core\Config::string('protocol.onebot.forward.url', '');
+                            if ($url !== '' && \Core\Config::bool('protocol.onebot.forward.enable', false)) {
+                                \Protocol\OneBot\WsHub::startForward($url, \Core\Config::string('protocol.onebot.forward.token', ''));
+                                $started[] = 'OneBot 正向 WS[' . $label . '] → ' . $url;
+                            } elseif ($url !== '') {
+                                $started[] = 'OneBot[' . $label . '] 事件接入：' . $url;
+                            }
+                            break;
+                        case 'milky':
+                            \Protocol\Milky\EventClient::start();
+                            $started[] = 'Milky[' . $label . '] → ' . \Core\Config::string('protocol.milky.api', '')
+                                . '（事件：' . \Core\Config::string('protocol.milky.event.mode', 'webhook') . '）';
+                            break;
+                        case 'qqbot':
+                            \Protocol\QqBot\EventClient::start();
+                            $started[] = 'QQ 官方机器人[' . $label . '] → ' . \Core\Config::string('protocol.qqbot.api', 'https://api.bot.qq.com')
+                                . '（事件：' . \Core\Config::string('protocol.qqbot.event.mode', 'ws') . '）';
+                            break;
+                        default:
+                            $app->logger->warning('[协议] 账号 ' . $label . ' 的协议未知：' . $protocol);
+                    }
+                } finally {
+                    \Core\Bot\AccountContext::reset();
+                }
             }
-        }
-
-        // ---------- Milky ----------
-        if (Config::bool('protocol.milky.enable', false)) {
-            \Protocol\Milky\EventClient::start();
-            $started[] = 'Milky → ' . Config::string('protocol.milky.api', '')
-                . '（事件：' . Config::string('protocol.milky.event.mode', 'webhook') . '）';
-        }
-
-        // ---------- QQ 官方机器人 ----------
-        if (Config::bool('protocol.qqbot.enable', false)) {
-            \Protocol\QqBot\EventClient::start();
-            $started[] = 'QQ 官方机器人 → ' . Config::string('protocol.qqbot.api', 'https://api.bot.qq.com')
-                . '（事件：' . Config::string('protocol.qqbot.event.mode', 'ws') . '）';
         }
 
         if ($started === []) {
@@ -161,6 +183,38 @@ final class Bootstrap
         }
         foreach ($started as $line) {
             $app->logger->success('[协议] 已启动：' . $line);
+        }
+    }
+
+    /**
+     * 老部署的启动路径：直接读 Config.ini 里的三个协议开关。
+     * @param array<int, string> $started
+     */
+    private static function startLegacyClients(App $app, array &$started): void
+    {
+        // ---------- OneBot11 正向 WS ----------
+        if (\Core\Config::bool('protocol.onebot.enable', false)) {
+            $url = \Core\Config::string('protocol.onebot.forward.url', '');
+            if (\Core\Config::bool('protocol.onebot.forward.enable', false) && $url !== '') {
+                \Protocol\OneBot\WsHub::startForward($url, \Core\Config::string('protocol.onebot.forward.token', ''));
+                $started[] = "OneBot 正向 WS → {$url}";
+            } elseif (\Core\Config::bool('protocol.onebot.forward.enable', false)) {
+                $app->logger->warning('[OneBot] 已开启正向 WS 但未配置 url（protocol.onebot.forward.url）');
+            }
+        }
+
+        // ---------- Milky ----------
+        if (\Core\Config::bool('protocol.milky.enable', false)) {
+            \Protocol\Milky\EventClient::start();
+            $started[] = 'Milky → ' . \Core\Config::string('protocol.milky.api', '')
+                . '（事件：' . \Core\Config::string('protocol.milky.event.mode', 'webhook') . '）';
+        }
+
+        // ---------- QQ 官方机器人 ----------
+        if (\Core\Config::bool('protocol.qqbot.enable', false)) {
+            \Protocol\QqBot\EventClient::start();
+            $started[] = 'QQ 官方机器人 → ' . \Core\Config::string('protocol.qqbot.api', 'https://api.bot.qq.com')
+                . '（事件：' . \Core\Config::string('protocol.qqbot.event.mode', 'ws') . '）';
         }
     }
 

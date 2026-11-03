@@ -2,12 +2,14 @@
 namespace Protocol\Core;
 
 use Core\App;
+use Core\Bot\AccountContext;
+use Core\Bot\Accounts;
 use Core\Bot\Event;
 use Utils\Logger;
 use Utils\MessageLog;
 
 /**
- * 协议层事件入口（v2）：把各协议送来的一事件转交给 `Core\Bot\Dispatcher`。
+ * 协议层事件入口（v2）：把各协议送来的一事件转交给 Core\Bot\Dispatcher。
  *
  * 这个类保留下来只是为了**不动 5 个调用点**：
  *   app/Controller/Protocol.php::webhook
@@ -19,7 +21,7 @@ use Utils\MessageLog;
  *   1. 读 Config.ini [type] 过滤      → Core\Bot\Subscription
  *   2. 写 MessageLog 落库             → 这里保留（属于审计，不是业务）
  *   3. 开子协程 + Cache::set 上下文   → Core\Bot\Context::run（自动压栈出栈）
- *   4. new \Controller\Trigger\*   → Core\Bot\Dispatcher（注册表匹配 + 权限）
+ *   4. new Controller\Trigger\*   → Core\Bot\Dispatcher（注册表匹配 + 权限）
  *
  * 返回值仍是 OneBot11 的 {"status":"ok","retcode":0,...}，因为调用方会把它
  * 直接回给协议端（Webhook 需要立即 200，否则协议端会重投）。
@@ -29,10 +31,9 @@ class EventDispatcher
     /**
      * 分发一条标准 OneBot11 事件。
      *
-     * @param array $event 标准事件
-     * @param Adapter|null $adapter 事件来源（决定插件发消息的去向）
-     * @param callable|null $responder 处理完成后的回调（Webhook 用它写响应）
-     * @return array OneBot11 风格的成功应答
+     * 多账号：进来先确定这条事件属于哪个账号（调用方已压栈就沿用，否则按 self_id 反查），
+     * 处理期间 AccountContext 持有它 —— 协议层读 milky.api / qqbot.token 时拿到的就是这个账号的。
+     * 调用方没压栈时由这里负责弹栈，保证不会泄漏到下一个请求。
      */
     public static function dispatch(array $event, ?Adapter $adapter = null, ?callable $responder = null): array
     {
@@ -42,6 +43,19 @@ class EventDispatcher
         if ($postType === '') {
             Logger::warning('[事件分发] 缺少 post_type，已忽略：' . substr(json_encode($event, JSON_UNESCAPED_UNICODE), 0, 200));
             return self::accepted();
+        }
+
+        $pushed = false;
+        if (AccountContext::current() === null) {
+            $account = Accounts::bySelfId((string)($event['self_id'] ?? ''));
+            if ($account !== null) {
+                AccountContext::use($account);
+                $pushed = true;
+            }
+        }
+        $current = AccountContext::current();
+        if ($current !== null && ($event['account'] ?? '') === '') {
+            $event['account'] = (string)($current['id'] ?? '');
         }
 
         // 审计落库：在订阅过滤之前写，保证「被丢弃的事件」也能在 WebUI 里查到，
@@ -59,6 +73,9 @@ class EventDispatcher
         } catch (\Throwable $e) {
             Logger::error("[事件分发] {$postType} 处理异常：{$e->getMessage()} | {$e->getFile()}:{$e->getLine()}");
         } finally {
+            if ($pushed) {
+                AccountContext::reset();
+            }
             if ($responder !== null) {
                 try {
                     $responder(self::accepted());

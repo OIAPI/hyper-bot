@@ -196,6 +196,77 @@ arch / receives_events / arch_hint。
 - 升级兼容：老版本首个账号存的是 `admin`，`Auth::ensureOwner()` 启动时把最早创建的账号提升为 `owner`，避免面板永久失去账号管理能力。
 - 前端 `GET /webui/api/auth/me` 返回 `{user, role, is_owner, permissions}`，`auth.can('plugin.install')` 只用来隐藏入口。
 
+## 多账号
+
+同一个协议可以挂多个机器人号，账号是独立文件 `runtime/accounts.json`（不再塞进 Config.ini）：
+
+```json
+{
+  "accounts": [
+    {
+      "id": "onebot-3889", "name": "主号", "protocol": "onebot",
+      "self_id": "3889012345", "enable": true,
+      "api": "http://127.0.0.1:3000", "token": "…",
+      "forward_url": "ws://127.0.0.1:6700", "remark": "线上主号"
+    }
+  ]
+}
+```
+
+- **事件路由**：优先级 `?account=<id>` → `X-Account-Id` → `X-Self-Id` → 事件里的 `self_id`。
+  命中后压栈 `Core\Bot\AccountContext`，协议层读 `onebot.api` / `milky.token` / `qqbot.forward.url`
+  时自动拿到该账号的值，没命中才回落到 Config.ini 的全局配置。
+- **常驻客户端**：每个协议只启动第一个启用账号的长连接，其余账号走事件推送（http webhook），
+  避免同协议重复建连。日志里会写明「其余账号走事件推送接入」。
+- **接口**（写操作需 `protocol.write`）：`GET/POST /webui/api/accounts`、`PUT/DELETE /webui/api/accounts/{id}`。
+  响应永远不回显 token，只给 `token_set`；提交时 token 留空表示「不修改」。
+- **升级兼容**：首次启动若没有 `accounts.json`，会按 Config.ini 里已配置的协议自动生成初始账号，
+  老部署不需要手工迁移。
+- **删除保护**：至少保留一个账号，避免面板把自己锁死。
+
+## 第三方登录（OAuth）
+
+面板支持用第三方平台登录，本质是「把第三方身份绑定到已有面板账号」：
+
+| provider | 默认 scope | 说明 |
+| --- | --- | --- |
+| github | read:user | 用 `id` 做唯一标识，`login` 做展示名 |
+| gitee | user_info | 同上 |
+| linuxdo | openid profile | 同上 |
+
+配置（Config.ini）：
+
+```ini
+[oauth]
+; 不配就用「当前请求的 scheme://host + /webui/api/auth/oauth/{provider}/callback」
+callback =
+
+[oauth.github]
+client_id = xxx
+client_secret = xxx
+
+[oauth.gitee]
+client_id = xxx
+client_secret = xxx
+```
+
+自建 OAuth2 服务也能接：在 `[oauth.自定义名]` 里补 `authorize_url` / `token_url` / `userinfo_url` /
+`id_field` / `name_field` / `scope` 即可，provider 列表由代码里的内置表驱动。
+
+流程：
+
+1. 已登录用户在「账号」页点「绑定」→ `GET /webui/api/auth/oauth/{provider}/start?bind=1`（带签名 state 跳转）。
+2. 第三方回调 `GET /webui/api/auth/oauth/{provider}/callback`（公开路由，浏览器此时还没有面板 token）。
+3. 服务端换 token、取 userinfo，把 `sub` 写进 `users.json` 的 `bindings` 字段。
+4. 以后未登录时点同一平台的「登录」，回调按 `provider + sub` 反查账号并直接建会话。
+
+安全约束：
+
+- state 用 HMAC-SHA256 签名并带 10 分钟有效期，防 CSRF / 重放；密钥存 `runtime/webui/oauth-secret.txt`（0600），
+  也可用 `webui.oauth_secret` 指定。
+- **不自动建号**：第三方身份没绑定过时只提示「请先用密码登录后绑定」，避免任意第三方账号点一下就拿到面板权限。
+- 解绑：`DELETE /webui/api/auth/oauth/{provider}`；已绑定列表：`GET /webui/api/auth/oauth/providers`。
+
 ## 插件导入
 
 WebUI 与聊天共用一个落盘器 `Webui\PluginInstaller`：

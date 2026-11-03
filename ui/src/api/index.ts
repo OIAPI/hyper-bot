@@ -10,6 +10,7 @@ import type {
   GroupList, Group, PluginList, PluginImportResult,
   LogTail, LogDates, MessageRecord,
   RuntimeData, HealthData, DiskData, RouteItem,
+  BotAccount, BotAccountList, OAuthProviders,
 } from '@/types/api'
 
 /** 鉴权 */
@@ -34,6 +35,24 @@ export const usersApi = {
     http.del<UserList>('/users/' + encodeURIComponent(username)),
   resetPassword: (username: string, password: string) =>
     http.post<null>('/users/' + encodeURIComponent(username) + '/password', { password }),
+}
+
+/** 机器人账号（多账号）：一个协议可以挂多个号 */
+export const accountApi = {
+  list: () => http.get<BotAccountList>('/accounts'),
+  create: (payload: Partial<BotAccount>) => http.post<BotAccountList>('/accounts', payload),
+  update: (id: string, payload: Partial<BotAccount>) =>
+    http.put<BotAccountList>('/accounts/' + encodeURIComponent(id), payload),
+  remove: (id: string) => http.del<BotAccountList>('/accounts/' + encodeURIComponent(id)),
+}
+
+/** 第三方登录（OAuth2） */
+export const oauthApi = {
+  providers: () => http.get<OAuthProviders>('/auth/oauth/providers'),
+  unbind: (id: string) => http.del<null>('/auth/oauth/' + encodeURIComponent(id)),
+  /** 浏览器整页跳转，所以这里只拼 URL，不走 XHR */
+  startUrl: (id: string, bind: boolean) =>
+    '/webui/api/auth/oauth/' + encodeURIComponent(id) + '/start' + (bind ? '?bind=1' : ''),
 }
 
 /** 概览 */

@@ -7,11 +7,11 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { authApi, usersApi } from '@/api'
+import { authApi, oauthApi, usersApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { ApiError } from '@/api/client'
-import type { AuthMe, RoleName, UserRecord } from '@/types/api'
+import type { AuthMe, OAuthProvider, RoleName, UserRecord } from '@/types/api'
 import type { UiColumn } from '@/ui/types'
 
 const auth = useAuthStore()
@@ -128,6 +128,60 @@ async function submitReset(): Promise<void> {
   }
 }
 
+/* ---------------- 第三方登录 ---------------- */
+
+const providers = ref<OAuthProvider[]>([])
+const loadingProviders = ref(false)
+const bindingId = ref('')
+
+async function loadProviders(): Promise<void> {
+  loadingProviders.value = true
+  try {
+    const res = await oauthApi.providers()
+    providers.value = res.providers ?? []
+  } catch (e) {
+    toast.fromError(e, '加载第三方登录配置失败')
+  } finally {
+    loadingProviders.value = false
+  }
+}
+
+/** 绑定是浏览器整页跳转（第三方域名），回来后由 URL 上的 oauth 参数提示结果 */
+function bindProvider(row: OAuthProvider): void {
+  if (!row.enabled) {
+    toast.warn('服务端还没配置 ' + row.label + ' 的 client_id / client_secret')
+    return
+  }
+  window.location.href = oauthApi.startUrl(row.id, true)
+}
+
+async function unbindProvider(row: OAuthProvider): Promise<void> {
+  bindingId.value = row.id
+  try {
+    await oauthApi.unbind(row.id)
+    toast.ok('已解绑 ' + row.label)
+    await loadProviders()
+  } catch (e) {
+    toast.fromError(e, '解绑失败')
+  } finally {
+    bindingId.value = ''
+  }
+}
+
+/** 第三方回调会带着 ?oauth=bound|bind_failed|login|unbound|oauth_error&message=... 回来 */
+function consumeOAuthResult(): void {
+  const query = router.currentRoute.value.query
+  const status = String(query.oauth ?? '')
+  if (!status) return
+  const message = String(query.message ?? '')
+  if (status === 'bound' || status === 'login') toast.ok(message || '操作成功')
+  else toast.warn(message || '第三方登录未完成')
+  const rest = { ...query }
+  delete rest.oauth
+  delete rest.message
+  void router.replace({ query: rest })
+}
+
 /* ---------------- 当前账号 ---------------- */
 
 onMounted(async () => {
@@ -139,7 +193,8 @@ onMounted(async () => {
   } catch {
     me.value = null
   }
-  await loadUsers()
+  consumeOAuthResult()
+  await Promise.all([loadUsers(), loadProviders()])
 })
 
 async function changePassword(): Promise<void> {
@@ -192,6 +247,56 @@ async function logout(): Promise<void> {
         </div>
       </template>
       <UiDescriptions :items="meItems" :column="1" border size="small" />
+    </UiCard>
+
+    <UiCard>
+      <template #header>
+        <div class="card-head-row">
+          <span class="card-title">第三方登录</span>
+          <span class="tiny faint">绑定后可用该平台一键登录</span>
+          <div class="spacer" />
+          <UiButton size="small" text :loading="loadingProviders" @click="loadProviders">刷新</UiButton>
+        </div>
+      </template>
+
+      <div v-if="providers.length" class="oauth-list">
+        <div v-for="p in providers" :key="p.id" class="oauth-row">
+          <div class="grow">
+            <div class="small strong">{{ p.label }}</div>
+            <div class="tiny faint">
+              <template v-if="!p.enabled">服务端未配置 client_id / client_secret</template>
+              <template v-else-if="p.bound">
+                已绑定 {{ p.bound_label || '该平台账号' }}
+                <span v-if="p.bound_at"> · {{ new Date(p.bound_at * 1000).toLocaleDateString() }}</span>
+              </template>
+              <template v-else>未绑定</template>
+            </div>
+          </div>
+          <UiTag v-if="p.bound" type="success" size="small">已绑定</UiTag>
+          <UiButton
+            v-if="p.bound"
+            size="small"
+            text
+            type="danger"
+            :loading="bindingId === p.id"
+            @click="unbindProvider(p)"
+          >
+            解绑
+          </UiButton>
+          <UiButton v-else size="small" :disabled="!p.enabled" @click="bindProvider(p)">绑定</UiButton>
+        </div>
+      </div>
+      <UiEmpty v-else description="没有可用的第三方登录方式" />
+    </UiCard>
+
+    <UiCard>
+      <div class="logout-row">
+        <div class="grow">
+          <div class="small strong">机器人账号</div>
+          <div class="tiny faint">同一协议可以挂多个机器人号，各自一套接入地址与凭据</div>
+        </div>
+        <UiButton size="small" @click="router.push({ name: 'accounts' })">管理账号</UiButton>
+      </div>
     </UiCard>
 
     <UiCard v-if="auth.can('user.manage')">
@@ -290,4 +395,13 @@ h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 .account { max-width: 860px; }
 .pwd-form { display: flex; flex-direction: column; gap: 2px; }
 .logout-row { display: flex; align-items: center; gap: 14px; }
+.oauth-list { display: flex; flex-direction: column; gap: 2px; }
+.oauth-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.oauth-row:last-child { border-bottom: none; }
 </style>

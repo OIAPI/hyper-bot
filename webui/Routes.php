@@ -8,9 +8,11 @@ use Core\Http\Kernel;
 use Core\Http\Request;
 use Core\Http\Response;
 use Core\Http\Router;
+use Webui\Controller\AccountsController;
 use Webui\Controller\AuthController;
 use Webui\Controller\GroupsController;
 use Webui\Controller\LogsController;
+use Webui\Controller\OAuthController;
 use Webui\Controller\OverviewController;
 use Webui\Controller\PluginsController;
 use Webui\Controller\ProtocolsController;
@@ -53,18 +55,25 @@ final class Routes {
             $runtime  = new RuntimeController();
             $subscription = new SubscriptionController();
             $users    = new UsersController();
+            $accounts = new AccountsController();
+            $oauth    = new OAuthController($auth);
 
             // ---- 公开（无需登录） ----
             $r->post('/auth/login', [$authCtl, 'login'], 'auth.login');
             $r->get('/auth/status', [$authCtl, 'status'], 'auth.status');
             $r->get('/health', [$system, 'health'], 'system.health');
+            // OAuth 回调必须是公开的：第三方跳回来时浏览器还没有面板 token
+            $r->get('/auth/oauth/{provider}/start', [$oauth, 'start'], 'auth.oauth.start');
+            $r->get('/auth/oauth/{provider}/callback', [$oauth, 'callback'], 'auth.oauth.callback');
 
             // ---- 需要登录 ----
-            $r->group('', function (Router $r) use ($authCtl, $overview, $groups, $plugins, $protocols, $logs, $settings, $system, $runtime, $subscription, $users): void {
+            $r->group('', function (Router $r) use ($authCtl, $overview, $groups, $plugins, $protocols, $logs, $settings, $system, $runtime, $subscription, $users, $accounts, $oauth): void {
                 // 账号
                 $r->post('/auth/logout', [$authCtl, 'logout'], 'auth.logout');
                 $r->get('/auth/me', [$authCtl, 'me'], 'auth.me');
                 $r->post('/auth/password', [$authCtl, 'changePassword'], 'auth.password');
+                $r->get('/auth/oauth/providers', [$oauth, 'providers'], 'auth.oauth.providers');
+                $r->delete('/auth/oauth/{provider}', [$oauth, 'unbind'], 'auth.oauth.unbind');
 
                 // 概览
                 $r->get('/overview', [$overview, 'index'], 'overview.index');
@@ -130,6 +139,12 @@ final class Routes {
                 $r->get('/subscription/groups', [$subscription, 'groupOverrides'], 'subscription.groups');
                 $r->put('/subscription/groups/{group}', [$subscription, 'setGroupOverride'], 'subscription.groups.set');
                 $r->delete('/subscription/groups/{group}', [$subscription, 'removeGroupOverride'], 'subscription.groups.remove');
+
+                // 机器人账号（多账号）
+                $r->get('/accounts', [$accounts, 'index'], 'accounts.index');
+                $r->post('/accounts', [$accounts, 'create'], 'accounts.create');
+                $r->put('/accounts/{id}', [$accounts, 'update'], 'accounts.update');
+                $r->delete('/accounts/{id}', [$accounts, 'destroy'], 'accounts.destroy');
 
                 // 系统
                 $r->get('/system/disk', [$system, 'disk'], 'system.disk');

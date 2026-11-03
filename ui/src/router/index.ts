@@ -59,6 +59,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '插件', icon: '⬡', group: '业务' },
       },
       {
+        path: 'accounts',
+        name: 'accounts',
+        component: () => import('@/views/AccountsView.vue'),
+        meta: { title: '机器人账号', icon: '⌬', group: '业务' },
+      },
+      {
         path: 'subscription',
         name: 'subscription',
         component: () => import('@/views/SubscriptionView.vue'),

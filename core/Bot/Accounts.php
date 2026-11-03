@@ -1,0 +1,353 @@
+<?php
+namespace Core\Bot;
+
+use Core\Config;
+use Core\Fs;
+
+/**
+ * 机器人账号（多账号配置）。
+ *
+ * 一个账号 = 一条「协议标准 + 协议端地址 + 自身账号」的组合。同一个协议可以有多个账号
+ * （例如两个 OneBot 连接的 QQ 号），不同协议当然也可以同时存在。
+ *
+ * 落盘 runtime/accounts.json；Config.ini 只作为首次启动时的种子，之后以本文件为准。
+ * 账号 id 稳定不变，事件与出站 API 都靠它定位到具体账号。
+ */
+final class Accounts
+{
+    /** 支持的协议标准 */
+    public const PROTOCOLS = [
+        'onebot' => 'OneBot 11',
+        'milky'  => 'Milky',
+        'qqbot'  => 'QQ 官方机器人',
+    ];
+
+    private static string $path = '';
+    /** @var array<int, array<string, mixed>>|null */
+    private static ?array $cache = null;
+
+    public static function path(?string $path = null): string
+    {
+        if ($path !== null) {
+            self::$path = $path;
+            self::$cache = null;
+            return $path;
+        }
+        if (self::$path === '') {
+            self::$path = (defined('__root__') ? __root__ : getcwd()) . '/runtime/accounts.json';
+        }
+        return self::$path;
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    public static function all(): array
+    {
+        if (self::$cache !== null) {
+            return self::$cache;
+        }
+        $rows = self::load();
+        if ($rows === []) {
+            $rows = self::seed();
+            if ($rows !== []) {
+                self::persist($rows);
+            }
+        }
+        self::$cache = $rows;
+        return $rows;
+    }
+
+    public static function reload(): void
+    {
+        self::$cache = null;
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    public static function enabled(): array
+    {
+        return array_values(array_filter(self::all(), static fn(array $a): bool => (bool)($a['enable'] ?? true)));
+    }
+
+    /** @return array<string, mixed>|null */
+    public static function get(string $id): ?array
+    {
+        foreach (self::all() as $row) {
+            if ((string)($row['id'] ?? '') === $id) {
+                return $row;
+            }
+        }
+        return null;
+    }
+
+    /** @return array<string, mixed>|null */
+    public static function bySelfId(string $selfId): ?array
+    {
+        $selfId = trim($selfId);
+        if ($selfId === '') {
+            return null;
+        }
+        foreach (self::all() as $row) {
+            if ((string)($row['self_id'] ?? '') === $selfId) {
+                return $row;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 新建或更新一个账号。id 缺省时按 协议-selfid 生成。
+     * @param array<string, mixed> $data
+     * @return array{ok:bool,msg:string,data:array<string,mixed>|null}
+     */
+    public static function upsert(array $data): array
+    {
+        $protocol = strtolower(trim((string)($data['protocol'] ?? '')));
+        if (!isset(self::PROTOCOLS[$protocol])) {
+            return self::fail('不支持的协议：' . $protocol . '（可选 onebot / milky / qqbot）');
+        }
+
+        $selfId = trim((string)($data['self_id'] ?? ''));
+        if ($selfId !== '' && preg_match('/^[A-Za-z0-9_\-:.]{1,64}$/', $selfId) !== 1) {
+            return self::fail('账号（self_id）只能包含字母、数字、下划线、短横线、冒号或点，最长 64 字符');
+        }
+
+        $api = trim((string)($data['api'] ?? ''));
+        if ($api !== '' && preg_match('#^https?://#i', $api) !== 1) {
+            return self::fail('API 地址必须以 http:// 或 https:// 开头');
+        }
+
+        $id = trim((string)($data['id'] ?? ''));
+        if ($id === '') {
+            $id = $protocol . '-' . ($selfId !== '' ? $selfId : substr(sha1((string)microtime(true)), 0, 8));
+        }
+        if (preg_match('/^[a-z0-9][a-z0-9_\-]{0,63}$/', $id) !== 1) {
+            return self::fail('账号 id 只能是小写字母、数字、短横线、下划线，最长 64 字符');
+        }
+
+        $rows = self::all();
+        $existing = null;
+        foreach ($rows as $i => $row) {
+            if ((string)$row['id'] === $id) {
+                $existing = $i;
+                break;
+            }
+        }
+        if ($existing === null && $selfId !== '') {
+            foreach ($rows as $row) {
+                if (strtolower((string)$row['protocol']) === $protocol && (string)($row['self_id'] ?? '') === $selfId) {
+                    return self::fail('同协议下已存在该账号：' . $selfId);
+                }
+            }
+        }
+
+        // 更新时，未提交的字段沿用原值：面板只改一个开关不会把 token / api 清空
+        if ($existing !== null) {
+            $prev = $rows[$existing];
+            foreach (['name', 'self_id', 'enable', 'api', 'token', 'forward_url', 'forward_token', 'remark'] as $key) {
+                if (!array_key_exists($key, $data)) {
+                    $data[$key] = $prev[$key] ?? '';
+                }
+            }
+            $selfId = trim((string)($data['self_id'] ?? ''));
+            $api = trim((string)($data['api'] ?? ''));
+        }
+
+        $name = trim((string)($data['name'] ?? ''));
+        $entry = [
+            'id'            => $id,
+            'name'          => $name !== '' ? $name : ($protocol . ' ' . ($selfId !== '' ? $selfId : $id)),
+            'protocol'      => $protocol,
+            'self_id'       => $selfId,
+            'enable'        => (bool)($data['enable'] ?? true),
+            'api'           => $api,
+            'token'         => (string)($data['token'] ?? ''),
+            'forward_url'   => trim((string)($data['forward_url'] ?? '')),
+            'forward_token' => (string)($data['forward_token'] ?? ''),
+            'remark'        => trim((string)($data['remark'] ?? '')),
+            'updated_at'    => date('c'),
+        ];
+        if ($existing !== null) {
+            $entry['created_at'] = (string)($rows[$existing]['created_at'] ?? date('c'));
+            $rows[$existing] = $entry;
+        } else {
+            $entry['created_at'] = date('c');
+            $rows[] = $entry;
+        }
+
+        if (!self::persist($rows)) {
+            return self::fail('写入失败：runtime 目录不可写');
+        }
+        self::$cache = $rows;
+        return ['ok' => true, 'msg' => $existing !== null ? '已更新账号 ' . $id : '已添加账号 ' . $id, 'data' => $entry];
+    }
+
+    /** @return array{ok:bool,msg:string} */
+    public static function remove(string $id): array
+    {
+        $rows = self::all();
+        $kept = [];
+        $found = false;
+        foreach ($rows as $row) {
+            if ((string)$row['id'] === $id) {
+                $found = true;
+                continue;
+            }
+            $kept[] = $row;
+        }
+        if (!$found) {
+            return ['ok' => false, 'msg' => '账号不存在：' . $id];
+        }
+        if ($kept === []) {
+            return ['ok' => false, 'msg' => '至少要保留一个账号'];
+        }
+        if (!self::persist($kept)) {
+            return ['ok' => false, 'msg' => '写入失败：runtime 目录不可写'];
+        }
+        self::$cache = $kept;
+        return ['ok' => true, 'msg' => '已删除账号 ' . $id];
+    }
+
+    /**
+     * 给面板用的公开结构：抹掉 token，只保留是否已配置。
+     * @return array<int, array<string, mixed>>
+     */
+    public static function publicList(): array
+    {
+        $out = [];
+        foreach (self::all() as $row) {
+            $out[] = self::publicRow($row);
+        }
+        return $out;
+    }
+
+    /** @return array<string, mixed> */
+    public static function publicRow(array $row): array
+    {
+        $row['token_set'] = (string)($row['token'] ?? '') !== '';
+        $row['forward_token_set'] = (string)($row['forward_token'] ?? '') !== '';
+        unset($row['token'], $row['forward_token']);
+        $row['protocol_label'] = self::PROTOCOLS[$row['protocol'] ?? ''] ?? (string)($row['protocol'] ?? '');
+        return $row;
+    }
+
+    /** 首次启动：把 Config.ini 里旧的三协议配置迁移成账号 */
+    /** @return array<int, array<string, mixed>> */
+    private static function seed(): array
+    {
+        $rows = [];
+        $now = date('c');
+
+        $onebotEnable = Config::bool('protocol.onebot.enable', false);
+        if ($onebotEnable) {
+            $self = trim(Config::string('protocol.onebot.self_id', ''));
+            $rows[] = [
+                'id'            => 'onebot-' . ($self !== '' ? $self : 'default'),
+                'name'          => 'OneBot ' . ($self !== '' ? $self : '默认'),
+                'protocol'      => 'onebot',
+                'self_id'       => $self,
+                'enable'        => true,
+                'api'           => Config::string('protocol.onebot.api', ''),
+                'token'         => Config::string('protocol.onebot.token', ''),
+                'forward_url'   => Config::string('protocol.onebot.forward.url', ''),
+                'forward_token' => Config::string('protocol.onebot.forward.token', ''),
+                'remark'        => '由 Config.ini 迁移',
+                'created_at'    => $now,
+                'updated_at'    => $now,
+            ];
+        }
+
+        if (Config::bool('protocol.milky.enable', false)) {
+            $self = trim(Config::string('protocol.milky.self_id', ''));
+            $rows[] = [
+                'id'            => 'milky-' . ($self !== '' ? $self : 'default'),
+                'name'          => 'Milky ' . ($self !== '' ? $self : '默认'),
+                'protocol'      => 'milky',
+                'self_id'       => $self,
+                'enable'        => true,
+                'api'           => Config::string('protocol.milky.api', ''),
+                'token'         => Config::string('protocol.milky.token', ''),
+                'forward_url'   => '',
+                'forward_token' => '',
+                'remark'        => '由 Config.ini 迁移',
+                'created_at'    => $now,
+                'updated_at'    => $now,
+            ];
+        }
+
+        if (Config::bool('protocol.qqbot.enable', false)) {
+            $self = trim(Config::string('protocol.qqbot.self_id', ''));
+            $rows[] = [
+                'id'            => 'qqbot-' . ($self !== '' ? $self : 'default'),
+                'name'          => 'QQ 官方 ' . ($self !== '' ? $self : '默认'),
+                'protocol'      => 'qqbot',
+                'self_id'       => $self,
+                'enable'        => true,
+                'api'           => Config::string('protocol.qqbot.api', 'https://api.bot.qq.com'),
+                'token'         => '',
+                'forward_url'   => '',
+                'forward_token' => '',
+                'remark'        => '由 Config.ini 迁移（app_id 仍读 Config.ini）',
+                'created_at'    => $now,
+                'updated_at'    => $now,
+            ];
+        }
+
+        return $rows;
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private static function load(): array
+    {
+        $path = self::path();
+        if (!is_file($path)) {
+            return [];
+        }
+        try {
+            $data = json_decode(Fs::read($path), true, 512, JSON_THROW_ON_ERROR);
+        } catch (\Throwable) {
+            return [];
+        }
+        $list = is_array($data['accounts'] ?? null) ? $data['accounts'] : [];
+        $rows = [];
+        foreach ($list as $row) {
+            if (!is_array($row) || !isset($row['id'], $row['protocol'])) {
+                continue;
+            }
+            $rows[] = [
+                'id'            => (string)$row['id'],
+                'name'          => (string)($row['name'] ?? $row['id']),
+                'protocol'      => strtolower((string)$row['protocol']),
+                'self_id'       => (string)($row['self_id'] ?? ''),
+                'enable'        => (bool)($row['enable'] ?? true),
+                'api'           => (string)($row['api'] ?? ''),
+                'token'         => (string)($row['token'] ?? ''),
+                'forward_url'   => (string)($row['forward_url'] ?? ''),
+                'forward_token' => (string)($row['forward_token'] ?? ''),
+                'remark'        => (string)($row['remark'] ?? ''),
+                'created_at'    => (string)($row['created_at'] ?? ''),
+                'updated_at'    => (string)($row['updated_at'] ?? ''),
+            ];
+        }
+        return $rows;
+    }
+
+    /** @param array<int, array<string, mixed>> $rows */
+    private static function persist(array $rows): bool
+    {
+        $path = self::path();
+        $dir = dirname($path);
+        if (!is_dir($dir) && !Fs::ensureDir($dir)) {
+            return false;
+        }
+        $json = json_encode(['accounts' => array_values($rows)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        if ($json === false) {
+            return false;
+        }
+        return Fs::write($path, $json);
+    }
+
+    /** @return array{ok:false,msg:string,data:null} */
+    private static function fail(string $msg): array
+    {
+        return ['ok' => false, 'msg' => $msg, 'data' => null];
+    }
+}

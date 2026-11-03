@@ -165,7 +165,7 @@ async function submit(): Promise<void> {
             <span class="mono">{{ value }}</span>
           </template>
           <template #cell-status="{ value }">
-            <UiTag :type="statusText[value].type">{{ statusText[value].text }}</UiTag>
+            <UiTag :type="statusText[value]?.type || 'info'">{{ statusText[value]?.text || value }}</UiTag>
           </template>
           <template #cell-actions="{ row }">
             <UiButton type="text" size="small" @click="note = '查看 ' + row.name">查看</UiButton>

@@ -30,7 +30,9 @@ const auth = useAuthStore()
 const toast = useToastStore()
 
 // 组件库是独立 chunk：下载中给个提示，失败时把原因摆出来（而不是留一片空白）
-const { loading: uiLoading, failed: uiFailed } = useUiRuntime()
+const { adapter: uiAdapter, loading: uiLoading, failed: uiFailed } = useUiRuntime()
+// 适配器没就绪时控件渲染为 null，这里先用占位提示，避免「一片空白」
+const uiReady = computed(() => uiAdapter.value !== null)
 function retryUi(): void {
   void loadFramework(theme.framework)
 }
@@ -347,7 +349,11 @@ async function doLogout(): Promise<void> {
       </div>
 
       <div class="content">
-        <Suspense>
+        <div v-if="!uiReady" class="route-loading">
+          <span class="route-spinner" />
+          <span>正在加载界面组件…</span>
+        </div>
+        <Suspense v-else>
           <RouterView v-slot="{ Component }">
             <Transition name="fade" mode="out-in">
               <component :is="Component" />
@@ -356,7 +362,7 @@ async function doLogout(): Promise<void> {
           <template #fallback>
             <div class="route-loading">
               <span class="route-spinner" />
-              <span>{{ uiLoading ? '正在加载界面组件…' : '载入中…' }}</span>
+              <span>载入中…</span>
             </div>
           </template>
         </Suspense>

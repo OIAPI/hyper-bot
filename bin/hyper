@@ -641,6 +641,12 @@ function commandDoctor(array $ctx): void
     $check('Config.ini 可写（WebUI 改配置需要）', is_writable($path), $path);
 
     // composer autoload
+    $wsEnabled = \Core\Config::bool('protocol.onebot.reverse.enable', false)
+        || (\Core\Config::bool('protocol.milky.enable', false) && \Core\Config::string('protocol.milky.ws.server_path', '') !== '');
+    $check('WS 服务端', true, $wsEnabled
+        ? '启用：监听 ' . \Core\Config::string('protocol.onebot.reverse.path', '/onebot/v11/ws')
+        : '未启用：不监听 WS 端口（默认行为，需要反向 WS 时才打开）');
+
     $autoloadOk = is_file($root . '/vendor/autoload.php');
     $check('vendor/autoload.php', $autoloadOk, $autoloadOk ? '依赖已就绪' : '运行 php bin/hyper install');
 

@@ -4,6 +4,8 @@ namespace Controller\Server;
 // 注意：必须使用 WebSocket\Server（它继承自 Http\Server），
 // 否则 onOpen/onMessage 不会派发、Server::push() 也不存在。
 use Swoole\WebSocket\Server;
+use Swoole\Http\Server as SwooleHttpServer;
+use Core\Config;
 use Swoole\Event;
 use Swoole\Timer;
 use Swoole\Runtime;
@@ -22,7 +24,11 @@ use Protocol\OneBot\WsHub;
  * Swoole HTTP服务类：统一管理服务启动、配置、事件回调
  */
 class HttpServer {
-	private ?Server $server = null;
+	/** 未启用 WS 时是 Swoole\Http\Server，启用了才是 Swoole\WebSocket\Server */
+	private ?SwooleHttpServer $server = null;
+
+	/** 是否需要 WebSocket 服务端（只由配置决定，默认不启动） */
+	private bool $wsEnabled = false;
 	private array $config = [];
 	private const MASTER_PID_KEY = 'master_pid';
 
@@ -39,6 +45,9 @@ class HttpServer {
 	 * 初始化服务配置（从Env读取，统一管理）
 	 */
 	private function initConfig(): void {
+		// 只有真的要接 WS 才起 WS 服务端：没人用的端口不必监听，
+		// 也避免实现端反复重连时刷一堆「反向 WS 未启用」的日志。
+		$this->wsEnabled = $this->wsNeeded();
 		$this->config = [
 			'host' => Env::get('http.host', '0.0.0.0'),
 			'port' => Env::get('http.port', 9501),
@@ -55,13 +64,22 @@ class HttpServer {
 				'log_rotation' => SWOOLE_LOG_ROTATION_DAILY,
 				// WebSocket 支持（OneBot 反向 WS / Milky WS 服务端）
 				// 说明：握手与鉴权在 WsHub::onOpen 中完成，这里保持 Swoole 默认自动握手
-				'open_websocket_protocol' => true,
+				'open_websocket_protocol' => $this->wsEnabled,
 				'websocket_compression' => false,
 			],
 			'super_permission' => Env::get('permission.super', []),
 		];
 	}
 
+
+	/** 是否需要在本进程里提供 WebSocket 服务端 */
+	private function wsNeeded(): bool {
+		if (Config::bool('protocol.onebot.reverse.enable', false)) {
+			return true;
+		}
+		return Config::bool('protocol.milky.enable', false)
+			&& Config::string('protocol.milky.ws.server_path', '') !== '';
+	}
 
 	/**
 	 * 初始化全局缓存（API实例、服务实例）
@@ -76,11 +94,11 @@ class HttpServer {
 	 * 创建Swoole Server实例
 	 */
 	private function createServer(): void {
-		$this->server = new Server(
-			$this->config['host'],
-			$this->config['port'],
-			SWOOLE_PROCESS
-		);
+		// WebSocket\Server 继承自 Http\Server：没开 WS 时用父类，
+		// 这样端口上根本不会响应 WebSocket 升级请求。
+		$this->server = $this->wsEnabled
+			? new Server($this->config['host'], $this->config['port'], SWOOLE_PROCESS)
+			: new SwooleHttpServer($this->config['host'], $this->config['port'], SWOOLE_PROCESS);
 		$this->server->set($this->config['swoole']);
 		Cache::$http = $this->server;
 	}
@@ -94,8 +112,10 @@ class HttpServer {
 		$this->server->on('request', [$this, 'onRequest']);
 		$this->server->on('WorkerStart', [$this, 'onWorkerStart']);
 		$this->server->on('WorkerError', [$this, 'onWorkerError']);
-		// WebSocket 事件（OneBot 反向 WS / Milky WS 服务端接入）
-		WsHub::bindServer($this->server);
+		// WebSocket 事件：只有开了反向 WS / Milky WS 服务端才绑定
+		if ($this->wsEnabled && $this->server instanceof Server) {
+			WsHub::bindServer($this->server);
+		}
 		$this->bindShutdownEvents(); //注册关闭事件
 	}
 
@@ -104,7 +124,7 @@ class HttpServer {
 	 * 服务启动回调（Master进程）
 	 * @param Server $server Swoole Server实例
 	 */
-	public function onStart(Server $server): void {
+	public function onStart(SwooleHttpServer $server): void {
 		Logger::init();
 		define(self::MASTER_PID_KEY, $server->master_pid);
 		Cache::set('startTime', microtime(true));
@@ -112,6 +132,9 @@ class HttpServer {
 			"HTTP服务启动成功 | Host: {$this->config['host']} | Port: {$this->config['port']}"
 		);
 		Logger::success("Master PID: " . constant(self::MASTER_PID_KEY));
+		Logger::info($this->wsEnabled
+			? 'WebSocket 服务端已启用（OneBot 反向 WS / Milky WS 接入）'
+			: 'WebSocket 服务端未启用（onebot.reverse.enable=false 且未配置 Milky WS 服务端），不监听 WS 端点');
 		$this->initSuperPermission();
 		$this->registerStdinCommand();
 		$this->initSIGINT();
@@ -520,7 +543,7 @@ HELP;
 	 * @param Server $server Swoole Server实例
 	 * @param int $workerId Worker进程ID
 	 */
-	public function onWorkerStart(Server $server, int $workerId): void {
+	public function onWorkerStart(SwooleHttpServer $server, int $workerId): void {
 		Timer::clearAll();
 		
 		$this->registerErrorHandler();
@@ -590,7 +613,7 @@ HELP;
 	 * @param int $exitCode 退出状态码
 	 * @param int $signal 退出信号
 	 */
-	public function onWorkerError(Server $server, int $workerId, int $workerPid, int $exitCode, int $signal): void {
+	public function onWorkerError(SwooleHttpServer $server, int $workerId, int $workerPid, int $exitCode, int $signal): void {
 		Logger::error(
 			"Worker进程错误 | ID: {$workerId} | PID: {$workerPid} | 退出码: {$exitCode} | 信号: {$signal}"
 		);
@@ -601,11 +624,11 @@ HELP;
 	 */
 	private function bindShutdownEvents(): void
 	{
-		$this->server->on('BeforeShutdown', function (Server $server) {
+		$this->server->on('BeforeShutdown', function (SwooleHttpServer $server) {
 			Logger::warning("服务开始关闭（触发 BeforeShutdown） | Master PID：" . constant(self::MASTER_PID_KEY));
 		});
 	
-		$this->server->on('Shutdown', function (Server $server) {
+		$this->server->on('Shutdown', function (SwooleHttpServer $server) {
 			$runTime = round((microtime(true) - Cache::get('startTime')) / 60, 2); // 需在 bindStartEvent 中记录 $this->startTime
 			Logger::success(sprintf(
 				"服务已完全关闭（触发 Shutdown） | "

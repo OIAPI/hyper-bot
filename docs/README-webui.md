@@ -226,6 +226,23 @@ KeyDB 与 Redis 协议兼容，直接按 Redis 配置即可（`docker run ... ke
 
 看到「文件存储」而上面各步都 OK，说明 `[store] driver` 被固定成了 `file`；改回 `auto` 即可。
 
+### WS 服务端什么时候启动
+
+WebSocket 服务端**不再默认启动**。只有当下面任一条件成立时，swoole 架构才会在进程里挂上 WS：
+
+- `[protocol.onebot] reverse.enable = true`（实现端反向连进来）
+- `[protocol.milky] enable = true` 且 `ws.server_path` 非空（对外提供 Milky WS）
+
+两者都不满足时：
+
+- 端口上只跑 HTTP，不响应 WebSocket 升级请求
+- 实现端如果还在往这个地址重连，会在 TCP/握手阶段就被拒，框架不会逐条记日志
+- 启动日志会写明 `WebSocket 服务端未启用（…），不监听 WS 端点`
+- `php bin/hyper doctor` 里 `WS 服务端` 一行显示当前状态
+
+要用反向 WS 时把 `reverse.enable` 改成 `true` 再重启（服务端监听方式变更必须在启动时决定）。
+`php` 架构（`php bin/hyper serve --arch=php`）没有 WS 能力，即使打开也会有启动告警说明不会生效。
+
 ### 为什么会被「踢下线」
 
 面板的登录态是服务端会话。2.1.6 起会话**默认存在本地文件**（`runtime/store/session`，配置项 `[webui] session_store = file`），不再跟业务缓存共用 Redis：

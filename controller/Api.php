@@ -36,7 +36,14 @@ class Api {
 	private function __construct() {}
 
 	public static function getInstance(): self {
-		return self::$instance ??= new self();
+		$instance = self::$instance ??= new self();
+		// v1 插件通过 cache::$api 取容器（Utils\Markdown 就这么写）。
+		// 这个静态槽以前只在 swoole 的 HttpServer 里赋值，php 架构 / 队列 / cron
+		// 下永远是 null，于是 Markdown 一类老组件直接 TypeError。
+		if (\Utils\Cache::$api === null) {
+			\Utils\Cache::$api = $instance;
+		}
+		return $instance;
 	}
 
 	/**

@@ -1,7 +1,7 @@
 <?php
 namespace Core;
 
-use Core\Log\Logger;
+use Utils\Logger;
 
 /**
  * 调度器（v2）：统一「延迟执行」与「周期执行」，两种运行架构下都能用。

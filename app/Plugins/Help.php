@@ -22,7 +22,8 @@ use Utils\CoroutineCurl as curl;
 class help extends BaseApp {
 	#[Rule('/^\/(help|menu|菜单)$/i', name: '/help')]
 	public function help() {
-		$menu = Registry::menu();  // v1 的 Router::getMenu() 已并入注册表
+		// v1 的 Router::getMenu() 已并入注册表，但它是实例方法，必须从容器里取
+		$menu = \Core\App::boot()->container->get(Registry::class)->menu();
 		$message = $this->api->message;
 		if($menu) {
 			$markdown = new markdown($this->group, "```text\n" . join("\n", $menu) . "\n```");

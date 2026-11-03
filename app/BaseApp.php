@@ -6,7 +6,7 @@ use Core\Bot\Event;
 use Core\Store\StoreBridge;
 use Controller\Api;
 use Controller\Enum\PermRule;
-use Core\Log\Logger;
+use Utils\Logger;
 
 /**
  * 插件基类（v2）：插件作者唯一需要接触的父类。

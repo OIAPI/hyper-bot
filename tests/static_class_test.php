@@ -85,8 +85,40 @@ foreach ($files as $file) {
         if (str_starts_with($fqcn, '\\')) $fqcn = substr($fqcn, 1);
         $top = explode('\\', $fqcn)[0];
         if (!in_array($top, $projectRoots, true)) continue;
-        if (class_exists($fqcn) || interface_exists($fqcn) || trait_exists($fqcn)) continue;
-        $bad[] = str_replace($root . '/', '', $file) . ' => ' . $fqcn . ' [' . basename($file) . ']';
+        $rel = str_replace($root . '/', '', $file);
+        if (!class_exists($fqcn) && !interface_exists($fqcn) && !trait_exists($fqcn)) {
+            $bad[] = $rel . ' => ' . $fqcn . ' [' . basename($file) . ']';
+            continue;
+        }
+        if (!$isStatic) continue;
+
+        // 静态语法调用实例方法：PHP 允许语法通过但运行期报
+        // "Non-static method X::y() cannot be called statically"
+        for ($k = $idx + 2; $k < $n; $k++) {
+            $mk = $tokens[$k];
+            if (is_array($mk) && $mk[0] === T_WHITESPACE) { continue; }
+            if (is_array($mk) && $mk[0] === T_STRING) {
+                $method = $mk[1];
+                if (strtolower($method) === 'class') break;
+                // 类常量（PermRule::OWNER / AuthMiddleware::COOKIE）不是方法调用
+                if (defined($fqcn . '::' . $method)) break;
+                try {
+                    if (!method_exists($fqcn, $method)) {
+                        if (!method_exists($fqcn, '__callStatic')) {
+                            $bad[] = $rel . ' => ' . $fqcn . '::' . $method . '() 方法不存在 [' . basename($file) . ']';
+                        }
+                    } else {
+                        $rm = new \ReflectionMethod($fqcn, $method);
+                        if (!$rm->isStatic() && !method_exists($fqcn, '__callStatic')) {
+                            $bad[] = $rel . ' => ' . $fqcn . '::' . $method . '() 是实例方法，不能静态调用 [' . basename($file) . ']';
+                        }
+                    }
+                } catch (\Throwable) {
+                    // 反射失败（内部类等）不当作错误
+                }
+            }
+            break;
+        }
     }
 }
 $bad = array_values(array_unique($bad));

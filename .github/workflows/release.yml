@@ -1,0 +1,102 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read VERSION
+        id: ver
+        run: |
+          V=$(tr -d ' \r\n' < VERSION)
+          if [ -z "$V" ]; then echo "VERSION 为空"; exit 1; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+
+      - name: Check tag
+        id: tag
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.ver.outputs.tag }}" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "标签 ${{ steps.ver.outputs.tag }} 已存在，跳过构建与发布"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.tag.outputs.exists == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build webUI
+        if: steps.tag.outputs.exists == 'false'
+        working-directory: ui
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          ls -la ../public/webui | head -5
+
+      - name: Commit built assets
+        if: steps.tag.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/webui
+          if git diff --cached --quiet; then
+            echo "webUI 产物无变化"
+          else
+            git commit -m "chore(webui): 重新构建前端产物 (${{ steps.ver.outputs.tag }}) [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Create tag
+        if: steps.tag.outputs.exists == 'false'
+        run: |
+          git tag -a "${{ steps.ver.outputs.tag }}" -m "release ${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Setup PHP
+        if: steps.tag.outputs.exists == 'false'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, curl, json, zip, openssl
+          tools: composer
+
+      - name: Install composer deps
+        if: steps.tag.outputs.exists == 'false'
+        run: composer install --no-dev --optimize-autoloader --no-interaction --no-progress --ignore-platform-reqs
+
+      - name: Package
+        if: steps.tag.outputs.exists == 'false'
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          mkdir -p dist runtime/log runtime/store runtime/webui runtime/github runtime/schedule runtime/update
+          zip -qr "dist/hyper-bot-v$V.zip" . -x ".git/*" -x "node_modules/*" -x "ui/node_modules/*" -x "dist/*" -x "*.DS_Store"
+          ( cd dist && sha256sum "hyper-bot-v$V.zip" > "hyper-bot-v$V.zip.sha256" )
+          ls -lh dist
+          unzip -l "dist/hyper-bot-v$V.zip" | tail -1
+
+      - name: Publish release
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" "dist/hyper-bot-v${{ steps.ver.outputs.version }}.zip" "dist/hyper-bot-v${{ steps.ver.outputs.version }}.zip.sha256" --title "v${{ steps.ver.outputs.version }}" --notes "自动构建自 ${{ github.sha }}。包含 vendor 与前端产物，解压后 php bin/hyper install && php bin/hyper serve 即可。runtime/ 与 Config.ini 不会被覆盖。"

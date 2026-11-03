@@ -551,6 +551,29 @@ WebUI 与聊天共用一个落盘器 `Webui\PluginInstaller`：
 
 后续计划（等仓库地址固定）：定时/手动「自动检测更新」，以及更新前校验签名与版本号递增。
 
+## 自动发布（GitHub Actions）
+
+工作流：`.github/workflows/release.yml`，仓库 `OIAPI/hyper-bot`。
+
+**发版 = 改 `VERSION` 然后 push 到 main**，不需要手动打包：
+
+1. 读仓库根 `VERSION` → 版本号与 tag（`v2.4.1`）
+2. 已经发布过（存在同名 Release）就整条跳过，重复 push 不会重复发版
+3. `npm install && npm run build` 重建 `public/webui`（`ui/` 是源码）
+4. 产物有变化就由 bot 提交回 main，提交信息带 `[skip ci]` 防止自触发；
+   若远端在此期间有新提交，会先 `rebase` 再推，失败重试 3 次
+5. 建 tag 并推送（同名旧 tag 会被更新到现在这个提交）
+6. `composer install --no-dev -o` 装依赖
+   —— CI 里会先删掉 `composer.lock`：仓库里的 lock 指向腾讯云镜像，
+   Actions 机器拉不到（HTTP 567），删掉让 composer 按 `composer.json` 从上游解析
+7. 打包 `hyper-bot-v<版本>.zip`（排除 `.git` / `node_modules` / `dist`），生成 `.sha256`
+8. 发 Release，附件是 zip 与 sha256
+
+也可以手动触发：**Actions → release → Run workflow**。
+
+> 判断依据是「Release 是否存在」而不是「tag 是否存在」：之前 tag 建成功了但发布失败，
+> 只看 tag 会导致再也不会补发。
+
 ## 自检
 
 ```bash

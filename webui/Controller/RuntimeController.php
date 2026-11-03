@@ -33,7 +33,7 @@ final class RuntimeController extends Base
                 'requested' => $app->runtime->requested,
                 'limitations' => $app->runtime->limitations(),
             ],
-            'configured' => Config::string('runtime.arch', 'auto'),
+            'configured' => Config::string('runtime.arch', 'swoole'),
             'modes'      => array_map(static fn(string $id, array $meta): array => $meta + ['id' => $id], array_keys($catalog), $catalog),
             'php'        => [
                 'version' => PHP_VERSION,

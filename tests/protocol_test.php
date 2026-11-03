@@ -56,7 +56,9 @@ $ok('会话置顶变更可转换', ($pin['notice_type'] ?? '') === 'peer_pin_cha
 $disband = \Protocol\Milky\Converter::toOneBot(['event_type' => 'group_disband', 'time' => 1, 'self_id' => 2, 'data' => ['group_id' => 100, 'operator_id' => 9]]);
 $ok('群解散可转换', ($disband['notice_type'] ?? '') === 'group_disband');
 $unknown = \Protocol\Milky\Converter::toOneBot(['event_type' => 'totally_unknown_event', 'time' => 1, 'self_id' => 2, 'data' => []]);
-$ok('未知事件返回 null（忽略）', $unknown === null);
+// 未知事件不再丢弃：压成 notice/unknown_event 并保留原始事件名，避免插件完全收不到
+$ok('未知事件压成 unknown_event', ($unknown['notice_type'] ?? '') === 'unknown_event');
+$ok('未知事件保留 event_type', ($unknown['event_type'] ?? '') === 'totally_unknown_event');
 
 echo "== Milky CQ 解析 ==\n";
 $segs = \Protocol\Milky\Adapter::cqToSegments('你好[CQ:at,qq=123]世界[CQ:image,file=https://a/b.png]');

@@ -555,7 +555,7 @@ function commandInstall(array $args, array $options): void
 
     echo '  ' . str_repeat('─', 64) . PHP_EOL;
     if ($ok) {
-        echo '  完成。下一步：php bin/hyper doctor，然后 php bin/hyper serve --arch=php' . PHP_EOL . PHP_EOL;
+        echo '  完成。下一步：php bin/hyper doctor，然后 php bin/hyper serve（默认 swoole）' . PHP_EOL . PHP_EOL;
         exit(0);
     }
     echo '  有未通过的项，按上面提示处理后重跑。' . PHP_EOL . PHP_EOL;
@@ -651,7 +651,7 @@ function printHelp(): void
     echo PHP_EOL . '  Hyper Bot ' . Version::current() . ' — OneBot11 / Milky / QQ 官方机器人' . PHP_EOL;
     echo '  ' . str_repeat('─', 62) . PHP_EOL . PHP_EOL;
     echo '  php bin/hyper serve [--arch=swoole|php|webui] [--port=8080] [--host=127.0.0.1]' . PHP_EOL;
-    echo '      启动服务。不传 --arch 则读 Config.ini [runtime] arch（默认 auto）' . PHP_EOL;
+    echo '      启动服务。不传 --arch 则读 Config.ini [runtime] arch（默认 swoole）' . PHP_EOL;
     echo PHP_EOL;
     echo '  php bin/hyper worker [--once]' . PHP_EOL;
     echo '      只跑调度队列（定时/延迟任务），与 serve 分离部署时用' . PHP_EOL;

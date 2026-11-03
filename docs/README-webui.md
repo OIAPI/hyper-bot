@@ -4,6 +4,13 @@
 
 ## 启动
 
+架构默认是 **swoole**（常驻协程）：反向 WS、常驻 Gateway 客户端、多进程事件并行都只有这个架构支持。
+优先级：命令行 `--arch` > 环境变量 `HYPER_ARCH` > `Config.ini [runtime] arch` > 默认 `swoole`。
+
+没装 `ext-swoole` 的机器不会起不来——会自动降级成 php 内置服务器，并在启动横幅里写明
+「未安装 ext-swoole，已降级为 php 内置服务器」。想显式用内置服务器或只跑面板，传
+`--arch=php` / `--arch=webui`，或把 `runtime.arch` 配成 `php`。
+
 ### 独立运行（无需 Swoole，适合本地/救援）
 
 ```bash

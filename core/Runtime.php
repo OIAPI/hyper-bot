@@ -96,14 +96,19 @@ final class Runtime
     /**
      * 解析运行架构。
      *
-     * 优先级：命令行 --arch > 环境变量 HYPER_ARCH > Config.ini [runtime] arch > auto
-     * auto 规则：有 swoole → swoole；否则 → php。
+     * 优先级：命令行 --arch > 环境变量 HYPER_ARCH > Config.ini [runtime] arch > swoole
+     *
+     * 默认 swoole：没装 ext-swoole 时自动降级为 php 内置服务器并在启动横幅里说明原因，
+     * 所以「默认值」不会让缺扩展的机器起不来。显式写 auto 才按扩展检测，
+     * 显式写 php / webui 则完全按指定值走。
      */
     public static function detect(?string $forced = null, ?string $config = null): self
     {
         $requested = $forced ?? $config ?? '';
         $requested = strtolower(trim($requested));
-        if ($requested === '' || $requested === 'auto') {
+        if ($requested === '') {
+            $requested = self::SWOOLE;
+        } elseif ($requested === 'auto') {
             $requested = extension_loaded('swoole') ? self::SWOOLE : self::PHP;
         }
 
@@ -126,7 +131,7 @@ final class Runtime
         if (!is_string($forced) || $forced === '') {
             $forced = null;
         }
-        return self::detect($forced, Config::string('runtime.arch', 'auto'));
+        return self::detect($forced, Config::string('runtime.arch', 'swoole'));
     }
 
     /** 是否是常驻多协程架构 */

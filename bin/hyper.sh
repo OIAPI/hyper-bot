@@ -372,6 +372,7 @@ Hyper Bot 启动脚本（v2）
 说明：
   架构也可以在 WebUI「运行架构」页面切换（写入 Config.ini，重启生效）。
   命令行 --arch 优先级最高，其次 HYPER_ARCH 环境变量，最后 Config.ini。
+  默认架构是 swoole（常驻协程）；没装 ext-swoole 会自动降级为 php 内置服务器。
 HELP
 }
 

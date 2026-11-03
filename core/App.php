@@ -171,16 +171,8 @@ final class App {
         $stored = $this->store->get($key);
         $role = is_scalar($stored) && $stored !== null ? strtolower((string)$stored) : $event->role();
 
-        return match ($role) {
-            'super'      => 15,
-            'supervisor' => 7,
-            'owner'      => 6,
-            'director'   => 5,
-            'manager'    => 4,
-            'admin'      => 3,
-            'editor'     => 2,
-            default      => 1,
-        };
+        // 角色 -> 等级由 MemberRoles 统一维护（v1 的 supervisor/director/manager 自动映射）
+        return \Core\Bot\MemberRoles::level($role);
     }
 
     public function withLogger(Logger $logger): self {

@@ -51,16 +51,30 @@ try {
     $qqs = array_column($all, 'qq');
     check('列表包含两人', in_array('10001', $qqs, true) && in_array('10002', $qqs, true));
     $row = $all[array_search('10002', $qqs, true)];
-    check('列表带中文等级', str_contains((string)($row['label'] ?? ''), '编辑'));
+    check('列表带中文角色', ($row['label'] ?? '') === '编辑');
+    check('列表带能力清单', is_array($row['capabilities'] ?? null) && in_array('command.basic', $row['capabilities'], true));
+    check('角色推导等级', ($row['level'] ?? 0) === 2);
 
     $stats = MemberPermissions::stats();
     check('统计 total 正确', ($stats['total'] ?? 0) >= 2);
-    check('统计按等级分组', ($stats['by_level']['editor'] ?? 0) >= 1);
+    check('统计按角色分组', ($stats['by_role']['editor'] ?? 0) >= 1);
+
+    // 角色能力：editor 能管群命令但不能改群配置
+    $r = MemberPermissions::set('10002', 'editor');
+    $model = MemberPermissions::model();
+    check('能力矩阵有角色', isset($model['matrix']['editor']));
+    check('能力名称有中文', isset($model['capabilities']['group.config']));
+    check('角色能力映射存在', in_array('command.manage', $model['matrix']['editor']['capabilities'], true));
 
     check('非数字 QQ 被拒', MemberPermissions::set('abc', 'admin')['ok'] === false);
     check('QQ 太短被拒', MemberPermissions::set('1234', 'admin')['ok'] === false);
     check('QQ 太长被拒', MemberPermissions::set('1234567890123', 'admin')['ok'] === false);
-    check('未知等级被拒', MemberPermissions::set('10001', 'god')['ok'] === false);
+    check('未知角色被拒', MemberPermissions::set('10001', 'god')['ok'] === false);
+    // v1 的旧等级名仍然接受，并映射成新角色
+    $r = MemberPermissions::set('10001', 'manager');
+    check('旧等级 manager 映射为 admin', $r['ok'] === true && MemberPermissions::get('10001') === 'admin');
+    $r = MemberPermissions::set('10001', 'supervisor');
+    check('旧等级 supervisor 映射为 owner', $r['ok'] === true && MemberPermissions::get('10001') === 'owner');
 
     check('删除返回 true', MemberPermissions::remove('10002') === true);
     check('删除后读不到', MemberPermissions::get('10002') === null);

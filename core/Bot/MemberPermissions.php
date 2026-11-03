@@ -7,26 +7,19 @@ use Core\Store\Store;
 /**
  * QQ 成员权限（机器人使用权限，与后台登录账号无关）。
  *
- * 存储键沿用 v1 的 memberPermission.<QQ>，这样插件里 BaseApp::getUserPermission()
- * 与 comparePermission() 不需要改一行就能读到面板里配好的值。
+ * 模型是「角色 + 能力」（见 MemberRoles）：存储里的 memberPermission.<QQ> 存角色名，
+ * 角色再推导出对老接口友好的等级。v1 的 supervisor/director/manager 在读取时
+ * 自动映射成新角色，不会被丢掉。
  */
 final class MemberPermissions
 {
-    /**
-     * 面板可选的等级（顺序 = 从高到低）。
-     *
-     * 完整保留 v1 的 8 档，因为插件里的 #[Rule(permission: PermRule::OWNER)]
-     * 要求等级 >= 6；只给「管理员(3)」是满足不了的，面板必须能表达 owner 以上。
-     */
+    /** 面板可选角色（顺序 = 从高到低） */
     public const LEVELS = [
-        'super'      => '主人（15）',
-        'supervisor' => '督导（7）',
-        'owner'      => '所有者（6）',
-        'director'   => '主管（5）',
-        'manager'    => '经理（4）',
-        'admin'      => '管理员（3）',
-        'editor'     => '编辑（2）',
-        'default'    => '普通成员（1）',
+        'super'  => '主人',
+        'owner'  => '所有者',
+        'admin'  => '管理员',
+        'editor' => '编辑',
+        'member' => '普通成员',
     ];
 
     private static function store(): Store
@@ -34,7 +27,7 @@ final class MemberPermissions
         return App::boot()->store;
     }
 
-    /** @return array<int, array{qq:string, level:string, label:string}> */
+    /** @return array<int, array{qq:string, role:string, level:int, label:string, capabilities:string[]}> */
     public static function all(): array
     {
         $rows = [];
@@ -43,11 +36,14 @@ final class MemberPermissions
             if ($qq === '' || !ctype_digit($qq)) {
                 continue;
             }
-            $level = strtolower(trim((string)self::store()->get($key)));
+            $role = MemberRoles::normalize((string)self::store()->get($key));
             $rows[] = [
-                'qq'    => $qq,
-                'level' => $level,
-                'label' => self::LEVELS[$level] ?? $level,
+                'qq'           => $qq,
+                'role'         => $role,
+                // 兼容旧前端：level 仍然给，但它是从角色推导出来的
+                'level'        => MemberRoles::level($role),
+                'label'        => MemberRoles::label($role),
+                'capabilities' => MemberRoles::capabilities($role),
             ];
         }
         usort($rows, static fn(array $a, array $b): int => strcmp($a['qq'], $b['qq']));
@@ -57,22 +53,23 @@ final class MemberPermissions
     public static function get(string $qq): ?string
     {
         $value = self::store()->get('memberPermission.' . $qq);
-        return $value === null ? null : strtolower(trim((string)$value));
+        return $value === null ? null : MemberRoles::normalize((string)$value);
     }
 
     /** @return array{ok:bool,msg:string} */
-    public static function set(string $qq, string $level): array
+    public static function set(string $qq, string $role): array
     {
         $qq = trim($qq);
-        $level = strtolower(trim($level));
         if (!ctype_digit($qq) || strlen($qq) < 5 || strlen($qq) > 12) {
             return ['ok' => false, 'msg' => 'QQ 号必须是 5-12 位数字'];
         }
-        if (!isset(self::LEVELS[$level])) {
-            return ['ok' => false, 'msg' => '权限等级只能是 ' . implode(' / ', array_keys(self::LEVELS))];
+        // 接受旧等级名（supervisor/director/manager/default），统一存成角色
+        $normalized = MemberRoles::normalize($role);
+        if (strtolower(trim($role)) !== $normalized && !isset(MemberRoles::LEGACY[strtolower(trim($role))])) {
+            return ['ok' => false, 'msg' => '角色只能是 ' . implode(' / ', array_keys(self::LEVELS))];
         }
-        self::store()->set('memberPermission.' . $qq, $level);
-        return ['ok' => true, 'msg' => '已设置为 ' . self::LEVELS[$level]];
+        self::store()->set('memberPermission.' . $qq, $normalized);
+        return ['ok' => true, 'msg' => '已设置为 ' . MemberRoles::label($normalized)];
     }
 
     public static function remove(string $qq): bool
@@ -84,10 +81,21 @@ final class MemberPermissions
     public static function stats(): array
     {
         $rows = self::all();
-        $byLevel = [];
+        $byRole = [];
         foreach ($rows as $row) {
-            $byLevel[$row['level']] = ($byLevel[$row['level']] ?? 0) + 1;
+            $byRole[$row['role']] = ($byRole[$row['role']] ?? 0) + 1;
         }
-        return ['total' => count($rows), 'by_level' => $byLevel];
+        return ['total' => count($rows), 'by_role' => $byRole, 'by_level' => $byRole];
+    }
+
+    /** 面板需要的完整模型：角色 -> 能力 */
+    public static function model(): array
+    {
+        return [
+            'roles'        => self::LEVELS,
+            'capabilities' => MemberRoles::CAPABILITIES,
+            'matrix'       => MemberRoles::catalog(),
+            'legacy'       => MemberRoles::LEGACY,
+        ];
     }
 }

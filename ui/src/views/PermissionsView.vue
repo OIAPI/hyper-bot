@@ -28,12 +28,24 @@ const columns: UiColumn[] = [
 
 const rows = computed(() => data.value?.items ?? [])
 const levels = computed(() => {
-  const map = data.value?.levels ?? {}
-  return Object.entries(map).map(([value, label]) => ({ value, label }))
+  // 后端把角色放在 levels 里（面板下拉用），角色名就是存储值
+  const map = (data.value as any)?.model?.roles ?? data.value?.levels ?? {}
+  return Object.entries(map).map(([value, label]) => ({ value, label: String(label) }))
 })
 
 const newQq = ref('')
 const newLevel = ref('admin')
+const matrix = computed(() => {
+  const m = (data.value as any)?.model
+  if (!m?.matrix) return [] as Array<{ role: string; label: string; level: number; capabilities: string[] }>
+  return Object.entries(m.matrix).map(([role, meta]: any) => ({
+    role,
+    label: meta.label,
+    level: meta.level,
+    capabilities: meta.capabilities ?? [],
+  }))
+})
+const capLabel = computed(() => ((data.value as any)?.model?.capabilities ?? {}) as Record<string, string>)
 const adding = ref(false)
 const addError = ref('')
 
@@ -152,10 +164,23 @@ onMounted(load)
       </UiTable>
     </UiCard>
 
+    <UiCard v-if="matrix.length">
+      <template #header><span class="card-title">角色能力</span></template>
+      <div class="matrix">
+        <div v-for="r in matrix" :key="r.role" class="matrix-row">
+          <div class="matrix-role">{{ r.label }}<span class="matrix-level">{{ r.level }}</span></div>
+          <div class="matrix-caps">
+            <span v-for="cap in r.capabilities" :key="cap" class="cap">{{ capLabel[cap] || cap }}</span>
+          </div>
+        </div>
+      </div>
+    </UiCard>
+
     <div class="hint">
-      等级从高到低：<b>主人 15</b> ＞ 督导 7 ＞ 所有者 6 ＞ 主管 5 ＞ 经理 4 ＞ 管理员 3 ＞ 编辑 2 ＞ 普通 1。
-      插件里 <code>#[Rule(permission: PermRule::OWNER)]</code> 要求 ≥6，所以「管理员」不满足它；
-      值存在 <code>memberPermission.&lt;QQ&gt;</code>，沿用 v1 的键，插件无需改动、即时生效。
+      权限按「角色 → 能力」判定：主人拥有全部能力；所有者/管理员/编辑依次减少；
+      插件里旧的 <code>#[Rule(permission: PermRule::OWNER)]</code> 由角色推导出等级继续生效，
+      新代码可以直接调 <code>$this-&gt;can('group.config')</code>。
+      值存在 <code>memberPermission.&lt;QQ&gt;</code>，v1 的 supervisor/director/manager 会自动映射成新角色。
     </div>
   </div>
 </template>
@@ -178,6 +203,12 @@ onMounted(load)
 .level-select { width: 180px; }
 .mono { font-family: var(--font-mono); font-size: 12px; }
 .dim { color: var(--text-faint); font-size: 12px; }
+.matrix { display: flex; flex-direction: column; gap: 8px; }
+.matrix-row { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.matrix-role { width: 110px; font-size: 12.5px; color: var(--text-dim); flex: 0 0 auto; }
+.matrix-level { margin-left: 6px; font-size: 10.5px; color: var(--text-faint); }
+.matrix-caps { display: flex; flex-wrap: wrap; gap: 5px; flex: 1 1 auto; }
+.cap { padding: 1px 7px; border-radius: 3px; border: 1px solid var(--border-soft); font-size: 11px; color: var(--text-dim); }
 .hint { font-size: 11.5px; color: var(--text-faint); line-height: 1.8; }
 .hint code { font-family: var(--font-mono); }
 .form-error {

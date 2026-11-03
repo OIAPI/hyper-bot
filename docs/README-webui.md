@@ -513,21 +513,22 @@ WebUI 与聊天共用一个落盘器 `Webui\PluginInstaller`：
 | 存储 | `runtime/webui/users.json` | `memberPermission.<QQ>`（沿用 v1 键） |
 | 管理 | 账号设置（owner/admin/viewer） | 业务 → QQ 权限 |
 
-等级沿用 v1 的 8 档，数值越大权限越高：
+权限模型是「角色 → 能力」，等级只是给老插件的兼容视图：
 
-| 存储值 | 面板名称 | Dispatcher 级别 | 说明 |
-|---|---|---|---|
-| `super` | 主人 | 15 | 最高，`comparePermission()` 直接放行 |
-| `supervisor` | 督导 | 7 | |
-| `owner` | 所有者 | 6 | 通常对应群主 |
-| `director` | 主管 | 5 | |
-| `manager` | 经理 | 4 | |
-| `admin` | 管理员 | 3 | 满足大部分管理命令，**但不满足 `PermRule::OWNER` 的 ≥6** |
-| `editor` | 编辑 | 2 | |
-| `default` | 普通成员 | 1 | 只能使用公开命令 |
+| 角色 | 等级 | 能力 |
+|---|---|---|
+| `super` 主人 | 15 | 全部 |
+| `owner` 所有者 | 6 | 公开命令、群管理命令、改群配置、改成员权限、装插件 |
+| `admin` 管理员 | 3 | 公开命令、群管理命令、改群配置 |
+| `editor` 编辑 | 2 | 公开命令、群管理命令 |
+| `member` 普通成员 | 1 | 公开命令 |
 
-不在列表里的 QQ 按群角色判定（群主 / 管理员），插件里 `BaseApp::getUserPermission()` 与
-`comparePermission()` 会直接读到面板配的值，无需改插件；改完立即生效，不需要重启。
+- 新代码：`$this->can('group.config')`、`$this->capabilities()`
+- 老插件：`#[Rule(permission: PermRule::OWNER)]` 与 `comparePermission()` 仍然可用，
+  由角色推导等级（owner=6 满足 OWNER 的 ≥6，admin=3 不满足）
+- 存储仍是 `memberPermission.<QQ>`，v1 的 `supervisor/director/manager/default`
+  读取时映射成 `owner/admin/admin/member`，不会被丢掉
+- 不在列表里的 QQ 按群角色判定（群主 / 管理员），改完立即生效，不需要重启。
 
 ## 自检
 

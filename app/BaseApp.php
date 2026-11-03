@@ -130,8 +130,34 @@ abstract class BaseApp {
 	public function getUserPermission(string|float|int $userQQ): PermRule
 	{
 		$key = "memberPermission.{$userQQ}";
-		$value = $this->redis->exists($key) ? $this->redis->get($key) : 'default';
+		$value = $this->redis->exists($key) ? $this->redis->get($key) : 'member';
 		return PermRule::getByPerm((string)$value);
+	}
+
+	/**
+	 * 当前说话人（或指定 QQ）的角色名：super / owner / admin / editor / member。
+	 *
+	 * 与 getUserPermission() 的区别：那个返回 v1 的等级枚举（给老插件用），
+	 * 这个返回角色（给 can() 用）。两者读的是同一个键，v1 的旧值会自动映射。
+	 */
+	public function memberRole(string|float|int|null $qq = null): string
+	{
+		$qq = $qq ?? $this->qq;
+		$key = "memberPermission.{$qq}";
+		$value = $this->redis->exists($key) ? (string)$this->redis->get($key) : 'member';
+		return \Core\Bot\MemberRoles::normalize($value);
+	}
+
+	/** 是否具备某个能力，例如 can('group.config') */
+	public function can(string $capability): bool
+	{
+		return \Core\Bot\MemberRoles::can($this->memberRole(), $capability);
+	}
+
+	/** @return string[] 当前角色的全部能力 */
+	public function capabilities(): array
+	{
+		return \Core\Bot\MemberRoles::capabilities($this->memberRole());
 	}
 
 	// ---------------------- 群信息 ----------------------

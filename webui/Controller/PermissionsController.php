@@ -16,9 +16,11 @@ final class PermissionsController extends Base
     public function index(Request $request): Response
     {
         return $this->ok([
-            'items' => MemberPermissions::all(),
+            'items'  => MemberPermissions::all(),
+            // levels 保留给前端下拉，roles/capabilities/matrix 是新的 RBAC 模型
             'levels' => MemberPermissions::LEVELS,
-            'stats' => MemberPermissions::stats(),
+            'model'  => MemberPermissions::model(),
+            'stats'  => MemberPermissions::stats(),
         ]);
     }
 

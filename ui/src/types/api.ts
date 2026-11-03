@@ -489,12 +489,24 @@ export interface ScheduleData {
 /** QQ 成员权限（机器人使用权限，与后台登录无关） */
 export interface MemberPermission {
   qq: string
-  level: string
+  /** 角色名（super / owner / admin / editor / member） */
+  role: string
+  /** 由角色推导出的等级，仅用于兼容旧接口 */
+  level: number
   label: string
+  capabilities: string[]
+}
+
+export interface PermissionsModel {
+  roles: Record<string, string>
+  capabilities: Record<string, string>
+  matrix: Record<string, { label: string; level: number; capabilities: string[] }>
+  legacy: Record<string, string>
 }
 
 export interface PermissionsData {
   items: MemberPermission[]
   levels: Record<string, string>
-  stats: { total: number; by_level: Record<string, number> }
+  model?: PermissionsModel
+  stats: { total: number; by_role?: Record<string, number>; by_level?: Record<string, number> }
 }

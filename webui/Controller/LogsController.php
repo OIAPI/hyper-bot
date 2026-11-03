@@ -182,7 +182,7 @@ final class LogsController extends Base {
         $current = $this->plainDir() . '/logger.log';
         if (is_file($current) && is_readable($current)) {
             foreach ($this->tailLines($current, self::PLAIN_TAIL_BYTES) as $line) {
-                if (preg_match('/^[(d{4}-d{2}-d{2}) d{2}:d{2}:d{2}/', $line, $m)) {
+                if (preg_match('/^\[(\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2}/', $line, $m)) {
                     $days[] = $m[1];
                 }
             }

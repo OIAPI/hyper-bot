@@ -140,6 +140,27 @@ $ok('磁盘统计含 total/free/used/dirs', isset($disk['json']['data']['total']
 $dates = $call('GET', '/webui/api/logs/dates', [], $token);
 $ok('日志日期同时给 dates 与 items', is_array($dates['json']['data']['dates'] ?? null) && is_array($dates['json']['data']['items'] ?? null));
 
+// 纯文本 logger.log 里的历史记录也要能读出来（业务日志大量走这套，曾经导致日志页永远空白）
+$plainDay = '2020-01-01'; // 用一个不会与真实日志撞车的日期，保证断言只命中这一条
+$plainFile = (defined('__logger__') ? __logger__ : __root__ . '/runtime/log') . '/logger.log';
+$plainBackup = is_file($plainFile) ? (string)file_get_contents($plainFile) : null;
+file_put_contents($plainFile, "[{$plainDay} 08:00:00.000] [INFO] [测试] 纯文本日志回归用例" . PHP_EOL, FILE_APPEND);
+register_shutdown_function(static function () use ($plainFile, $plainBackup): void {
+    if ($plainBackup !== null) {
+        file_put_contents($plainFile, $plainBackup);
+    } else {
+        @unlink($plainFile);
+    }
+});
+$plainDayRes = $call('GET', '/webui/api/logs/' . $plainDay . '?limit=5', [], $token);
+$plainHit = false;
+foreach ($plainDayRes['json']['data']['items'] ?? [] as $row) {
+    if (str_contains((string)($row['message'] ?? ''), '纯文本日志回归用例')) { $plainHit = true; }
+}
+$ok('纯文本日志能被按天读出', $plainHit);
+$plainDates = $call('GET', '/webui/api/logs/dates', [], $token);
+$ok('日期列表包含纯文本历史日期', in_array($plainDay, $plainDates['json']['data']['dates'] ?? [], true), json_encode($plainDates['json']['data']['dates'] ?? []));
+
 // 日志项必须带 time/level/channel/message：前端表格按这四个字段渲染
 $first = $tail['json']['data']['items'][0] ?? [];
 $ok('日志项含 time/level/channel/message', isset($first['time'], $first['level'], $first['channel'], $first['message']), json_encode(array_keys($first)));

@@ -153,8 +153,9 @@ onMounted(load)
     </UiCard>
 
     <div class="hint">
-      权限等级：<b>主人</b> 可做任何操作；<b>管理员</b> 可执行大部分管理命令；<b>编辑</b> 介于两者之间；
-      <b>普通成员</b> 只能使用公开命令。值存在 <code>memberPermission.&lt;QQ&gt;</code>，沿用 v1 的键，插件无需改动。
+      等级从高到低：<b>主人 15</b> ＞ 督导 7 ＞ 所有者 6 ＞ 主管 5 ＞ 经理 4 ＞ 管理员 3 ＞ 编辑 2 ＞ 普通 1。
+      插件里 <code>#[Rule(permission: PermRule::OWNER)]</code> 要求 ≥6，所以「管理员」不满足它；
+      值存在 <code>memberPermission.&lt;QQ&gt;</code>，沿用 v1 的键，插件无需改动、即时生效。
     </div>
   </div>
 </template>

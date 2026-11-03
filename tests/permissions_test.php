@@ -51,7 +51,7 @@ try {
     $qqs = array_column($all, 'qq');
     check('列表包含两人', in_array('10001', $qqs, true) && in_array('10002', $qqs, true));
     $row = $all[array_search('10002', $qqs, true)];
-    check('列表带中文等级', ($row['label'] ?? '') === '编辑');
+    check('列表带中文等级', str_contains((string)($row['label'] ?? ''), '编辑'));
 
     $stats = MemberPermissions::stats();
     check('统计 total 正确', ($stats['total'] ?? 0) >= 2);

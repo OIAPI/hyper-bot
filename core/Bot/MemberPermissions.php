@@ -12,12 +12,21 @@ use Core\Store\Store;
  */
 final class MemberPermissions
 {
-    /** 面板可选的等级（顺序 = 从高到低） */
+    /**
+     * 面板可选的等级（顺序 = 从高到低）。
+     *
+     * 完整保留 v1 的 8 档，因为插件里的 #[Rule(permission: PermRule::OWNER)]
+     * 要求等级 >= 6；只给「管理员(3)」是满足不了的，面板必须能表达 owner 以上。
+     */
     public const LEVELS = [
-        'super'   => '主人（最高权限）',
-        'admin'   => '管理员',
-        'editor'  => '编辑',
-        'default' => '普通成员',
+        'super'      => '主人（15）',
+        'supervisor' => '督导（7）',
+        'owner'      => '所有者（6）',
+        'director'   => '主管（5）',
+        'manager'    => '经理（4）',
+        'admin'      => '管理员（3）',
+        'editor'     => '编辑（2）',
+        'default'    => '普通成员（1）',
     ];
 
     private static function store(): Store

@@ -353,19 +353,11 @@ async function doLogout(): Promise<void> {
           <span class="route-spinner" />
           <span>正在加载界面组件…</span>
         </div>
-        <Suspense v-else>
-          <RouterView v-slot="{ Component }">
-            <Transition name="fade" mode="out-in">
-              <component :is="Component" />
-            </Transition>
-          </RouterView>
-          <template #fallback>
-            <div class="route-loading">
-              <span class="route-spinner" />
-              <span>载入中…</span>
-            </div>
-          </template>
-        </Suspense>
+        <RouterView v-else v-slot="{ Component }">
+          <Transition name="fade" mode="out-in">
+            <component :is="Component" />
+          </Transition>
+        </RouterView>
       </div>
     </main>
 

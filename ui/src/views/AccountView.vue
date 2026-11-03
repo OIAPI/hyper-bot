@@ -67,21 +67,37 @@ async function loadUsers(): Promise<void> {
 const createVisible = ref(false)
 const newUser = ref({ username: '', password: '', role: 'viewer' as RoleName })
 const creating = ref(false)
+const createError = ref('')
 
 function openCreate(): void {
   newUser.value = { username: '', password: '', role: 'viewer' }
+  createError.value = ''
   createVisible.value = true
+}
+
+/** 和 Auth::createUser 的规则保持一致，能在本地拦下就不用等一次 400 */
+function validateNewUser(username: string, password: string): string {
+  if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username)) {
+    return '用户名只能用字母、数字、下划线、点和横线，长度 3-32'
+  }
+  if (password.length < 8) return '密码至少 8 位'
+  return ''
 }
 
 async function createUser(): Promise<void> {
   if (creating.value) return
+  const local = validateNewUser(newUser.value.username.trim(), newUser.value.password)
+  createError.value = local
+  if (local) return
   creating.value = true
   try {
-    const res = await usersApi.create({ ...newUser.value })
+    const res = await usersApi.create({ ...newUser.value, username: newUser.value.username.trim() })
     users.value = res.items ?? []
     createVisible.value = false
     toast.ok('账号已创建')
   } catch (e) {
+    // 同时写进弹窗和提示：弹窗里的不会自己消失，方便看清后再改
+    createError.value = e instanceof ApiError ? e.message : '创建失败'
     toast.fromError(e, '创建失败')
   } finally {
     creating.value = false
@@ -111,19 +127,24 @@ async function removeUser(row: UserRecord): Promise<void> {
 const resetVisible = ref(false)
 const resetTarget = ref('')
 const resetPass = ref('')
+const resetError = ref('')
 
 function openReset(row: UserRecord): void {
   resetTarget.value = row.username
   resetPass.value = ''
+  resetError.value = ''
   resetVisible.value = true
 }
 
 async function submitReset(): Promise<void> {
+  resetError.value = resetPass.value.length < 8 ? '密码至少 8 位' : ''
+  if (resetError.value) return
   try {
     await usersApi.resetPassword(resetTarget.value, resetPass.value)
     resetVisible.value = false
     toast.ok('密码已重置')
   } catch (e) {
+    resetError.value = e instanceof ApiError ? e.message : '重置失败'
     toast.fromError(e, '重置失败')
   }
 }
@@ -372,6 +393,7 @@ async function logout(): Promise<void> {
           <UiSelect v-model="newUser.role" :options="roleOptions" />
         </UiFormItem>
       </UiForm>
+      <div v-if="createError" class="form-error">{{ createError }}</div>
       <template #footer>
         <UiButton size="small" @click="createVisible = false">取消</UiButton>
         <UiButton size="small" type="primary" :loading="creating" @click="createUser">创建</UiButton>
@@ -380,6 +402,7 @@ async function logout(): Promise<void> {
 
     <UiDialog v-model="resetVisible" :title="'重置 ' + resetTarget + ' 的密码'" width="380px">
       <UiInput v-model="resetPass" type="password" placeholder="新密码，至少 8 位" />
+      <div v-if="resetError" class="form-error">{{ resetError }}</div>
       <template #footer>
         <UiButton size="small" @click="resetVisible = false">取消</UiButton>
         <UiButton size="small" type="primary" @click="submitReset">确定</UiButton>
@@ -400,6 +423,17 @@ h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 .role-select { width: 100%; min-width: 96px; }
 .pwd-form { display: flex; flex-direction: column; gap: 2px; }
 .logout-row { display: flex; align-items: center; gap: 14px; }
+.form-error {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--danger, #d33);
+  color: var(--danger, #d33);
+  background: color-mix(in srgb, var(--danger, #d33) 8%, transparent);
+  font-size: 12px;
+  line-height: 1.6;
+  user-select: text;
+}
 .oauth-list { display: flex; flex-direction: column; gap: 2px; }
 .oauth-row {
   display: flex;

@@ -25,7 +25,8 @@ export const useToastStore = defineStore('toast', () => {
   }
 
   const ok = (m: string) => push('ok', m)
-  const error = (m: string) => push('error', m, 5200)
+  // 错误多留一会儿：用户经常「一眨眼提示就没了」，来不及看清
+  const error = (m: string) => push('error', m, 12000)
   const info = (m: string) => push('info', m)
   const warn = (m: string) => push('warn', m, 4600)
 

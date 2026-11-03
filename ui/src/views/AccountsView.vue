@@ -54,6 +54,7 @@ async function load(): Promise<void> {
 const dialog = ref(false)
 const editing = ref<string | null>(null)
 const saving = ref(false)
+const formError = ref('')
 const form = ref({
   id: '',
   name: '',
@@ -81,11 +82,13 @@ function openCreate(): void {
     remark: '',
     enable: true,
   }
+  formError.value = ''
   dialog.value = true
 }
 
 function openEdit(row: BotAccount): void {
   editing.value = row.id
+  formError.value = ''
   form.value = {
     id: row.id,
     name: row.name,
@@ -103,6 +106,12 @@ function openEdit(row: BotAccount): void {
 
 async function save(): Promise<void> {
   if (saving.value) return
+  formError.value = ''
+  if (!form.value.self_id.trim()) { formError.value = '机器人号码不能为空'; return }
+  if (form.value.api.trim() && !/^https?:\/\//i.test(form.value.api.trim())) {
+    formError.value = 'API 地址要以 http:// 或 https:// 开头'
+    return
+  }
   saving.value = true
   try {
     const payload: Partial<BotAccount> = {
@@ -125,6 +134,7 @@ async function save(): Promise<void> {
     dialog.value = false
     toast.ok(editing.value ? '账号已更新' : '账号已创建')
   } catch (e) {
+    formError.value = e instanceof Error ? e.message : '保存失败'
     toast.fromError(e, '保存失败')
   } finally {
     saving.value = false
@@ -269,6 +279,7 @@ onMounted(load)
           <span class="field-label">启用</span>
         </label>
       </div>
+      <div v-if="formError" class="form-error">{{ formError }}</div>
       <template #footer>
         <UiButton size="small" @click="dialog = false">取消</UiButton>
         <UiButton size="small" type="primary" :loading="saving" @click="save">保存</UiButton>
@@ -311,4 +322,15 @@ onMounted(load)
 .field.span-2 { grid-column: span 2; }
 .field.inline { flex-direction: row; align-items: center; gap: 8px; }
 .field-label { font-size: 11.5px; color: var(--text-dim); }
+.form-error {
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--danger, #d33);
+  color: var(--danger, #d33);
+  background: color-mix(in srgb, var(--danger, #d33) 8%, transparent);
+  font-size: 12px;
+  line-height: 1.6;
+  user-select: text;
+}
 </style>

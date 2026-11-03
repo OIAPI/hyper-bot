@@ -377,7 +377,8 @@ function commandDoctor(array $ctx): void
     $check('Config.ini 可写（WebUI 改配置需要）', is_writable($path), $path);
 
     // composer autoload
-    $check('vendor/autoload.php', is_file($root . '/vendor/autoload.php'), '缺失请运行 composer install');
+    $autoloadOk = is_file($root . '/vendor/autoload.php');
+    $check('vendor/autoload.php', $autoloadOk, $autoloadOk ? '' : '运行 php bin/hyper install');
 
     echo PHP_EOL . '  Hyper Bot ' . Version::current() . ' 环境体检' . PHP_EOL;
     echo '  ' . str_repeat('─', 62) . PHP_EOL;

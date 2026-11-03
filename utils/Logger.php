@@ -1,8 +1,8 @@
 <?php
 namespace Utils;
 
-use SwooleCoroutine;
-use SwooleCoroutineChannel;
+use Swoole\Coroutine;
+use Swoole\Coroutine\Channel;
 
 /**
  * 终端 + 文件日志。

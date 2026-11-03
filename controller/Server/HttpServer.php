@@ -15,6 +15,7 @@ use Utils\Cache;
 use Controller\Api;
 use Core\Http\Request as CoreRequest;
 use Webui\Routes as WebuiRoutes;
+use Protocol\OneBot\WsHub;
 
 
 /**
@@ -94,7 +95,7 @@ class HttpServer {
 		$this->server->on('WorkerStart', [$this, 'onWorkerStart']);
 		$this->server->on('WorkerError', [$this, 'onWorkerError']);
 		// WebSocket 事件（OneBot 反向 WS / Milky WS 服务端接入）
-		ProtocolOneBotWsHub::bindServer($this->server);
+		WsHub::bindServer($this->server);
 		$this->bindShutdownEvents(); //注册关闭事件
 	}
 

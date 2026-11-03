@@ -21,6 +21,13 @@
  */
 declare(strict_types=1);
 
+// install 必须能在一个刚 clone、还没有 vendor 的目录里跑，
+// 所以先看命令：需要时跳过 autoload，其余命令照旧。
+$__first = strtolower((string)($argv[1] ?? ''));
+if (($__first === 'install' || $__first === 'setup') && !is_file(dirname(__DIR__) . '/vendor/autoload.php')) {
+    define('HYPER_SKIP_AUTOLOAD', true);
+}
+
 require dirname(__DIR__) . '/Include.php';
 
 use Core\Bootstrap;
@@ -31,6 +38,10 @@ use Core\Version;
 [$command, $args] = parseCli($argv ?? []);
 
 switch ($command) {
+    case 'install':
+    case 'setup':
+        commandInstall($args['args'], $args['options']);
+        break;
     case 'serve':
         commandServe($args);
         break;
@@ -447,6 +458,191 @@ function commandConfig(array $ctx): void
     echo "已写入 {$key} = " . var_export(Config::get($key, null), true) . PHP_EOL;
 }
 
+// ---------------- install ----------------
+
+/**
+ * 一键准备运行环境：扩展检查 + 依赖安装 + 运行时目录。
+ *
+ * 刻意不碰 Config / Runtime 等类：vendor 还没装时 autoload 不可用，
+ * 这个命令必须能在「刚 clone、什么都没装」的状态下跑完。
+ */
+function commandInstall(array $args, array $options): void
+{
+    $root = dirname(__DIR__);
+    $withDev = isset($options['dev']);
+    $force = isset($options['force']);
+    $ok = true;
+
+    // 中文按显示宽度补空格，否则 %-32s 会按字节数错位
+    $say = static function (string $status, string $name, string $detail = ''): void {
+        $pad = max(0, 32 - mb_strwidth($name, 'UTF-8'));
+        printf("  %-6s %s%s %s\n", $status, $name, str_repeat(' ', $pad), $detail);
+    };
+
+    echo PHP_EOL . '  Hyper Bot 安装 / 环境准备' . PHP_EOL;
+    echo '  ' . str_repeat('─', 64) . PHP_EOL;
+
+    // 1) PHP 与扩展
+    $versionOk = PHP_VERSION_ID >= 80100;
+    $say($versionOk ? 'OK' : 'FAIL', 'PHP >= 8.1', PHP_VERSION);
+    $ok = $ok && $versionOk;
+
+    $extensions = [
+        ['json', true, '必需'],
+        ['mbstring', true, '必需（中文处理）'],
+        ['curl', true, '必需（协议调用）'],
+        ['openssl', true, '必需（HTTPS）'],
+        ['swoole', false, '可选（swoole 架构）'],
+        ['sodium', false, '可选（QQ 官方验签）'],
+        ['redis', false, '可选（缺失走文件存储）'],
+    ];
+    foreach ($extensions as [$ext, $required, $detail]) {
+        $loaded = extension_loaded($ext);
+        if (!$loaded && $required) {
+            $ok = false;
+        }
+        $say($loaded ? 'OK' : ($required ? 'FAIL' : 'SKIP'), 'ext-' . $ext, $detail);
+    }
+
+    // 2) 运行时目录与配置可写
+    foreach (['runtime', 'runtime/log', 'runtime/store', 'runtime/webui'] as $dir) {
+        $path = $root . '/' . $dir;
+        if (!is_dir($path)) {
+            @mkdir($path, 0775, true);
+        }
+        $writable = is_dir($path) && is_writable($path);
+        if (!$writable) {
+            $ok = false;
+        }
+        $say($writable ? 'OK' : 'FAIL', '目录可写：' . $dir, $path);
+    }
+    $configPath = $root . '/Config.ini';
+    $configOk = is_file($configPath) && is_writable($configPath);
+    if (!$configOk) {
+        $ok = false;
+    }
+    $say($configOk ? 'OK' : 'FAIL', 'Config.ini 可写', $configPath);
+
+    // 3) Composer 依赖
+    $autoload = $root . '/vendor/autoload.php';
+    if (is_file($autoload) && !$force) {
+        $say('OK', 'vendor/autoload.php', '已存在（--force 可重装）');
+    } else {
+        $composer = findComposer();
+        if ($composer === null && isset($options['download-composer'])) {
+            $say('WAIT', 'composer', '未找到，尝试下载 composer.phar …');
+            $composer = downloadComposer($root, $say);
+        }
+        if ($composer === null) {
+            $say('FAIL', 'composer', '未找到：装好 composer 后重跑 php bin/hyper install');
+            echo PHP_EOL . '  提示 没有 composer？加 --download-composer 让脚本自己下载' . PHP_EOL;
+            $ok = false;
+        } else {
+            $cmd = composerCommand($composer) . ' install'
+                . ($withDev ? '' : ' --no-dev')
+                . ' --optimize-autoloader --no-interaction --no-progress';
+            $say('WAIT', 'composer install', ($withDev ? '含 dev' : '--no-dev') . '，下载依赖中 …');
+            $code = runInDir($root, $cmd, true);
+            if ($code === 0 && is_file($autoload)) {
+                $say('OK', 'composer install', '依赖已就绪');
+            } else {
+                $say('FAIL', 'composer install', '退出码 ' . $code);
+                $ok = false;
+            }
+        }
+    }
+
+    echo '  ' . str_repeat('─', 64) . PHP_EOL;
+    if ($ok) {
+        echo '  完成。下一步：php bin/hyper doctor，然后 php bin/hyper serve --arch=php' . PHP_EOL . PHP_EOL;
+        exit(0);
+    }
+    echo '  有未通过的项，按上面提示处理后重跑。' . PHP_EOL . PHP_EOL;
+    exit(1);
+}
+
+/** 找 composer：$COMPOSER_BINARY > 项目内 composer.phar > PATH */
+function findComposer(): ?string
+{
+    $env = getenv('COMPOSER_BINARY');
+    if (is_string($env) && $env !== '' && is_file($env)) {
+        return $env;
+    }
+    $root = dirname(__DIR__);
+    foreach ([$root . '/composer.phar', dirname($root) . '/composer.phar'] as $candidate) {
+        if (is_file($candidate)) {
+            return $candidate;
+        }
+    }
+    $found = trim((string)@shell_exec('command -v composer 2>/dev/null'));
+    return ($found !== '' && is_file($found)) ? $found : null;
+}
+
+/** composer.phar 要用 php 跑；PATH 里的 shim（#! 开头）直接跑 */
+function composerCommand(string $composer): string
+{
+    $head = (string)@file_get_contents($composer, false, null, 0, 2);
+    if ($head === '#!') {
+        return escapeshellarg($composer);
+    }
+    return escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($composer);
+}
+
+/** 在指定目录执行命令；$passthru=true 时 composer 的进度直接打到终端 */
+function runInDir(string $cwd, string $cmd, bool $passthru = false): int
+{
+    $code = 0;
+    if ($passthru && function_exists('passthru')) {
+        @passthru('cd ' . escapeshellarg($cwd) . ' && ' . $cmd, $code);
+        return (int)$code;
+    }
+    @exec('cd ' . escapeshellarg($cwd) . ' && ' . $cmd . ' 2>&1', $out, $code);
+    foreach ($out as $line) {
+        echo '    ' . $line . PHP_EOL;
+    }
+    return (int)$code;
+}
+
+/** 下载官方 composer.phar（仅在 --download-composer 时触发） */
+function downloadComposer(string $root, callable $say): ?string
+{
+    $url = 'https://getcomposer.org/installer';
+    $installer = $root . '/composer-setup.php';
+    $target = $root . '/composer.phar';
+    $bytes = false;
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 30,
+        ]);
+        $bytes = curl_exec($ch);
+        curl_close($ch);
+    }
+    if (!is_string($bytes) && ini_get('allow_url_fopen')) {
+        $bytes = @file_get_contents($url);
+    }
+    if (!is_string($bytes) || !str_contains($bytes, 'Composer')) {
+        $say('FAIL', '下载 composer', '网络不可达：' . $url);
+        return null;
+    }
+
+    @file_put_contents($installer, $bytes);
+    $code = runInDir($root, escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($installer)
+        . ' --quiet --install-dir=' . escapeshellarg($root) . ' --filename=composer.phar');
+    @unlink($installer);
+
+    if ($code === 0 && is_file($target)) {
+        $say('OK', '下载 composer', $target);
+        return $target;
+    }
+    $say('FAIL', '下载 composer', '安装器执行失败（退出码 ' . $code . '）');
+    return null;
+}
+
 // ---------------- help ----------------
 
 function printHelp(): void
@@ -458,6 +654,9 @@ function printHelp(): void
     echo PHP_EOL;
     echo '  php bin/hyper worker [--once]' . PHP_EOL;
     echo '      只跑调度队列（定时/延迟任务），与 serve 分离部署时用' . PHP_EOL;
+    echo PHP_EOL;
+    echo '  php bin/hyper install [--force] [--dev] [--download-composer]' . PHP_EOL;
+    echo '      一键准备环境：扩展检查 / composer install --no-dev -o / 运行时目录' . PHP_EOL;
     echo PHP_EOL;
     echo '  php bin/hyper doctor' . PHP_EOL;
     echo '      环境体检：扩展 / 目录 / 配置 / 推荐架构' . PHP_EOL;

@@ -30,29 +30,40 @@ cd "$ROOT" || exit 1
 # 注意：不能只判 -x。安卓 /storage 是 FUSE 挂载，文件可能带 0644 或根本没有
 # 可执行位（甚至 chmod +x 无效），但用 `bash <file>` 依然能跑。
 # 所以这里判「存在且可读」，能不能执行交给 php_run 决定。
-find_php() {
-  if [[ -n "${HYPER_PHP:-}" ]]; then
-    echo "$HYPER_PHP"
-    return
+# 候选 PHP 是否真能跑：安卓上常见「文件在、一执行就报缺 so」的残缺 wrapper，
+# 所以不能只看文件存在，必须真的跑一次 -v。
+php_works() {
+  local bin="$1" out=""
+  [[ -n "$bin" && -f "$bin" && -r "$bin" ]] || return 1
+  if [[ -x "$bin" ]]; then
+    out="$("$bin" -v 2>/dev/null | head -n 1)"
+  else
+    out="$(bash "$bin" -v 2>/dev/null | head -n 1)"
   fi
-  local candidates=(
+  [[ "$out" == *PHP* ]]
+}
+
+find_php() {
+  local candidates=() candidate
+  # 优先级：$HYPER_PHP > PATH 里的 php > 项目旁的 .phpext wrapper > vendor/bin/php
+  [[ -n "${HYPER_PHP:-}" ]] && candidates+=("${HYPER_PHP}")
+  if command -v php >/dev/null 2>&1; then
+    candidates+=("$(command -v php)")
+  fi
+  candidates+=(
     "$ROOT/../.phpext/php"
     "$ROOT/.phpext/php"
     "$ROOT/vendor/bin/php"
   )
-  local candidate
   for candidate in "${candidates[@]}"; do
-    if [[ -f "$candidate" && -r "$candidate" ]]; then
+    if php_works "$candidate"; then
       echo "$candidate"
       return
     fi
   done
-  if command -v php >/dev/null 2>&1; then
-    command -v php
-    return
-  fi
   echo ""
 }
+
 
 PHP_BIN="$(find_php)"
 if [[ -z "$PHP_BIN" ]]; then
@@ -89,9 +100,11 @@ ARCH=""
 PORT=""
 HOST=""
 FOREGROUND=0
+EXTRA_ARGS=()
 for arg in "$@"; do
   case "$arg" in
     --arch=*)  ARCH="${arg#*=}" ;;
+    --force|--dev|--download-composer) EXTRA_ARGS+=("$arg") ;;
     --port=*)  PORT="${arg#*=}" ;;
     --host=*)  HOST="${arg#*=}" ;;
     --foreground|-f) FOREGROUND=1 ;;
@@ -320,6 +333,10 @@ cmd_doctor() {
   php_run bin/hyper doctor
 }
 
+cmd_install() {
+  php_run bin/hyper install ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+}
+
 cmd_help() {
   cat <<'HELP'
 Hyper Bot 启动脚本（v2）
@@ -333,6 +350,7 @@ Hyper Bot 启动脚本（v2）
   status           显示进程与运行架构
   logs             跟踪日志（Ctrl+C 退出）
   doctor           环境体检
+  install          一键装环境（扩展检查 + composer install + runtime 目录）
   help             显示本帮助
 
 选项：
@@ -342,6 +360,9 @@ Hyper Bot 启动脚本（v2）
   --port=8080      端口（默认读 Config.ini [http] port）
   --host=127.0.0.1 监听地址
   --foreground     前台运行（便于直接看日志）
+  --force          install 时强制重装 vendor
+  --dev            install 时连 dev 依赖一起装
+  --download-composer  install 时若没有 composer，自动下载 composer.phar
 
 示例：
   bash bin/hyper.sh start --arch=php --port=8080
@@ -361,6 +382,7 @@ case "$ACTION" in
   status)        cmd_status ;;
   logs|log)      cmd_logs ;;
   doctor|check)  cmd_doctor ;;
+  install|setup) cmd_install ;;
   help|-h|--help) cmd_help ;;
   *)
     echo "未知命令：$ACTION" >&2

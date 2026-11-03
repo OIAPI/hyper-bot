@@ -164,3 +164,24 @@ php tests/kernel_test.php         # 内核各组件
 ### Windows 上的建议
 
 用 WSL2 或 Docker 跑 Linux 容器；Windows 原生缺 /bin/sh 与 bash，serve 的子进程创建会失败（help、status、doctor 仍可用）。
+
+## 一键准备环境（php bin/hyper install）
+
+刚 clone / 刚解压出来的目录，一条命令装好：
+
+    php bin/hyper install                     # 扩展检查 + composer install --no-dev -o + 建 runtime 目录
+    php bin/hyper install --dev               # 连 dev 依赖一起装
+    php bin/hyper install --force             # vendor 已存在也重装
+    php bin/hyper install --download-composer # 没装 composer 时自动下载 composer.phar
+    bash bin/hyper.sh install                 # 同样的能力，走 bash 入口（可带 --dev/--force/--download-composer）
+
+行为：
+
+- 扩展分两档：json / mbstring / curl / openssl 缺失直接 FAIL 并 exit 1；swoole / sodium / redis 缺失只标 SKIP。
+- 自动创建并检查 runtime/、runtime/log、runtime/store、runtime/webui 可写，检查 Config.ini 可写。
+- vendor/autoload.php 已存在则跳过 composer（除非 --force）。
+- composer 查找顺序：$COMPOSER_BINARY > 项目内 composer.phar > PATH 里的 composer；composer.phar 用当前 PHP 执行，PATH 里的 shim 直接执行。
+- 命令本身不依赖 autoload，vendor 还没装也能跑（普通命令则仍会提示「缺少依赖」）。
+- 必需项全过 exit 0，可以直接接着 php bin/hyper serve --arch=php。
+
+与 doctor 的区别：doctor 只体检不改动任何东西；install 会真的装依赖、建目录。

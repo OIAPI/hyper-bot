@@ -145,6 +145,21 @@ final class Metrics {
             $items[] = $this->normalizeGroup($groupId, is_array($info) ? $info : []);
         }
 
+        // 只在事件里出现过的群（还没写过 {id}.info）也要能看到：
+        // 否则「群里发过消息但面板不显示这个群」会让人以为数据丢了。
+        $seen = [];
+        foreach ($items as $item) {
+            $seen[$item['group_id']] = true;
+        }
+        foreach ($this->recentEvents(500) as $event) {
+            $groupId = (string)($event['group_id'] ?? '');
+            if ($groupId === '' || isset($seen[$groupId])) {
+                continue;
+            }
+            $seen[$groupId] = true;
+            $items[] = $this->normalizeGroup($groupId, [], (array)($this->store->get('webui:groups') ?? [])[$groupId] ?? []);
+        }
+
         foreach ((array)($this->store->get('webui:groups') ?? []) as $groupId => $meta) {
             $found = false;
             foreach ($items as &$item) {
@@ -192,7 +207,7 @@ final class Metrics {
             'plugins_total' => count($plugins),
             'plugins_on'    => $enabled,
             'worker'        => $worker,
-            'updated_at'    => (int)($meta['updated_at'] ?? 0),
+            'updated_at'    => (int)($meta['updated_at'] ?? $info['updated_at'] ?? 0),
         ];
     }
 
@@ -205,6 +220,7 @@ final class Metrics {
      */
     public function plugins(): array {
         $items = [];
+        $registry = null;
         try {
             $registry = \Core\App::boot()->container->get(\Core\Bot\Registry::class);
             $plugins = $registry->plugins();
@@ -232,13 +248,31 @@ final class Metrics {
                 'author'      => $plugin['author'] ?? '',
                 'version'     => $plugin['version'] ?? '',
                 'lastUpdate'  => $plugin['lastUpdate'] ?? '',
-                'enabled'     => true,
+                'enabled'     => (bool)($plugin['enabled'] ?? \Core\Bot\PluginState::isEnabled($class)),
                 'methods'     => $methodCount,
-                'hooks'       => $plugin['hooks'] ?? [],
+                'hooks'       => $plugin['hooks'] ?? $this->hooksOfClass($registry, $class),
             ];
         }
         usort($items, fn($a, $b) => strcmp($a['short'], $b['short']));
         return ['items' => $items, 'total' => count($items)];
+    }
+
+    /** 从注册表的钩子索引里挑出某个插件的（注释类型 + 方法名 + 匹配式） */
+    private function hooksOfClass(?\Core\Bot\Registry $registry, string $class): array {
+        if ($registry === null) {
+            return [];
+        }
+        $out = [];
+        foreach ($registry->allHooks() as $attrClass => $rules) {
+            $type = substr(strrchr($attrClass, '\\') ?: $attrClass, 1);
+            foreach ($rules as $rule) {
+                if (($rule['class'] ?? '') !== $class) {
+                    continue;
+                }
+                $out[] = ['type' => $type, 'method' => $rule['func'] ?? '', 'match' => $rule['match'] ?? ''];
+            }
+        }
+        return $out;
     }
 
     private function hooksOf(\ReflectionClass $ref): array {
@@ -292,6 +326,36 @@ final class Metrics {
         $score = microtime(true);
         $this->store->zadd('webui:events', $score, json_encode($entry, JSON_UNESCAPED_UNICODE));
         $this->store->ztrim('webui:events', 2000);
+        $this->touchGroup($entry['group_id'], $event);
+    }
+
+    /**
+     * 收到群事件时回写群元数据。
+     *
+     * 之前「群名/更新时间」只有人在面板里手动改过才有值，因为框架从不落库；
+     * 现在每次群事件都更新 updated_at，并尽量从事件里抓群名（不同协议字段不同）。
+     */
+    private function touchGroup(string $groupId, array $event): void {
+        if ($groupId === '' || !preg_match('/^[0-9A-Za-z_-]+$/', $groupId)) {
+            return;
+        }
+        $all = (array)($this->store->get('webui:groups') ?? []);
+        $meta = is_array($all[$groupId] ?? null) ? $all[$groupId] : [];
+        $name = '';
+        foreach (['group_name', 'groupName', 'group_name_card', 'name'] as $key) {
+            if (!empty($event[$key]) && is_string($event[$key])) {
+                $name = $event[$key];
+                break;
+            }
+        }
+        $meta['updated_at'] = time();
+        if ($name !== '') {
+            $meta['name'] = $name;
+        } elseif (!isset($meta['name'])) {
+            $meta['name'] = '';
+        }
+        $all[$groupId] = $meta;
+        $this->store->set('webui:groups', $all);
     }
 
     public function phpInfo(): array {

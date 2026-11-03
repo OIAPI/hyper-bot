@@ -273,6 +273,11 @@ async function copyEndpoint(url: string): Promise<void> {
   okCopy ? toast.ok('已复制') : toast.error('复制失败，请手动选择文本')
 }
 
+/** 当前草稿里某个开关是否打开（读的是表单，不是运行状态） */
+function fieldOn(name: string, key: string): boolean {
+  return Boolean(getField(name as ProtocolName, key))
+}
+
 const enabledCount = computed(() =>
   Object.values(statuses.value).filter((s) => s.enabled).length,
 )
@@ -330,11 +335,33 @@ const totalProtocols = computed(() => Object.keys(statuses.value).length)
             <span class="field-label">模式</span>
             <UiTag size="small" type="plain">{{ statuses[m.name].mode || '—' }}</UiTag>
             <template v-if="m.name === 'onebot'">
-              <UiTag size="small" :type="statuses[m.name]?.detail?.forward_running ? 'ok' : 'plain'">
-                正向 {{ statuses[m.name]?.detail?.forward_running ? '在线' : '离线' }}
+              <!-- 关闭的通道说「已关闭」，不要显示成「离线」——那会被读成故障 -->
+              <UiTag v-if="!fieldOn(m.name, 'forward.enable')" size="small" type="plain">正向 已关闭</UiTag>
+              <UiTag
+                v-else
+                size="small"
+                :type="statuses[m.name]?.detail?.forward_running ? 'ok' : 'warn'"
+              >
+                正向 {{ statuses[m.name]?.detail?.forward_running ? '在线' : '连接中' }}
               </UiTag>
-              <UiTag size="small" type="plain">
-                反向 {{ statuses[m.name]?.detail?.reverse_sessions ?? 0 }}
+
+              <UiTag v-if="!fieldOn(m.name, 'reverse.enable')" size="small" type="plain">反向 已关闭</UiTag>
+              <UiTag
+                v-else
+                size="small"
+                :type="(statuses[m.name]?.detail?.reverse_sessions ?? 0) > 0 ? 'ok' : 'plain'"
+              >
+                反向 {{ (statuses[m.name]?.detail?.reverse_sessions ?? 0) > 0
+                  ? (statuses[m.name]?.detail?.reverse_sessions + ' 个连接')
+                  : '等待连接' }}
+              </UiTag>
+
+              <UiTag
+                v-if="!fieldOn(m.name, 'reverse.enable') && (statuses[m.name]?.detail?.reverse_sessions ?? 0) > 0"
+                size="small"
+                type="warn"
+              >
+                旧连接将在重启后断开
               </UiTag>
             </template>
             <template v-if="m.name === 'milky'">

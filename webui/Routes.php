@@ -93,6 +93,7 @@ final class Routes {
                 // 插件
                 $r->get('/plugins', [$plugins, 'index'], 'plugins.index');
                 $r->post('/plugins/reload', [$plugins, 'reload'], 'plugins.reload');
+                $r->put('/plugins/{plugin}/enable', [$plugins, 'enable'], 'plugins.enable');
                 $r->get('/plugins/{plugin}', [$plugins, 'show'], 'plugins.show');
                 // 导入：zip 走 raw body（见 PluginsController::zipPayload），git 走 JSON
                 $r->post('/plugins/import/zip', [$plugins, 'importZip'], 'plugins.importZip');

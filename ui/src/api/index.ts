@@ -60,8 +60,8 @@ export const overviewApi = {
   index: () => http.get<Overview>('/overview'),
   counts: () => http.get<OverviewCounts>('/overview/counts'),
   protocols: () => http.get<Record<string, ProtocolStatus>>('/overview/protocols'),
-  events: (limit = 20, type?: string) =>
-    http.get<TimelineEvent[]>('/overview/events', { query: { limit, type } }),
+  events: (limit = 20, type?: string, date?: string) =>
+    http.get<TimelineEvent[]>('/overview/events', { query: { limit, type, date } }),
 }
 
 /** 协议（账号连接） */
@@ -137,6 +137,9 @@ export const pluginApi = {
       query: { filename: file.name, name },
       contentType: 'application/zip',
     }),
+  /** 全局启用 / 停用（关掉后不参与事件分发，文件仍在） */
+  setEnabled: (name: string, enabled: boolean) =>
+    http.put<PluginList>('/plugins/' + encodeURIComponent(name) + '/enable', { enabled }),
   /** 从 git 仓库克隆安装 */
   importGit: (payload: { url: string; branch?: string; name?: string }) =>
     http.post<PluginImportResult>('/plugins/import/git', payload),
@@ -160,6 +163,10 @@ export const runtimeApi = {
 export const systemApi = {
   health: () => http.get<HealthData>('/health', { anonymous: true }),
   disk: () => http.get<DiskData>('/system/disk'),
-  routes: () => http.get<RouteItem[]>('/system/routes'),
+  // 后端返回 {items,total}；这里收敛成数组，视图不必关心信封
+  routes: () =>
+    http
+      .get<RouteItem[] | { items?: RouteItem[] }>('/system/routes')
+      .then((r) => (Array.isArray(r) ? r : (r.items ?? []))),
   clearCache: () => http.post<null>('/system/cache'),
 }

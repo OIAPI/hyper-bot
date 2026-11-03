@@ -85,11 +85,14 @@ function usagePercent(d: DiskData): number {
               <span class="tiny faint">已用</span>
               <span class="mono small">{{ formatBytes(disk.used) }} / {{ formatBytes(disk.total) }}</span>
             </div>
-            <UiProgress
-              :percentage="usagePercent(disk)"
-              :stroke-width="8"
-              :status="usagePercent(disk) > 90 ? 'danger' : undefined"
-            />
+            <!-- 用自绘进度条：不同组件库对越界百分比的处理不一致，这里只要一个确定的条 -->
+            <div class="disk-bar" role="progressbar" :aria-valuenow="usagePercent(disk)">
+              <div
+                class="disk-bar-fill"
+                :class="{ danger: usagePercent(disk) > 90 }"
+                :style="{ width: Math.min(100, Math.max(0, usagePercent(disk))) + '%' }"
+              />
+            </div>
             <div class="tiny faint">剩余 {{ formatBytes(disk.free) }}（{{ usagePercent(disk) }}% 已用）</div>
           </div>
           <UiEmpty v-else description="暂无磁盘数据" />
@@ -165,6 +168,9 @@ h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
 .disk { display: flex; flex-direction: column; gap: 10px; }
+.disk-bar { height: 8px; border-radius: 999px; background: var(--border-soft, #e5e7eb); overflow: hidden; }
+.disk-bar-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.disk-bar-fill.danger { background: var(--danger, #dc2626); }
 .disk-line { display: flex; align-items: center; justify-content: space-between; }
 
 .cache-row { display: flex; align-items: center; gap: 14px; }

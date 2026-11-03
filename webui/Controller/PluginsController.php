@@ -42,6 +42,35 @@ final class PluginsController extends Base {
         return $this->ok(['items' => $items, 'total' => count($items)], '已重新扫描');
     }
 
+    /** 全局启用 / 停用某个插件（停用后重载注册表，钩子不再参与分发） */
+    public function enable(Request $request, array $params): Response {
+        if ($deny = $this->guard($request, 'plugin.reload')) {
+            return $deny;
+        }
+        $class = (string)($params['plugin'] ?? '');
+        $enabled = (bool)$request->input('enabled', true);
+        // 类名大小写不敏感（PHP 本身如此），用短名或全名都能定位
+        $found = null;
+        foreach ($this->metrics->plugins()['items'] as $plugin) {
+            if (strcasecmp((string)$plugin['class'], $class) === 0 || strcasecmp((string)$plugin['short'], $class) === 0) {
+                $found = $plugin['class'];
+                break;
+            }
+        }
+        if ($found === null) {
+            return $this->fail('插件不存在：' . $class, -404, 404);
+        }
+        if (!\Core\Bot\PluginState::setEnabled($found, $enabled)) {
+            return $this->fail('状态保存失败（runtime/ 不可写）', -2, 500);
+        }
+        \Core\App::boot()->container->get(Registry::class)->invalidate();
+        $items = $this->metrics->plugins()['items'];
+        return $this->ok(
+            ['items' => $items, 'total' => count($items), 'class' => $found, 'enabled' => $enabled],
+            $enabled ? '插件已启用' : '插件已停用'
+        );
+    }
+
     /** 在某个群里批量开关插件 */
     public function bulkToggle(Request $request, array $params): Response {
         $groupId = (string)($params['group_id'] ?? '');

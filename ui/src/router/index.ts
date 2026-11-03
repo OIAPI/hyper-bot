@@ -26,7 +26,7 @@ const routes: RouteRecordRaw[] = [
         path: 'connections',
         name: 'connections',
         component: () => import('@/views/ConnectionsView.vue'),
-        meta: { title: '账号连接', icon: '⚯', group: '总览' },
+        meta: { title: '连接', icon: '⚯', group: '总览' },
       },
       {
         path: 'events',
@@ -62,7 +62,7 @@ const routes: RouteRecordRaw[] = [
         path: 'accounts',
         name: 'accounts',
         component: () => import('@/views/AccountsView.vue'),
-        meta: { title: '机器人账号', icon: '⌬', group: '业务' },
+        meta: { title: '账号', icon: '⌬', group: '业务' },
       },
       {
         path: 'subscription',
@@ -98,7 +98,7 @@ const routes: RouteRecordRaw[] = [
         path: 'account',
         name: 'account',
         component: () => import('@/views/AccountView.vue'),
-        meta: { title: '账号', icon: '☺', group: '系统' },
+        meta: { title: '账号设置', icon: '☺', group: '系统' },
       },
     ],
   },

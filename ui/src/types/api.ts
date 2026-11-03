@@ -343,6 +343,7 @@ export interface LogTail {
 
 export interface LogDates {
   dates: string[]
+  items?: string[]
 }
 
 export interface MessageRecord {
@@ -442,4 +443,3 @@ export interface OAuthProviders {
   callback: string
   redirect_uri_required: boolean
 }
-

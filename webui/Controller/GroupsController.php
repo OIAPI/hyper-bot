@@ -47,7 +47,8 @@ final class GroupsController extends Base {
         $info['worker'] = is_array($info['worker'] ?? null) ? $info['worker'] : [];
         $info['worker'][$plugin] = $enabled;
         $this->store->set($key, $info);
-        return $this->ok(['group_id' => $groupId, 'plugin' => $plugin, 'enabled' => $enabled]);
+        // 返回完整群对象：前端原来拿这个局部对象覆盖整行，结果 name / updated_at 被抹掉
+        return $this->ok($this->metrics->group($groupId) ?? ['group_id' => $groupId, 'plugin' => $plugin, 'enabled' => $enabled]);
     }
 
     /** 群总开关 */
@@ -60,8 +61,9 @@ final class GroupsController extends Base {
         $info = $this->store->get($key);
         $info = is_array($info) ? $info : ['status' => 0, 'worker' => []];
         $info['status'] = (int)($info['status'] ?? 0) === 1 ? 0 : 1;
+        $info['updated_at'] = time();
         $this->store->set($key, $info);
-        return $this->ok(['group_id' => $groupId, 'status' => $info['status'] === 1]);
+        return $this->ok($this->metrics->group($groupId) ?? ['group_id' => $groupId, 'status' => $info['status'] === 1]);
     }
 
     /** 更新 WebUI 维护的元数据（备注 / 标签 / 名称） */
@@ -95,8 +97,18 @@ final class GroupsController extends Base {
         }
         $key = $groupId . '.info';
         if ($this->store->get($key) === null) {
-            $this->store->set($key, ['status' => 0, 'worker' => []]);
+            $this->store->set($key, ['status' => 0, 'worker' => [], 'updated_at' => time()]);
         }
+        // 手动添加时填的群名要落库，否则列表里永远显示不出来
+        $name = trim((string)$request->input('name', ''));
+        $meta = (array)($this->store->get('webui:groups') ?? []);
+        $row = is_array($meta[$groupId] ?? null) ? $meta[$groupId] : [];
+        if ($name !== '') {
+            $row['name'] = $name;
+        }
+        $row['updated_at'] = time();
+        $meta[$groupId] = $row;
+        $this->store->set('webui:groups', $meta);
         return $this->ok($this->metrics->group($groupId), '已登记');
     }
 

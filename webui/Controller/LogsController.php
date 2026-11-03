@@ -37,7 +37,9 @@ final class LogsController extends Base {
     }
 
     public function dates(Request $request): Response {
-        return $this->ok(['items' => $this->handler()->days(60)]);
+        $days = $this->handler()->days(60);
+        // 前端历史上读的是 dates，这里两个键都给，避免再因为字段名对不上只剩「今天」
+        return $this->ok(['items' => $days, 'dates' => $days]);
     }
 
     /** 消息日志（Utils\MessageLog 的 webui 视图） */

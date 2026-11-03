@@ -964,7 +964,7 @@ const Progress = defineComponent({
         AProgress as any,
         {
           ...attrs,
-          percent: props.percentage ?? props.percent ?? 0,
+          percent: Math.max(0, Math.min(100, Number(props.percentage ?? props.percent) || 0)),
           type: props.type === 'circle' ? 'circle' : props.type === 'line' ? 'line' : undefined,
           status: props.status ? PROGRESS_STATUS[props.status] ?? props.status : undefined,
           strokeWidth: props.strokeWidth,

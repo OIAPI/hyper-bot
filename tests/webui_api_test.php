@@ -87,7 +87,8 @@ $ok('插件列表非空', count($items) > 0, 'count=' . count($items));
 $firstPlugin = (string)($items[0]['class'] ?? '');
 if ($firstPlugin !== '') {
     $tg = $call('POST', '/webui/api/groups/123456/plugins/' . rawurlencode($firstPlugin), ['enabled' => false], $token);
-    $ok('关闭单个插件', $tg['status'] === 200 && ($tg['json']['data']['enabled'] ?? null) === false);
+    // 接口现在返回完整群对象（避免前端覆盖整行时丢掉群名/时间），插件状态看 worker
+    $ok('关闭单个插件', $tg['status'] === 200 && ($tg['json']['data']['worker'][$firstPlugin] ?? null) === false);
     $show2 = $call('GET', '/webui/api/groups/123456', [], $token);
     $ok('群详情反映插件状态', ($show2['json']['data']['worker'][$firstPlugin] ?? null) === false, json_encode($show2['json']['data']['worker'] ?? []));
 }
@@ -131,8 +132,25 @@ $ok('原始配置可读', is_string($raw['json']['data']['text'] ?? null));
 echo "== 系统 ==\n";
 $health = $call('GET', '/webui/api/health');
 $ok('健康检查免登录', $health['status'] === 200);
+$healthFull = $call('GET', '/webui/api/health');
+$ok('健康检查带 checks 数组', is_array($healthFull['json']['data']['checks'] ?? null) && isset($healthFull['json']['data']['ok']));
 $disk = $call('GET', '/webui/api/system/disk', [], $token);
 $ok('磁盘统计', is_array($disk['json']['data']['items'] ?? null));
+$ok('磁盘统计含 total/free/used/dirs', isset($disk['json']['data']['total'], $disk['json']['data']['used']) && is_array($disk['json']['data']['dirs'] ?? null));
+$dates = $call('GET', '/webui/api/logs/dates', [], $token);
+$ok('日志日期同时给 dates 与 items', is_array($dates['json']['data']['dates'] ?? null) && is_array($dates['json']['data']['items'] ?? null));
+
+// 插件全局开关：停用后不再参与分发，重新启用恢复
+$pOff = $call('PUT', '/webui/api/plugins/' . rawurlencode('App\Plugins\Group') . '/enable', ['enabled' => false], $token);
+$ok('停用插件', ($pOff['json']['data']['enabled'] ?? null) === false);
+$pList = $call('GET', '/webui/api/plugins', [], $token);
+$offRow = null;
+foreach ($pList['json']['data']['items'] ?? [] as $row) {
+    if (strcasecmp((string)($row['class'] ?? ''), 'App\Plugins\Group') === 0) { $offRow = $row; }
+}
+$ok('列表里显示已停用', ($offRow['enabled'] ?? true) === false);
+$pOn = $call('PUT', '/webui/api/plugins/' . rawurlencode('App\Plugins\Group') . '/enable', ['enabled' => true], $token);
+$ok('重新启用插件', ($pOn['json']['data']['enabled'] ?? null) === true);
 $routes = $call('GET', '/webui/api/system/routes', [], $token);
 $ok('路由清单 > 25 条', count($routes['json']['data']['items'] ?? []) > 25, 'got ' . count($routes['json']['data']['items'] ?? []));
 $cache = $call('POST', '/webui/api/system/cache', [], $token);

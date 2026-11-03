@@ -92,6 +92,13 @@ final class Registry
 
         $this->plugins[$class] = self::metadata($ref, $this->logger);
         $this->labels[$class] = $this->plugins[$class]['displayName'] ?: basename(str_replace('\\', '/', $class));
+        // 全局关闭的插件仍然要被列出（面板上还要能重新打开），但不注册钩子，
+        // 事件分发时就等于不存在；改文件后重载即生效。
+        if (!PluginState::isEnabled($class)) {
+            $this->plugins[$class]['enabled'] = false;
+            return;
+        }
+        $this->plugins[$class]['enabled'] = true;
 
         foreach ($ref->getMethods() as $method) {
             foreach ($method->getAttributes() as $attr) {

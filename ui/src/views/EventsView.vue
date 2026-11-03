@@ -24,6 +24,7 @@ function asEvent(row: unknown): TimelineEvent {
 const events = ref<TimelineEvent[]>([])
 const loading = ref(true)
 const filter = ref('')
+const range = ref('')
 const live = ref(true)
 const detail = ref<TimelineEvent | null>(null)
 
@@ -40,7 +41,7 @@ const cols: UiColumn[] = [
 
 async function load(): Promise<void> {
   try {
-    events.value = await overviewApi.events(200, filter.value || undefined)
+    events.value = await overviewApi.events(200, filter.value || undefined, range.value || undefined)
   } catch (e) {
     toast.fromError(e, '加载事件失败')
   } finally {
@@ -51,7 +52,7 @@ async function load(): Promise<void> {
 async function poll(): Promise<void> {
   if (!live.value) return
   try {
-    events.value = await overviewApi.events(200, filter.value || undefined)
+    events.value = await overviewApi.events(200, filter.value || undefined, range.value || undefined)
   } catch {
     // 静默
   }
@@ -67,6 +68,13 @@ onUnmounted(() => {
   release?.()
   if (timer) window.clearInterval(timer)
 })
+
+const RANGES = [
+  { value: '', label: '全部时间' },
+  { value: 'today', label: '今天' },
+  { value: 'yesterday', label: '昨天' },
+  { value: '7d', label: '近 7 天' },
+]
 
 const TYPES = [
   { value: '', label: '全部事件' },
@@ -156,6 +164,7 @@ function summary(e: TimelineEvent): string {
 
       <div class="toolbar">
         <UiSelect v-model="filter" :options="TYPES" class="w-filter" @change="load" />
+        <UiSelect v-model="range" :options="RANGES" class="w-range" @change="load" />
         <div class="row gap-8">
           <UiSwitch v-model="live" />
           <span class="meta">{{ live ? '实时' : '已暂停' }}</span>
@@ -226,6 +235,7 @@ h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
 .w-filter { width: 178px; }
+.w-range { width: 132px; }
 
 .cell-dim { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
 .cell-msg {
@@ -251,6 +261,6 @@ h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 }
 
 @media (max-width: 620px) {
-  .w-filter { flex: 1 1 100%; width: 100%; }
+  .w-filter, .w-range { flex: 1 1 100%; width: 100%; }
 }
 </style>

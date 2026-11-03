@@ -26,6 +26,7 @@ function asHook(row: unknown): PluginHook {
 }
 
 const items = ref<Plugin[]>([])
+const toggling = ref('')
 const loading = ref(true)
 const reloading = ref(false)
 const current = ref<Plugin | null>(null)
@@ -62,6 +63,21 @@ async function reload(): Promise<void> {
     toast.fromError(e, '重载失败')
   } finally {
     reloading.value = false
+  }
+}
+
+/** 全局开关：停用只是不加载钩子，插件文件与配置都保留 */
+async function toggle(p: Plugin, enabled: boolean): Promise<void> {
+  toggling.value = p.class
+  try {
+    const res = await pluginApi.setEnabled(p.class, Boolean(enabled))
+    items.value = res.items ?? items.value
+    toast.ok(Boolean(enabled) ? '已启用 ' + p.name : '已停用 ' + p.name)
+  } catch (e) {
+    toast.fromError(e, '切换失败')
+    await load()
+  } finally {
+    toggling.value = ''
   }
 }
 
@@ -197,7 +213,7 @@ async function submit(): Promise<void> {
     </UiCard>
 
     <div v-else-if="items.length" class="plugin-grid">
-      <UiCard v-for="p in items" :key="p.class" class="plugin-card">
+      <UiCard v-for="p in items" :key="p.class" class="plugin-card" :class="{ off: !p.enabled }">
         <div class="plugin-body">
           <div class="plugin-head">
             <div class="plugin-text">
@@ -206,6 +222,12 @@ async function submit(): Promise<void> {
             </div>
             <div class="spacer" />
             <span class="v-label">v{{ p.version || '—' }}</span>
+            <UiSwitch
+              v-if="auth.can('plugin.reload')"
+              :model-value="p.enabled"
+              :disabled="toggling === p.class"
+              @update:model-value="(v: boolean) => toggle(p, v)"
+            />
           </div>
 
           <p class="plugin-desc">{{ p.description || '（无描述）' }}</p>
@@ -218,6 +240,8 @@ async function submit(): Promise<void> {
 
           <div class="plugin-foot">
             <UiButton size="small" type="text" @click="open(p)">查看钩子</UiButton>
+            <span class="spacer" />
+            <UiTag size="small" :type="p.enabled ? 'ok' : 'plain'">{{ p.enabled ? '已启用' : '已停用' }}</UiTag>
           </div>
         </div>
       </UiCard>
@@ -356,6 +380,7 @@ p.sub { margin: 3px 0 0; font-size: 12.5px; color: var(--text-faint); }
   gap: 14px;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
 }
+.plugin-card.off { opacity: 0.62; }
 .plugin-card { height: 100%; }
 .plugin-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 

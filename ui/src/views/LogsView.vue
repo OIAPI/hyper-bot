@@ -59,7 +59,7 @@ async function load(): Promise<void> {
 async function loadDates(): Promise<void> {
   try {
     const res = await logApi.dates()
-    dates.value = res.dates ?? []
+    dates.value = res.dates ?? res.items ?? []
   } catch {
     // 没有历史日志不算错误
   }

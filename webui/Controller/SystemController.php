@@ -10,14 +10,32 @@ use Utils\Operate;
 /** 系统：健康检查 / 存储维护 / 目录体积 / 路由清单 */
 final class SystemController extends Base {
     public function health(Request $request): Response {
-        $stores = [
-            'store_driver' => $this->metrics->storeDriver(),
-            'redis_ok'     => $this->redisPing(),
-            'runtime_writable' => is_writable($this->root . '/runtime'),
-            'config_writable'  => is_writable(Config::path()),
+        $storeDriver = $this->metrics->storeDriver();
+        $redisOk = $this->redisPing();
+        $runtimeOk = is_writable($this->root . '/runtime');
+        $configOk = is_writable(Config::path());
+        $vendorOk = is_file($this->root . '/vendor/autoload.php');
+
+        $checks = [
+            ['name' => '存储', 'ok' => true, 'detail' => $storeDriver],
+            ['name' => 'Redis', 'ok' => $redisOk !== false, 'detail' => $redisOk === null ? '未安装扩展（用文件存储）' : ($redisOk ? 'PING 正常' : '连不上，已回落文件存储')],
+            ['name' => 'runtime 目录', 'ok' => $runtimeOk, 'detail' => $runtimeOk ? $this->root . '/runtime' : '不可写，日志与缓存都会失败'],
+            ['name' => 'Config.ini', 'ok' => $configOk, 'detail' => $configOk ? Config::path() : '不可写，面板无法保存配置'],
+            ['name' => 'vendor', 'ok' => $vendorOk, 'detail' => $vendorOk ? '依赖已就绪' : '缺少 vendor/autoload.php'],
+            ['name' => 'PHP', 'ok' => version_compare(PHP_VERSION, '8.1.0', '>='), 'detail' => PHP_VERSION],
+            ['name' => 'swoole', 'ok' => true, 'detail' => extension_loaded('swoole') ? '已安装 ' . phpversion('swoole') : '未安装（php 内置服务器运行）'],
         ];
-        $ok = $stores['runtime_writable'] && $stores['config_writable'];
-        return $this->ok($stores, $ok ? 'ok' : 'degraded');
+        $ok = $runtimeOk && $configOk && $vendorOk;
+        return $this->ok([
+            'ok'      => $ok,
+            'status'  => $ok ? 'ok' : 'degraded',
+            'checks'  => $checks,
+            'failing' => array_values(array_map(fn($c) => $c['name'], array_filter($checks, fn($c) => !$c['ok']))),
+            'store_driver' => $storeDriver,
+            'redis_ok'     => $redisOk,
+            'runtime_writable' => $runtimeOk,
+            'config_writable'  => $configOk,
+        ], $ok ? 'ok' : 'degraded');
     }
 
     private function redisPing(): ?bool {
@@ -50,7 +68,24 @@ final class SystemController extends Base {
             }
             $out[] = ['path' => $dir, 'bytes' => $size, 'files' => $files, 'exists' => is_dir($path)];
         }
-        return $this->ok(['items' => $out, 'total_bytes' => array_sum(array_column($out, 'bytes'))]);
+        $totalBytes = array_sum(array_column($out, 'bytes'));
+        $total = @disk_total_space($this->root) ?: 0;
+        $free = @disk_free_space($this->root) ?: 0;
+        $dirs = array_map(fn($d) => [
+            'name'  => $d['path'],
+            'size'  => $d['bytes'],
+            'files' => $d['files'],
+        ], $out);
+        return $this->ok([
+            'root'        => $this->root,
+            'total'       => $total,
+            'free'        => $free,
+            'used'        => max(0, $total - $free),
+            'runtime'     => $totalBytes,
+            'dirs'        => $dirs,
+            'items'       => $out,
+            'total_bytes' => $totalBytes,
+        ]);
     }
 
     /** 清理过期缓存（破坏性，需要显式 confirm） */

@@ -179,7 +179,10 @@ async function confirmRemove(): Promise<void> {
           <template #cell-group_id="{ row }">
             <span class="mono">{{ asGroup(row).group_id }}</span>
           </template>
-          <template #cell-name="{ row }">{{ asGroup(row).name || '—' }}</template>
+          <template #cell-name="{ row }">
+            <span v-if="asGroup(row).name">{{ asGroup(row).name }}</span>
+            <span v-else class="dim">未命名（可在「管理」里补群名）</span>
+          </template>
           <template #cell-plugins="{ row }">
             <span class="mono dim">
               {{ asGroup(row).plugins_on }} / {{ asGroup(row).plugins_total }}
@@ -280,7 +283,14 @@ async function confirmRemove(): Promise<void> {
 h1 { margin: 0; font-size: 17px; font-weight: 660; letter-spacing: -0.015em; }
 p.sub { margin: 3px 0 0; font-size: 12.5px; color: var(--text-faint); }
 
-.search { width: 210px; }
+/* 头部在窄屏必须能换行，否则「添加群」按钮会被挤出屏幕 */
+.page-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.page-head > .row { flex-wrap: wrap; flex: 1 1 auto; justify-content: flex-end; }
+.search { width: 210px; max-width: 100%; }
+@media (max-width: 720px) {
+  .page-head > .row { width: 100%; justify-content: flex-start; }
+  .search { flex: 1 1 100%; width: 100%; }
+}
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .tiny { font-size: 11.5px; }
 .dim { color: var(--text-faint); }

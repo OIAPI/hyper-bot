@@ -44,10 +44,10 @@ const roleOptions = [
   { label: '只读', value: 'viewer' },
 ]
 const userColumns: UiColumn[] = [
-  { key: 'username', title: '用户名', minWidth: 140 },
-  { key: 'role', title: '角色', width: 150 },
-  { key: 'created', title: '创建时间', width: 170 },
-  { key: 'ops', title: '操作', width: 150, align: 'right' },
+  { key: 'username', title: '用户名', minWidth: 110 },
+  { key: 'role', title: '角色', width: 118 },
+  { key: 'created', title: '创建时间', minWidth: 140 },
+  { key: 'ops', title: '操作', width: 132, align: 'right' },
 ]
 const loadingUsers = ref(false)
 
@@ -315,6 +315,7 @@ async function logout(): Promise<void> {
             :model-value="(row as UserRecord).role"
             :options="roleOptions"
             size="small"
+            class="role-select"
             @update:model-value="(v: any) => changeRole(row as UserRecord, String(v))"
           />
         </template>
@@ -392,7 +393,11 @@ async function logout(): Promise<void> {
 .page-head { margin-bottom: 0; align-items: flex-end; }
 h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 .sub { margin: 4px 0 0; color: var(--text-faint); font-size: 12.5px; }
-.account { max-width: 860px; }
+.account { max-width: 860px; width: 100%; overflow-x: hidden; }
+/* 窄屏时角色下拉与两个按钮会一起挤出去，这里让表格自己横向滚动 */
+.account :deep(.el-table__body-wrapper),
+.account :deep(.el-table__header-wrapper) { overflow-x: auto; }
+.role-select { width: 100%; min-width: 96px; }
 .pwd-form { display: flex; flex-direction: column; gap: 2px; }
 .logout-row { display: flex; align-items: center; gap: 14px; }
 .oauth-list { display: flex; flex-direction: column; gap: 2px; }

@@ -330,7 +330,8 @@ const Progress = defineComponent({
   setup(props, { attrs, slots }) {
     return () => h(ElProgress as any, {
       ...attrs,
-      percentage: props.percentage,
+      // 统一夹到 0-100：不同库对越界百分比的处理不一致（有的直接显示 4000%）
+      percentage: Math.max(0, Math.min(100, Number(props.percentage) || 0)),
       type: props.type,
       status: props.status ? (PROGRESS_STATUS[props.status] ?? props.status) : undefined,
     }, slots.default ? { default: slots.default } : undefined)

@@ -9,8 +9,16 @@ import { fileURLToPath, URL } from 'node:url'
  * 后端 Core\Http\AppRoutes 与 Webui\Routes 都在这个目录找 index.html，
  * 少一层拷贝就少一类「本地能跑、部署 404」的问题。
  */
-/** PHP 工程里的静态目录（真源：/storage/emulated/0/model/hyper.lkaa.top/public/webui） */
-const PHP_PUBLIC_WEBUI = '/storage/emulated/0/model/hyper.lkaa.top/public/webui'
+/**
+ * PHP 工程里的静态目录。
+ *
+ * 默认用相对路径（ui/ 的上一级 + public/webui），这样在 CI、别人的机器、
+ * 容器里都能构建；本机想指到别处时设 WEBUI_OUT_DIR 覆盖。
+ * （之前写死成 /storage/... 导致 GitHub Actions 里 mkdir /storage 失败）
+ */
+const PHP_PUBLIC_WEBUI = process.env.WEBUI_OUT_DIR
+  ? process.env.WEBUI_OUT_DIR
+  : fileURLToPath(new URL('../public/webui', import.meta.url))
 
 export default defineConfig({
   plugins: [vue()],

@@ -95,6 +95,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '组件一览', icon: '◱', group: '系统' },
       },
       {
+        path: '_diag',
+        name: 'diag',
+        component: () => import('@/views/DiagView.vue'),
+        meta: { title: '布局自检', icon: '⛭', group: '系统' },
+      },
+      {
         path: 'account',
         name: 'account',
         component: () => import('@/views/AccountView.vue'),

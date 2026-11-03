@@ -250,6 +250,13 @@ $ok('owner 看账号列表', $oList['status'] === 200 && count($items) === 3);
 $ok('列表不含密码哈希', !isset($items[0]['password']));
 $ok('角色表随列表返回', ($oList['json']['data']['roles'] ?? []) === ['owner', 'admin', 'viewer']);
 
+$upd = $call('GET', '/webui/api/update', [], $ownerToken);
+$ok('更新页信息带版本与 git 状态', ($upd['json']['data']['version'] ?? '') !== '' && isset($upd['json']['data']['git']));
+$vUpd = $call('POST', '/webui/api/update/check', [], $viewerToken);
+$ok('viewer 检查更新 → 403', $vUpd['status'] === 403);
+$badGit = $call('POST', '/webui/api/update/git', ['url' => 'not-a-url'], $ownerToken);
+$ok('非法仓库地址被拒', $badGit['status'] === 400 && str_contains((string)($badGit['json']['message'] ?? ''), 'http'));
+
 $vCache = $call('POST', '/webui/api/system/cache', ['confirm' => true], $viewerToken);
 $ok('viewer 清缓存 → 403', $vCache['status'] === 403);
 $aCache = $call('POST', '/webui/api/system/cache', ['confirm' => true], $adminToken);

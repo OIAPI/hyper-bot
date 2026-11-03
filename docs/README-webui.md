@@ -530,6 +530,27 @@ WebUI 与聊天共用一个落盘器 `Webui\PluginInstaller`：
   读取时映射成 `owner/admin/admin/member`，不会被丢掉
 - 不在列表里的 QQ 按群角色判定（群主 / 管理员），改完立即生效，不需要重启。
 
+## 程序更新
+
+面板「系统 → 程序更新」，三种方式：
+
+| 方式 | 说明 |
+|---|---|
+| 检查更新 | 当前目录是 git 仓库且配了远端时，`git fetch` 后对比 `HEAD..@{u}`，只报告不落盘 |
+| 从 Git 链接更新 | `git clone --depth 1` 到临时目录再覆盖，不碰现有 .git 历史，不产生合并冲突 |
+| 从压缩包更新 | 上传发布包 zip（≤64MB），自动识别外层目录 |
+
+**永远不会被覆盖**：`runtime/`、`vendor/`、`.git/`、`node_modules/`、`Config.ini`、`.env`。
+被覆盖的旧文件先备份到 `runtime/update/backup-<时间>/`，更新记录写在 `runtime/update/last.json`，面板上能看到上次更新了多少文件、备份在哪。
+
+- 只允许**主人**执行（更新会覆盖鉴权与写接口代码）
+- `composer.json` 有变化时会提示执行 `php bin/hyper install --force`
+- 前端有变化时会提示强刷浏览器（旧 index.html 引用已删除的 chunk 会白屏）
+- 仓库在国内拉不动时，可用加速前缀：`https://gh-proxy.com/` 或 `https://ghproxy.net/`，
+  等价于把 `https://github.com/x/y` 变成 `https://gh-proxy.com/https://github.com/x/y`
+
+后续计划（等仓库地址固定）：定时/手动「自动检测更新」，以及更新前校验签名与版本号递增。
+
 ## 自检
 
 ```bash

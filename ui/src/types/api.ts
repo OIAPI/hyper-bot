@@ -510,3 +510,49 @@ export interface PermissionsData {
   model?: PermissionsModel
   stats: { total: number; by_role?: Record<string, number>; by_level?: Record<string, number> }
 }
+/** 程序更新 */
+export interface UpdateGitInfo {
+  available: boolean
+  repo: boolean
+  remote: string
+  branch: string
+  commit: string
+  subject: string
+}
+
+export interface UpdateLast {
+  at: string
+  source: string
+  changed: number
+  backup: string
+  version: string
+  files?: string[]
+}
+
+export interface UpdateInfo {
+  version: string
+  git: UpdateGitInfo
+  last: UpdateLast | null
+  path: string
+  limits: { zip_mb: number; keep: string[] }
+  proxies: Array<{ label: string; prefix: string }>
+}
+
+export interface UpdateCheckResult {
+  ok: boolean
+  behind?: number
+  ahead?: number
+  latest?: string
+  current?: string
+  msg: string
+}
+
+export interface UpdateResult {
+  ok: boolean
+  changed: number
+  skipped?: number
+  backup?: string
+  warnings?: string[]
+  version?: string
+  msg: string
+}

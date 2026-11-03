@@ -12,6 +12,7 @@ import type {
   RuntimeData, HealthData, DiskData, RouteItem,
   BotAccount, BotAccountList, OAuthProviders,
   ScheduleData, ScheduleJob, PermissionsData,
+  UpdateInfo, UpdateCheckResult, UpdateResult,
 } from '@/types/api'
 
 /** 鉴权 */
@@ -72,6 +73,19 @@ export const permissionApi = {
   list: () => http.get<PermissionsData>('/permissions'),
   save: (qq: string, level: string) => http.post<PermissionsData>('/permissions', { qq, level }),
   remove: (qq: string) => http.del<PermissionsData>('/permissions/' + encodeURIComponent(qq)),
+}
+
+/** 程序更新（仅主人） */
+export const updateApi = {
+  info: () => http.get<UpdateInfo>('/update'),
+  check: () => http.post<UpdateCheckResult>('/update/check'),
+  fromGit: (payload: { url: string; branch?: string; proxy?: string }) =>
+    http.post<UpdateResult>('/update/git', payload),
+  fromZip: (file: File) =>
+    http.postRaw<UpdateResult>('/update/zip', file, {
+      query: { filename: file.name },
+      contentType: 'application/zip',
+    }),
 }
 
 /** 概览 */

@@ -19,6 +19,7 @@ use Webui\Controller\ProtocolsController;
 use Webui\Controller\PermissionsController;
 use Webui\Controller\RuntimeController;
 use Webui\Controller\ScheduleController;
+use Webui\Controller\UpdateController;
 use Webui\Controller\SettingsController;
 use Webui\Controller\SubscriptionController;
 use Webui\Controller\UsersController;
@@ -61,6 +62,7 @@ final class Routes {
             $oauth    = new OAuthController($auth);
             $schedule = new ScheduleController();
             $permissions = new PermissionsController();
+            $update = new UpdateController();
 
             // ---- 公开（无需登录） ----
             $r->post('/auth/login', [$authCtl, 'login'], 'auth.login');
@@ -71,7 +73,7 @@ final class Routes {
             $r->get('/auth/oauth/{provider}/callback', [$oauth, 'callback'], 'auth.oauth.callback');
 
             // ---- 需要登录 ----
-            $r->group('', function (Router $r) use ($authCtl, $overview, $groups, $plugins, $protocols, $logs, $settings, $system, $runtime, $subscription, $users, $accounts, $oauth, $schedule, $permissions): void {
+            $r->group('', function (Router $r) use ($authCtl, $overview, $groups, $plugins, $protocols, $logs, $settings, $system, $runtime, $subscription, $users, $accounts, $oauth, $schedule, $permissions, $update): void {
                 // 账号
                 $r->post('/auth/logout', [$authCtl, 'logout'], 'auth.logout');
                 $r->get('/auth/me', [$authCtl, 'me'], 'auth.me');
@@ -139,6 +141,12 @@ final class Routes {
                 $r->put('/schedule/{id}', [$schedule, 'update'], 'schedule.update');
                 $r->delete('/schedule/{id}', [$schedule, 'destroy'], 'schedule.destroy');
                 $r->post('/schedule/{id}/run', [$schedule, 'run'], 'schedule.run');
+
+                // 程序更新（仅主人）
+                $r->get('/update', [$update, 'index'], 'update.index');
+                $r->post('/update/check', [$update, 'check'], 'update.check');
+                $r->post('/update/git', [$update, 'fromGit'], 'update.git');
+                $r->post('/update/zip', [$update, 'fromZip'], 'update.zip');
 
                 // QQ 成员权限（机器人使用权限，不是后台登录权限）
                 $r->get('/permissions', [$permissions, 'index'], 'permissions.index');

@@ -113,6 +113,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '布局自检', icon: '⛭', group: '系统' },
       },
       {
+        path: 'update',
+        name: 'update',
+        component: () => import('@/views/UpdateView.vue'),
+        meta: { title: '程序更新', icon: '⟳', group: '系统' },
+      },
+      {
         path: 'account',
         name: 'account',
         component: () => import('@/views/AccountView.vue'),

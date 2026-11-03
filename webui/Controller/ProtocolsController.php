@@ -54,6 +54,51 @@ final class ProtocolsController extends Base {
     }
 
     /** 动作矩阵：Milky 支持哪些 OneBot action，哪些不支持及原因 */
+    /**
+     * 连通性 / 发送能力自检。
+     *
+     * 「能收不能发」最常见的是：事件从 WS 进来，回包却要调 HTTP API，而 api 地址没配。
+     * 这里真的调一次 get_login_info，把协议端的原话带回来，省得靠猜。
+     */
+    public function test(Request $request, array $params): Response {
+        if ($deny = $this->guard($request, 'protocol.write')) {
+            return $deny;
+        }
+        $name = strtolower((string)($params['name'] ?? 'onebot'));
+        if ($name !== 'onebot') {
+            return $this->fail('目前只支持 OneBot 的连通性测试', -1, 400);
+        }
+        $api = Config::string('onebot.api', '');
+        $ws = \Protocol\OneBot\WsHub::hasForward() || \Protocol\OneBot\WsHub::hasReverse();
+        try {
+            $adapter = OneBotAdapter::currentAdapter();
+            $started = microtime(true);
+            $resp = $adapter->call('get_login_info');
+            $ms = (int)round((microtime(true) - $started) * 1000);
+        } catch (\Throwable $e) {
+            return $this->ok([
+                'ok'      => false,
+                'via'     => $ws ? 'ws' : 'http',
+                'api'     => $api,
+                'error'   => $e->getMessage(),
+                'hint'    => '调用直接抛异常，检查 api 地址与协议端是否在运行',
+            ]);
+        }
+        $status = (string)($resp->status ?? 'failed');
+        $ok = $status === 'ok' || $status === 'async';
+        return $this->ok([
+            'ok'      => $ok,
+            'via'     => $ws ? 'ws' : 'http',
+            'api'     => $api,
+            'ms'      => $ms,
+            'status'  => $status,
+            'retcode' => $resp->retcode ?? null,
+            'message' => (string)($resp->message ?? ''),
+            'data'    => $resp->data ?? null,
+            'hint'    => $ok ? '' : '协议端返回失败：检查 onebot.api 是否指向实现端的 HTTP 端口，以及 token 是否一致',
+        ]);
+    }
+
     public function actions(Request $request, array $params): Response {
         $name = (string)($params['protocol'] ?? 'milky');
         if ($name === 'milky') {

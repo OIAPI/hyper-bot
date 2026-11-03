@@ -76,6 +76,9 @@ export const protocolApi = {
     ),
   endpoints: (name: ProtocolName) =>
     http.get<Array<{ label: string; url: string; kind: string }>>('/protocols/' + name + '/endpoints'),
+  /** 发送能力自检：真的调一次 get_login_info */
+  test: (name: ProtocolName) =>
+    http.post<Record<string, unknown>>('/protocols/' + name + '/test'),
 }
 
 /** 配置 */
@@ -117,6 +120,8 @@ export const groupApi = {
   list: (q?: string) => http.get<GroupList>('/groups', { query: { q } }),
   show: (id: string) => http.get<Group>('/groups/' + id),
   create: (payload: Record<string, unknown>) => http.post<Group>('/groups', payload),
+  /** 让协议端 get_group_list 拉一次，把群名回填到面板 */
+  sync: () => http.post<{ synced: number; total: number }>('/groups/sync'),
   toggleStatus: (id: string) => http.post<Group>('/groups/' + id + '/status'),
   togglePlugin: (id: string, plugin: string) =>
     http.post<Group>('/groups/' + id + '/plugins/' + plugin),

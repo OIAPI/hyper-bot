@@ -56,12 +56,14 @@ class WsHub {
 		$isMilky  = $path === $milkyPath;
 		$isOneBot = $path === $onebotPath;
 		if (!$isMilky && !$isOneBot) {
-			Logger::warning("[WS] 未知端点，拒绝连接 | fd={$fd} | path={$path}");
+			self::notice('unknown:' . $path, "[WS] 未知端点，拒绝连接 | fd={$fd} | path={$path}");
 			$server->disconnect($fd, 4004, 'unknown endpoint');
 			return;
 		}
 		if ($isOneBot && !\Protocol\Core\Config::bool('onebot.reverse.enable', false)) {
-			Logger::warning("[OneBot-WS] 反向 WS 未启用，拒绝连接 | fd={$fd}");
+			// 实现端通常会每隔几秒重连一次，逐条 WARNING 会把日志刷满，
+			// 这里每个来源每分钟只提醒一次，其余降为 debug。
+			self::notice('disabled:' . ($request->server['remote_addr'] ?? ''), "[OneBot-WS] 反向 WS 未启用，拒绝连接 | fd={$fd}（实现端可能还在反复重连，可在实现端关掉该地址，或开启 onebot.reverse.enable）");
 			$server->disconnect($fd, 4003, 'reverse ws disabled');
 			return;
 		}
@@ -156,6 +158,21 @@ class WsHub {
 		unset(self::$sessions[$fd]);
 		// 客户端断开是常态（实现端重启、网络抖动都会触发），不能打成 WARNING 吓人
 		Logger::debug(($role === 'milky' ? '[Milky-WS] 客户端断开' : '[OneBot-WS] 反向 WS 客户端断开') . " | fd={$fd}");
+	}
+
+	/**
+	 * 限流日志：同一个 key 每分钟最多一条 WARNING，其余降级为 debug。
+	 * 反向 WS 被拒绝、未知端点被扫这类事件会高频重复，逐条记会把日志刷爆。
+	 */
+	private static function notice(string $key, string $message): void {
+		static $last = [];
+		$now = time();
+		if (($last[$key] ?? 0) + 60 > $now) {
+			Logger::debug($message);
+			return;
+		}
+		$last[$key] = $now;
+		Logger::warning($message);
 	}
 
 	/** 已连接的反向 WS 会话数（不包含 Milky 等仅推送端点） */

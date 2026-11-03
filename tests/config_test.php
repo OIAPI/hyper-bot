@@ -157,5 +157,9 @@ foreach (glob($sandbox . '/*') ?: [] as $f) {
 Config::path(__root__ . '/Config.ini');
 Config::refresh();
 
+// 历史 [cq] 段落：cq.api / cq.auth 必须映射到 [protocol.onebot]，否则发送会打到空地址
+ok('cq.api 别名指向 protocol.onebot.api', Config::string('cq.api', ''), Config::string('protocol.onebot.api', 'x'));
+ok('cq.auth 别名指向 protocol.onebot.token', Config::string('cq.auth', 'x'), Config::string('protocol.onebot.token', 'x'));
+
 printf("\n%s 通过 %d，失败 %d\n", $fail === 0 ? '\033[32m全部通过\033[0m' : '\033[31m有失败\033[0m', $pass, $fail);
 exit($fail === 0 ? 0 : 1);

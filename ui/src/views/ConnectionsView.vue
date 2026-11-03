@@ -184,6 +184,25 @@ function withAlias(src: Record<string, unknown>): Record<string, unknown> {
   return out
 }
 
+/** 发送能力自检：真的调一次 get_login_info，把协议端原话显示出来 */
+const testVisible = ref(false)
+const testing = ref(false)
+const testResult = ref<Record<string, unknown> | null>(null)
+
+async function runTest(): Promise<void> {
+  if (testing.value) return
+  testing.value = true
+  testResult.value = null
+  try {
+    testResult.value = (await protocolApi.test('onebot')) as unknown as Record<string, unknown>
+    testVisible.value = true
+  } catch (e) {
+    toast.fromError(e, '测试失败')
+  } finally {
+    testing.value = false
+  }
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -320,6 +339,9 @@ const totalProtocols = computed(() => Object.keys(statuses.value).length)
             </div>
             <div class="spacer" />
             <UiTag v-if="isDirty(m.name)" type="warn" size="small">未保存</UiTag>
+            <UiButton v-if="m.name === 'onebot'" size="small" :loading="testing" @click="runTest">
+              测试发送
+            </UiButton>
             <UiButton size="small" :disabled="saving === m.name" @click="reset(m.name)">重置</UiButton>
             <UiButton
               size="small"
@@ -445,6 +467,28 @@ const totalProtocols = computed(() => Object.keys(statuses.value).length)
         </div>
       </UiCard>
     </div>
+    <UiDialog v-model="testVisible" title="发送能力自检（get_login_info）" width="560px">
+      <div v-if="testResult" class="test-result">
+        <div class="test-row">
+          <span class="field-label">结果</span>
+          <UiTag size="small" :type="testResult.ok ? 'ok' : 'danger'">
+            {{ testResult.ok ? '成功' : '失败' }}
+          </UiTag>
+          <span class="tiny faint">走 {{ testResult.via }} · {{ testResult.ms }}ms</span>
+        </div>
+        <div class="test-row">
+          <span class="field-label">接口地址</span>
+          <code class="mono">{{ testResult.api || '（未配置）' }}</code>
+        </div>
+        <div v-if="!testResult.ok" class="form-hint">
+          {{ testResult.hint }}
+        </div>
+        <pre class="test-json">{{ JSON.stringify(testResult, null, 2) }}</pre>
+      </div>
+      <template #footer>
+        <UiButton size="small" @click="testVisible = false">关闭</UiButton>
+      </template>
+    </UiDialog>
   </div>
 </template>
 

@@ -11,15 +11,10 @@ final class SettingsController extends Base {
     /** 整棵配置树（敏感字段已脱敏） */
     public function index(Request $request): Response {
         $config = Config::all(true);
-        // v1 遗留小节：没有任何代码读取，留在面板里只会让人误以为需要配。
-        // 这里不直接删用户的文件（Config::set 也没有删除语义），只是不下发。
+        // 历史遗留小节。注意：[cq] 不是纯遗留——cq.api / cq.auth 仍被
+        // HttpAdapter、api/app.php 通过 core/Config.php 的别名映射读取，
+        // 隐藏它只会让「能收不能发」这类问题无从下手，所以这里不再过滤 [cq]。
         $legacy = [];
-        foreach (['cq'] as $section) {
-            if (isset($config[$section])) {
-                $legacy[] = $section;
-                unset($config[$section]);
-            }
-        }
         return $this->ok([
             'config'   => $config,
             'legacy'   => $legacy,

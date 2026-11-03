@@ -235,6 +235,45 @@ KeyDB 与 Redis 协议兼容，直接按 Redis 配置即可（`docker run ... ke
 - 存储后端异常时，会话校验失败会返回 **503（存储异常）** 而不是 401，前端不会把人踢回登录页
 - 多机部署需要共享会话时，把 `session_store` 改回 `store`，并保证 Redis 稳定
 
+### 日志一直刷「反向 WS 客户端断开」
+
+这是**实现端在反复连你**，不是你在连它。框架的 WS 服务端一直监听 `/onebot/v11/ws`，只有当 `onebot.reverse.enable = true` 时才接受会话；关闭时会立刻断开并记录一条提示。
+
+- 2.1.8 起：同一个来源每分钟最多一条 WARNING，其余降为 DEBUG，不再刷屏
+- 想彻底不出现：在 OneBot 实现端把 WS 反向地址删掉（NapCat 的「WebSocket 服务端」、Lagrange 的 `--ws-reverse`），或者反过来把 `onebot.reverse.enable` 打开真正用它
+
+### 能收消息，但发不出去
+
+发消息走的是协议端的 **HTTP API**，和收消息的通道是两条路：
+
+| 收 | 发 |
+|---|---|
+| 实现端 POST 到 `/onebot/v11/http`，或连反向 WS | 框架调 `{protocol.onebot.api}/send_group_msg` |
+| 由 `protocol.onebot.reverse.enable` 控制 | 由 `protocol.onebot.api` + `token` 决定 |
+
+所以「能收」只能证明事件通道通，发不出去通常是：
+
+1. `[protocol.onebot] api` 没填或端口不对（默认 `http://127.0.0.1:3001`）
+2. 实现端的 HTTP 服务没开，或 token 与 `[protocol.onebot] token` 不一致
+3. 用的是旧配置里的 `[cq] api` —— 仍然支持，`cq.api` 会映射到 `protocol.onebot.api`（2.1.8 修正：之前误当成纯遗留隐藏了）
+
+面板「连接」页选 OneBot，点 **测试发送**，会真的调一次 `get_login_info` 并显示：
+
+```json
+{ "ok": false, "via": "http", "api": "http://127.0.0.1:3001",
+  "error": "HTTP 协议端调用失败：Connection refused",
+  "hint": "协议端返回失败：检查 onebot.api 是否指向实现端的 HTTP 端口，以及 token 是否一致" }
+```
+
+看到 `Connection refused` 就是地址/端口不对；看到 `401` 是 token 不一致；成功则返回机器人的 QQ 号与昵称。
+
+### 群列表有群号却没有群名
+
+群名有两个来源：事件里带的 `group_name`，以及主动调用 `get_group_list`。以前只被动学习，没发过言的群就一直是空名字。
+
+- 群管理页点 **同步群名**（`POST /webui/api/groups/sync`），框架会调 `get_group_list` 把名字写进 `webui:groups`
+- 需要 `group.write` 权限；没有可用接口时会直接告诉你原因（没配 api、协议端拒绝等）
+
 ## 忘记密码（重置面板账号）
 
 面板账号存在 `runtime/webui/users.json`，密码是 bcrypt 哈希。下面三种情况都会让「原来那个密码」失效：

@@ -98,6 +98,19 @@ final class Config {
             }
         }
 
+        // 3. 历史 [cq] 段落兼容
+        //    v1 的 OneBot HTTP 配置写在 [cq] api/auth 里，v2 统一到 [protocol.onebot]。
+        //    读侧保留映射，老配置文件（以及 api/app.php、HttpAdapter 这些历史调用点）
+        //    都不用改就能拿到正确地址——之前误把 [cq] 当纯遗留删掉，直接导致「能收不能发」。
+        $legacy = ['cq.api' => 'protocol.onebot.api', 'cq.auth' => 'protocol.onebot.token'];
+        $joined = strtolower(implode('.', $segments));
+        if (isset($legacy[$joined])) {
+            $value = self::dig($tree, explode('.', $legacy[$joined]));
+            if ($value !== null) {
+                return self::normalize($value, $default);
+            }
+        }
+
         return $default;
     }
 

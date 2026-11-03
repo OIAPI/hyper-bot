@@ -32,6 +32,23 @@ const busy = ref(false)
 const manage = ref<Group | null>(null)
 const pluginBusy = ref<string | null>(null)
 
+const syncing = ref(false)
+
+/** 协议端支持 get_group_list，主动拉一次能补上「没发过言的群」的名字 */
+async function syncNames(): Promise<void> {
+  if (syncing.value) return
+  syncing.value = true
+  try {
+    const res = await groupApi.sync()
+    toast.ok('已同步 ' + res.synced + ' 个群，共 ' + res.total + ' 个')
+    await load()
+  } catch (e) {
+    toast.fromError(e, '同步失败')
+  } finally {
+    syncing.value = false
+  }
+}
+
 const addVisible = ref(false)
 const adding = ref(false)
 const addGroupId = ref('')
@@ -163,6 +180,7 @@ async function confirmRemove(): Promise<void> {
           <template #prefix><UiIcon><Search /></UiIcon></template>
         </UiInput>
         <UiButton size="small" @click="load">搜索</UiButton>
+        <UiButton size="small" :loading="syncing" @click="syncNames">同步群名</UiButton>
         <UiTag size="small" type="plain">{{ items.length }} 个群</UiTag>
         <UiButton size="small" type="primary" @click="addVisible = true">
           <template #icon><UiIcon><Plus /></UiIcon></template>

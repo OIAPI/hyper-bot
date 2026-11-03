@@ -375,6 +375,15 @@ $ok('未绑定解绑 → 404', $unbind['status'] === 404);
 
 @unlink($accTmp);
 
+echo "== 群名同步 / 发送自检 ==\n";
+$vSync = $call('POST', '/webui/api/groups/sync', [], $viewerToken);
+$ok('viewer 同步群列表 → 403', $vSync['status'] === 403);
+$tSend = $call('POST', '/webui/api/protocols/onebot/test', [], $token);
+$ok('发送自检返回结构', isset($tSend['json']['data']['ok']), $tSend['raw']);
+$ok('自检给出接口地址与提示', array_key_exists('api', $tSend['json']['data'] ?? []) && array_key_exists('hint', $tSend['json']['data'] ?? []));
+$sync = $call('POST', '/webui/api/groups/sync', [], $token);
+$ok('无协议端时同步给出明确原因', in_array($sync['status'], [400, 502], true), $sync['raw']);
+
 echo "== 错误处理 ==\n";
 $notFound = $call('GET', '/webui/api/nope', [], $token);
 $ok('未知接口 404', $notFound['status'] === 404);

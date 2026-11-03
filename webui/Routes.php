@@ -84,6 +84,7 @@ final class Routes {
                 // 群
                 $r->get('/groups', [$groups, 'index'], 'groups.index');
                 $r->post('/groups', [$groups, 'create'], 'groups.create');
+                $r->post('/groups/sync', [$groups, 'sync'], 'groups.sync');
                 $r->get('/groups/{group_id}', [$groups, 'show'], 'groups.show');
                 $r->patch('/groups/{group_id}/meta', [$groups, 'updateMeta'], 'groups.meta');
                 $r->post('/groups/{group_id}/status', [$groups, 'toggleStatus'], 'groups.status');
@@ -112,6 +113,7 @@ final class Routes {
                 $r->get('/protocols/{protocol}', [$protocols, 'show'], 'protocols.show');
                 $r->put('/protocols/{protocol}', [$protocols, 'update'], 'protocols.update');
                 $r->get('/protocols/{protocol}/actions', [$protocols, 'actions'], 'protocols.actions');
+                $r->post('/protocols/{protocol}/test', [$protocols, 'test'], 'protocols.test');
                 $r->get('/protocols/{protocol}/endpoints', [$protocols, 'endpoints'], 'protocols.endpoints');
 
                 // 日志

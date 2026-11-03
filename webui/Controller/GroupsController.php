@@ -18,6 +18,67 @@ final class GroupsController extends Base {
         return $this->ok($this->paginate($groups, $page, $size));
     }
 
+    /**
+     * 从协议端拉取一次群列表，把群名写进 webui:groups。
+     *
+     * 之前群名只能从事件里「顺便」学：框架支持 get_group_list，却一直没人调用，
+     * 所以没发过言的群在面板里永远是空名字。这里主动拉一次并落盘。
+     */
+    public function sync(Request $request): Response {
+        if ($deny = $this->guard($request, 'group.write')) {
+            return $deny;
+        }
+        $api = (string)\Protocol\Core\Config::string('onebot.api', '');
+        $hasWs = \Protocol\OneBot\WsHub::hasForward() || \Protocol\OneBot\WsHub::hasReverse();
+        if ($api === '' && !$hasWs) {
+            return $this->fail('没有可用的 OneBot 接口：请先在配置里填 [protocol.onebot] api，或开启正向 / 反向 WS', -1, 400);
+        }
+        try {
+            $adapter = \Protocol\OneBot\Adapter::currentAdapter();
+            $resp = $adapter->call('get_group_list');
+        } catch (\Throwable $e) {
+            return $this->fail('调用 get_group_list 失败：' . $e->getMessage(), -2, 502);
+        }
+        $status = (string)($resp->status ?? 'failed');
+        if ($status !== 'ok' && $status !== 'async') {
+            $detail = (string)($resp->message ?? '');
+            return $this->fail('协议端拒绝了 get_group_list' . ($detail !== '' ? '：' . $detail : ''), -3, 502);
+        }
+        $list = $resp->data;
+        if (!is_array($list)) {
+            return $this->fail('协议端返回的群列表格式不对（data 不是数组）', -4, 502);
+        }
+
+        $meta = is_array($this->store->get('webui:groups')) ? (array)$this->store->get('webui:groups') : [];
+        $synced = 0;
+        foreach ($list as $group) {
+            if (!is_array($group)) {
+                continue;
+            }
+            $id = (string)($group['group_id'] ?? '');
+            if ($id === '' || !preg_match('/^[0-9a-zA-Z_-]+$/', $id)) {
+                continue;
+            }
+            $name = (string)($group['group_name'] ?? ($group['name'] ?? ''));
+            $row = is_array($meta[$id] ?? null) ? $meta[$id] : [];
+            if ($name !== '') {
+                $row['name'] = $name;
+            }
+            $row['updated_at'] = time();
+            $meta[$id] = $row;
+            // 没有 {id}.info 的群在列表里根本不会出现，这里补一条空白开关
+            if (!is_array($this->store->get($id . '.info'))) {
+                $this->store->set($id . '.info', ['status' => 1, 'worker' => [], 'name' => $name]);
+            }
+            $synced++;
+        }
+        $this->store->set('webui:groups', $meta);
+        return $this->ok([
+            'synced' => $synced,
+            'total'  => count($this->metrics->groups()['items']),
+        ], '已同步 ' . $synced . ' 个群');
+    }
+
     public function show(Request $request, array $params): Response {
         $group = $this->metrics->group((string)($params['group_id'] ?? ''));
         return $group === null ? $this->fail('群不存在', -404, 404) : $this->ok($group);

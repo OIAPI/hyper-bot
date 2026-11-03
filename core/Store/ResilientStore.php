@@ -24,6 +24,15 @@ final class ResilientStore implements Store {
         return $this->degraded;
     }
 
+    /** 主存储实例（诊断命令用，比如告诉用户「面板实际在用 Redis」） */
+    public function primary(): Store {
+        return $this->primary;
+    }
+
+    public function primaryName(): string {
+        return $this->primaryName;
+    }
+
     /** @template T @param callable(Store):T $fn @return T */
     private function run(callable $fn, mixed $default = null): mixed
     {

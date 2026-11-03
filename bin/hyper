@@ -463,7 +463,32 @@ function commandRedis(array $ctx): void
     } catch (\Throwable) {
     }
 
-    echo PHP_EOL . '  结论：Redis 可用。若面板仍未使用，检查 Config.ini 的 [store] driver 是否被写成 file。' . PHP_EOL . PHP_EOL;
+    // 最后一步：让内核真的建一次 store，看看面板实际用的是哪个
+    echo PHP_EOL;
+    try {
+        $app = \Core\App::boot();
+        $store = $app->store;
+        $class = get_class($store);
+        $driver = strtolower(\Core\Config::string('store.driver', 'auto'));
+        if ($store instanceof \Core\Store\ResilientStore) {
+            $degraded = $store->degraded();
+            $line('面板存储', !$degraded, 'Redis（' . get_class($store->primary()) . '）' . ($degraded ? '，当前已降级到文件存储' : '') . '  store.driver=' . $driver);
+        } elseif ($store instanceof \Core\Store\FileStore) {
+            $line('面板存储', true, '文件存储（runtime/store）  store.driver=' . $driver);
+        } else {
+            $line('面板存储', true, $class . '  store.driver=' . $driver);
+        }
+        if ($store instanceof \Core\Store\FileStore && $driver === 'auto') {
+            echo '  说明：driver=auto 且回退到文件存储，说明启动时的连接检查没通过（上面应有 WARNING）。' . PHP_EOL;
+        }
+        if ($driver === 'file') {
+            echo '  说明：Config.ini 里 [store] driver = file 强制使用文件存储，删掉或改成 auto 才会用 Redis。' . PHP_EOL;
+        }
+    } catch (\Throwable $e) {
+        $line('面板存储', false, '内核初始化失败：' . $e->getMessage());
+    }
+
+    echo PHP_EOL . '  结论：Redis 可用。' . PHP_EOL . PHP_EOL;
 }
 
 /** 环境体检：把所有「能不能跑」的判断集中到一处 */

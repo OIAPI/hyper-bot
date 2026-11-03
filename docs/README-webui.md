@@ -217,6 +217,15 @@ AUTH        FAIL  WRONGPASS invalid username-password pair  ← 密码与服务�
 
 KeyDB 与 Redis 协议兼容，直接按 Redis 配置即可（`docker run ... keydb-server --requirepass 你的密码`）。
 
+诊断命令最后会有一行 `面板存储`，直接告诉你内核实际用的是哪个：
+
+```
+面板存储   OK    Redis（Core\Store\RedisStore）  store.driver=auto
+面板存储   OK    文件存储（runtime/store）  store.driver=file
+```
+
+看到「文件存储」而上面各步都 OK，说明 `[store] driver` 被固定成了 `file`；改回 `auto` 即可。
+
 ### 为什么会被「踢下线」
 
 面板的登录态是服务端会话。2.1.6 起会话**默认存在本地文件**（`runtime/store/session`，配置项 `[webui] session_store = file`），不再跟业务缓存共用 Redis：

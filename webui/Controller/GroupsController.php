@@ -28,16 +28,34 @@ final class GroupsController extends Base {
         if ($deny = $this->guard($request, 'group.write')) {
             return $deny;
         }
-        $api = (string)\Protocol\Core\Config::string('onebot.api', '');
+        // 拉群列表要用「账号自己的 api / token」，没有显式指定时，
+        // 该协议下只有一个启用账号就用它，多个账号必须指定，避免拉错号的群。
+        $accountId = trim((string)$request->input('account', ''));
+        if ($accountId === '' && \Core\Bot\Accounts::countForProtocol('onebot') > 1) {
+            return $this->fail('该协议下配置了多个账号，请指定 account（' . implode('、', \Core\Bot\Accounts::idsForProtocol('onebot')) . '）', -1, 400);
+        }
+        $account = $accountId !== ''
+            ? \Core\Bot\Accounts::get($accountId)
+            : \Core\Bot\Accounts::forProtocol('onebot');
+        if ($accountId !== '' && $account === null) {
+            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        }
+        $api = (string)(($account['api'] ?? '') ?: \Protocol\Core\Config::string('onebot.api', ''));
         $hasWs = \Protocol\OneBot\WsHub::hasForward() || \Protocol\OneBot\WsHub::hasReverse();
         if ($api === '' && !$hasWs) {
-            return $this->fail('没有可用的 OneBot 接口：请先在配置里填 [protocol.onebot] api，或开启正向 / 反向 WS', -1, 400);
+            return $this->fail($accountId !== ''
+                ? '账号 ' . $accountId . ' 没有填 api 地址，也没有可用的 WS 连接'
+                : '没有可用的 OneBot 接口：请在「账号」页填写 api，或开启正向 / 反向 WS', -1, 400);
         }
+        \Core\Bot\AccountContext::use($account);
         try {
             $adapter = \Protocol\OneBot\Adapter::currentAdapter();
             $resp = $adapter->call('get_group_list');
         } catch (\Throwable $e) {
+            \Core\Bot\AccountContext::reset();
             return $this->fail('调用 get_group_list 失败：' . $e->getMessage(), -2, 502);
+        } finally {
+            \Core\Bot\AccountContext::reset();
         }
         $status = (string)($resp->status ?? 'failed');
         if ($status !== 'ok' && $status !== 'async') {

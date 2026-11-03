@@ -33,6 +33,26 @@ $ok('bySelfId 命中 onebot', (\Core\Bot\Accounts::bySelfId('111')['id'] ?? '') 
 $ok('bySelfId 命中 milky', (\Core\Bot\Accounts::bySelfId('222')['id'] ?? '') === 'milky-222');
 $ok('bySelfId 未知返回 null', \Core\Bot\Accounts::bySelfId('999') === null);
 
+echo "== 主动调用取哪个账号 ==\n";
+$ok('forProtocol 单账号直接返回', (\Core\Bot\Accounts::forProtocol('onebot')['id'] ?? '') === 'onebot-111');
+$ok('forProtocol 未知协议返回 null', \Core\Bot\Accounts::forProtocol('qqbot') === null);
+$ok('forProtocol 指定 id 命中', (\Core\Bot\Accounts::forProtocol('onebot', 'onebot-111')['id'] ?? '') === 'onebot-111');
+$ok('forProtocol 指定 id 协议不符返回 null', \Core\Bot\Accounts::forProtocol('milky', 'onebot-111') === null);
+
+// 账号上下文要能盖住历史键（cq.api / cq.auth），否则「发消息还是在用配置里的地址」
+$beforeApi = \Core\Config::string('cq.api');
+\Core\Bot\AccountContext::use(['id' => 'x', 'protocol' => 'onebot', 'api' => 'http://acc-fake:9999', 'token' => 'acc-token']);
+$ok('账号上下文覆盖 cq.api', \Core\Config::string('cq.api') === 'http://acc-fake:9999');
+$ok('账号上下文覆盖 cq.auth', \Core\Config::string('cq.auth') === 'acc-token');
+$ok('账号上下文覆盖 protocol.onebot.api', \Core\Config::string('protocol.onebot.api') === 'http://acc-fake:9999');
+\Core\Bot\AccountContext::reset();
+$ok('reset 后回落到配置', \Core\Config::string('cq.api') === $beforeApi);
+
+// 同协议再加一个号，forProtocol 就无法替调用方做主了
+\Core\Bot\Accounts::upsert(['protocol' => 'onebot', 'self_id' => '333', 'id' => 'onebot-333-b', 'api' => 'http://127.0.0.1:3003']);
+$ok('同协议多账号时 forProtocol 返回 null', \Core\Bot\Accounts::forProtocol('onebot') === null);
+\Core\Bot\Accounts::remove('onebot-333-b');
+
 $dup = \Core\Bot\Accounts::upsert(['protocol' => 'onebot', 'self_id' => '111', 'id' => 'onebot-333']);
 $ok('同协议 self_id 重复被拒', !$dup['ok'], $dup['msg']);
 $dup2 = \Core\Bot\Accounts::upsert(['protocol' => 'milky', 'self_id' => '111']);

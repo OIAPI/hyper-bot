@@ -84,6 +84,16 @@ final class Config {
             return $default;
         }
 
+        // 0. 多账号：事件处理期间的账号级配置优先。
+        //    Api / HttpAdapter 这些历史调用点读的是 cq.api，账号里存的是 onebot.api，
+        //    所以先把 cq.* 映射成协议键，再问账号上下文。
+        $joinedKey = strtolower(implode('.', $segments));
+        $legacyToAccount = ['cq.api' => 'protocol.onebot.api', 'cq.auth' => 'protocol.onebot.token'];
+        [$hitAccount, $accountValue] = \Core\Bot\AccountContext::get($legacyToAccount[$joinedKey] ?? $key);
+        if ($hitAccount) {
+            return self::normalize($accountValue, $default);
+        }
+
         // 1. 完整路径查找
         $value = self::dig($tree, $segments);
         if ($value !== null) {

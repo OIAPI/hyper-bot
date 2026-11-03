@@ -8,10 +8,13 @@ class app {
 	protected $config, $api;
 	protected $curl;
 	public function __construct() {
-		$this->api = Env::get('cq.api');
+		// 主动发消息同样走账号凭据：有事件上下文用当前账号，
+		// 否则该协议只有一个启用账号时也用它（多账号请显式传 account）
+		$account = \Core\Bot\AccountContext::current() ?? \Core\Bot\Accounts::forProtocol('onebot');
+		$this->api = ($account['api'] ?? '') ?: Env::get('cq.api');
 		$this->curl = new CoroutineCurl();
 		$this->curl->timeout(120);
-		$this->curl->addheaders('Authorization', 'Bearer ' . Env::get('cq.auth'));
+		$this->curl->addheaders('Authorization', 'Bearer ' . ((($account['token'] ?? '') ?: Env::get('cq.auth'))));
 		$this->curl->addheaders('content-type', 'application/json');
 	}
 	/**

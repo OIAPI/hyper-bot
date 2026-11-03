@@ -79,6 +79,44 @@ final class Accounts
     }
 
     /** @return array<string, mixed>|null */
+    /**
+     * 取某协议用于「主动调用」的账号：
+     *  - 给了 $id 就按 id 取（协议必须匹配）
+     *  - 没给 id 且该协议恰好只有一个启用账号时返回它，多个账号返回 null（调用方需显式指定）
+     */
+    public static function forProtocol(string $protocol, string $id = ''): ?array
+    {
+        $protocol = strtolower($protocol);
+        if ($id !== '') {
+            $account = self::get($id);
+            return $account !== null && strtolower((string)($account['protocol'] ?? '')) === $protocol ? $account : null;
+        }
+        $list = array_values(array_filter(
+            self::enabled(),
+            static fn(array $row): bool => strtolower((string)($row['protocol'] ?? '')) === $protocol
+        ));
+        return count($list) === 1 ? $list[0] : null;
+    }
+
+    /** 某协议下启用的账号数量（用于「多账号必须指定」的判断） */
+    public static function countForProtocol(string $protocol): int
+    {
+        return count(self::idsForProtocol($protocol));
+    }
+
+    /** 某协议下启用的账号 id 列表 */
+    public static function idsForProtocol(string $protocol): array
+    {
+        $protocol = strtolower($protocol);
+        $ids = [];
+        foreach (self::enabled() as $row) {
+            if (strtolower((string)($row['protocol'] ?? '')) === $protocol) {
+                $ids[] = (string)$row['id'];
+            }
+        }
+        return $ids;
+    }
+
     public static function bySelfId(string $selfId): ?array
     {
         $selfId = trim($selfId);

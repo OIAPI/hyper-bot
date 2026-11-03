@@ -384,6 +384,12 @@ $ok('自检给出接口地址与提示', array_key_exists('api', $tSend['json'][
 $sync = $call('POST', '/webui/api/groups/sync', [], $token);
 $ok('无协议端时同步给出明确原因', in_array($sync['status'], [400, 502], true), $sync['raw']);
 
+// 指定不存在的账号时要明确 404，而不是默默用配置里的地址去发
+$badAcc = $call('POST', '/webui/api/protocols/onebot/test', ['account' => 'no-such-account'], $token);
+$ok('自检指定不存在的账号 → 404', $badAcc['status'] === 404, $badAcc['raw']);
+$badSync = $call('POST', '/webui/api/groups/sync', ['account' => 'no-such-account'], $token);
+$ok('同步指定不存在的账号 → 404', $badSync['status'] === 404, $badSync['raw']);
+
 echo "== 错误处理 ==\n";
 $notFound = $call('GET', '/webui/api/nope', [], $token);
 $ok('未知接口 404', $notFound['status'] === 404);

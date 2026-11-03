@@ -15,8 +15,11 @@ class HttpAdapter extends Adapter {
 	protected string $token;
 
 	public function __construct(array $config = []) {
-		$this->base  = rtrim((string)Env::get('cq.api', ''), '/');
-		$this->token = (string)Env::get('cq.auth', '');
+		// 多账号：优先用当前事件所属账号的 api / token；
+		// 没有事件上下文时，如果该协议只有一个启用账号也用它，最后才回落配置。
+		$account = \Core\Bot\AccountContext::current() ?? \Core\Bot\Accounts::forProtocol('onebot');
+		$this->base  = rtrim((string)(($account['api'] ?? '') ?: Env::get('cq.api', '')), '/');
+		$this->token = (string)(($account['token'] ?? '') ?: Env::get('cq.auth', ''));
 		parent::__construct($config);
 	}
 

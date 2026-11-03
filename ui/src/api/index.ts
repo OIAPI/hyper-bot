@@ -70,15 +70,18 @@ export const protocolApi = {
   show: (name: ProtocolName) => http.get<ProtocolDetail>('/protocols/' + name),
   update: (name: ProtocolName, config: Record<string, unknown>) =>
     http.put<{ applied: string[] }>('/protocols/' + name, { config }),
+  /** 发送能力自检：真的调一次 get_login_info；account 指定用哪个机器人账号的 api */
+  test: (name: ProtocolName, account = '') =>
+    http.post<{ ok: boolean; via: string; api: string; account?: string; ms?: number; status?: string; retcode?: unknown; message?: string; data?: unknown; hint?: string }>(
+      '/protocols/' + name + '/test',
+      { account },
+    ),
   actions: (name: ProtocolName) =>
     http.get<{ supported: Array<{ action: string }>; unsupported: Array<{ action: string; reason: string }> }>(
       '/protocols/' + name + '/actions',
     ),
   endpoints: (name: ProtocolName) =>
     http.get<Array<{ label: string; url: string; kind: string }>>('/protocols/' + name + '/endpoints'),
-  /** 发送能力自检：真的调一次 get_login_info */
-  test: (name: ProtocolName) =>
-    http.post<Record<string, unknown>>('/protocols/' + name + '/test'),
 }
 
 /** 配置 */

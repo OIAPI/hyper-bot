@@ -394,6 +394,23 @@ chmod 600 runtime/webui/users.json
   老部署不需要手工迁移。
 - **删除保护**：至少保留一个账号，避免面板把自己锁死。
 
+### 发消息 / 拉群列表用哪个账号
+
+主动调用（发消息、`get_login_info`、`get_group_list`）也走账号凭据，不再只看 Config.ini。优先级：
+
+1. **当前事件所属账号** —— 收到消息后回包，天然用发来消息的那个号
+2. **面板里显式选择的账号** —— 连接页「测试发送」多账号时会出现账号下拉；接口层面是 `?account=<id>`
+3. **该协议下唯一的启用账号** —— 只有一个号时自动用它，不用选
+4. **Config.ini 的全局配置** —— 只有在上面都没命中时才回落到 `[protocol.onebot] api/token`
+
+同协议挂了多个号、又没指定账号时，框架**不会猜**：测试 / 同步会直接报错让你指定，避免拿 A 号的凭据去拉 B 号的群列表。
+
+```bash
+curl -X POST "http://127.0.0.1:9501/webui/api/protocols/onebot/test" \
+  -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json' \
+  -d '{"account":"onebot-3889"}'
+```
+
 ## 第三方登录（OAuth）
 
 面板支持用第三方平台登录，本质是「把第三方身份绑定到已有面板账号」：

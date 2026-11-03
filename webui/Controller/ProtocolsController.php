@@ -68,34 +68,59 @@ final class ProtocolsController extends Base {
         if ($name !== 'onebot') {
             return $this->fail('目前只支持 OneBot 的连通性测试', -1, 400);
         }
-        $api = Config::string('onebot.api', '');
+
+        // 优先用账号自己的 api / token；没指定账号时，协议下只有一个启用账号就用它
+        $accountId = trim((string)$request->input('account', ''));
+        if ($accountId === '' && \Core\Bot\Accounts::countForProtocol('onebot') > 1) {
+            return $this->fail('该协议下配置了多个账号，请指定 account（' . implode('、', \Core\Bot\Accounts::idsForProtocol('onebot')) . '）', -4, 400);
+        }
+        $account = $accountId !== ''
+            ? \Core\Bot\Accounts::get($accountId)
+            : \Core\Bot\Accounts::forProtocol('onebot');
+        if ($accountId !== '' && $account === null) {
+            return $this->fail('账号不存在：' . $accountId, -2, 404);
+        }
+        if ($account !== null && strtolower((string)($account['protocol'] ?? '')) !== 'onebot') {
+            return $this->fail('该账号不是 OneBot 协议，无法用它测试', -2, 400);
+        }
+
+        $api = (string)(($account['api'] ?? '') ?: Config::string('onebot.api', ''));
         $ws = \Protocol\OneBot\WsHub::hasForward() || \Protocol\OneBot\WsHub::hasReverse();
+        \Core\Bot\AccountContext::use($account);
         try {
             $adapter = OneBotAdapter::currentAdapter();
             $started = microtime(true);
             $resp = $adapter->call('get_login_info');
             $ms = (int)round((microtime(true) - $started) * 1000);
         } catch (\Throwable $e) {
+            \Core\Bot\AccountContext::reset();
             return $this->ok([
                 'ok'      => false,
                 'via'     => $ws ? 'ws' : 'http',
                 'api'     => $api,
+                'account' => $account['id'] ?? '',
                 'error'   => $e->getMessage(),
                 'hint'    => '调用直接抛异常，检查 api 地址与协议端是否在运行',
             ]);
+        } finally {
+            \Core\Bot\AccountContext::reset();
         }
+
         $status = (string)($resp->status ?? 'failed');
         $ok = $status === 'ok' || $status === 'async';
         return $this->ok([
             'ok'      => $ok,
             'via'     => $ws ? 'ws' : 'http',
             'api'     => $api,
+            'account' => $account['id'] ?? '',
             'ms'      => $ms,
             'status'  => $status,
             'retcode' => $resp->retcode ?? null,
             'message' => (string)($resp->message ?? ''),
             'data'    => $resp->data ?? null,
-            'hint'    => $ok ? '' : '协议端返回失败：检查 onebot.api 是否指向实现端的 HTTP 端口，以及 token 是否一致',
+            'hint'    => $ok ? '' : ($account !== null && $api === ''
+                ? '这个账号没有填 api 地址，先在「账号」页补上实现端的 HTTP 端口'
+                : '协议端返回失败：检查账号的 api 是否指向实现端的 HTTP 端口，以及 token 是否一致'),
         ]);
     }
 

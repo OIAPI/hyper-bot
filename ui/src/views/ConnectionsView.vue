@@ -14,7 +14,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { ArrowDown, ArrowRight, CopyDocument } from '@element-plus/icons-vue'
-import { protocolApi } from '@/api'
+import { accountApi, protocolApi } from '@/api'
 import { useToastStore } from '@/stores/toast'
 import { copyText } from '@/utils/clipboard'
 import type { ProtocolName, ProtocolDetail, ProtocolStatus } from '@/types/api'
@@ -188,13 +188,28 @@ function withAlias(src: Record<string, unknown>): Record<string, unknown> {
 const testVisible = ref(false)
 const testing = ref(false)
 const testResult = ref<Record<string, unknown> | null>(null)
+/** 多账号时得说清楚「用哪个号的 api/token 发」 */
+const onebotAccounts = ref<Array<{ label: string; value: string }>>([])
+const testAccount = ref('')
+
+async function loadAccounts(): Promise<void> {
+  try {
+    const res = await accountApi.list()
+    onebotAccounts.value = (res.accounts ?? [])
+      .filter((a) => a.protocol === 'onebot')
+      .map((a) => ({ label: (a.name || a.id) + (a.self_id ? ' · ' + a.self_id : ''), value: a.id }))
+    if (onebotAccounts.value.length === 1) testAccount.value = onebotAccounts.value[0].value
+  } catch {
+    // 账号接口不可用不影响连接页主体，只是没法选号
+  }
+}
 
 async function runTest(): Promise<void> {
   if (testing.value) return
   testing.value = true
   testResult.value = null
   try {
-    testResult.value = (await protocolApi.test('onebot')) as unknown as Record<string, unknown>
+    testResult.value = (await protocolApi.test('onebot', testAccount.value)) as unknown as Record<string, unknown>
     testVisible.value = true
   } catch (e) {
     toast.fromError(e, '测试失败')
@@ -226,7 +241,10 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadAccounts()
+})
 
 function setField(name: ProtocolName, key: string, value: unknown): void {
   const d = drafts.value[name]
@@ -339,6 +357,14 @@ const totalProtocols = computed(() => Object.keys(statuses.value).length)
             </div>
             <div class="spacer" />
             <UiTag v-if="isDirty(m.name)" type="warn" size="small">未保存</UiTag>
+            <UiSelect
+              v-if="m.name === 'onebot' && onebotAccounts.length > 1"
+              v-model="testAccount"
+              :options="onebotAccounts"
+              size="small"
+              class="test-account"
+              placeholder="用哪个账号测"
+            />
             <UiButton v-if="m.name === 'onebot'" size="small" :loading="testing" @click="runTest">
               测试发送
             </UiButton>

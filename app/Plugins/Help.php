@@ -6,7 +6,7 @@ use Utils\Git;
 use Utils\Utils;
 use Utils\Env;
 use App\BaseApp;
-use Controller\Router;
+use Core\Bot\Registry;
 use Controller\Attr\Rule;
 use Utils\CoroutineCurl as curl;
 
@@ -37,9 +37,19 @@ class help extends BaseApp {
 		preg_match($this->app['match'], $this->raw, $keys);
 		$message = $this->api->message;
 		$key = intval($keys[2] - 1);
-		$app = array_keys(Router::scanAppClasses());
-		// print_r($app);
-		$docs = Router::$appDocs;
+		// v2：插件清单来自注册表（一次索引），不再反射扫描
+		$plugins = \Core\App::boot()->container->get(Registry::class)->plugins();
+		$app = array_map(static fn(array $p): string => $p['class'], $plugins);
+		$docs = [];
+		foreach ($plugins as $plugin) {
+			$docs[$plugin['class']] = [
+				'name'       => $plugin['displayName'] ?? $plugin['name'],
+				'author'     => $plugin['author'] ?? '',
+				'version'    => $plugin['version'] ?? '',
+				'lastUpdate' => $plugin['lastUpdate'] ?? '',
+				'description'=> $plugin['description'] ?? '',
+			];
+		}
 		if(isset($app[$key]) && $model = $app[$key]) {
 			if(isset($docs[$model])) {
 				if($docs = $docs[$model]) {

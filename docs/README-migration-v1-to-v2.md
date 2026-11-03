@@ -112,13 +112,14 @@ v2 完全一样。差异只在**属性来源**：
 
 | v1 | v2 |
 |---|---|
-| `php index.php` | `bash bin/hyper.sh start` |
-| `php bin/webui-serve.php` | `bash bin/hyper.sh start --arch=webui` |
+| `php index.php` | `bash bin/hyper.sh start`（已删除，勿再用） |
+| `php bin/webui-serve.php` | `bash bin/hyper.sh start --arch=webui`（已删除） |
+| `php -S ... public/dev-server.php` | `bash bin/hyper.sh start --arch=php`（已删除） |
 | 手动 `kill` | `bash bin/hyper.sh stop` |
 | 查看状态 | `bash bin/hyper.sh status` |
 
-`public/dev-server.php` 与旧的 `bin/webui-serve.php` 仍保留（兼容脚本调用），
-但推荐用 `bin/hyper`。
+`public/dev-server.php`、`bin/webui-serve.php`、`index.php`、`public/manager.html` 在 v2
+已**彻底删除**，请统一改用 `bin/hyper.sh` / `bin/hyper`。
 
 ## 4. 被删除/替换的 v1 代码
 

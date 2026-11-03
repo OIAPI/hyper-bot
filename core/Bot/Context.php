@@ -33,9 +33,8 @@ final class Context
 
     public static function current(): ?self
     {
-        if (self::$current !== null) {
-            return self::$current;
-        }
+        // 以栈顶为准（单一真相源）。$current 只是 run() 期间的快速路径，
+        // 但 bind() 会直接改写栈顶，两者若不同步就会出现「绑定成功但读不到」。
         $stack = self::stack();
         return $stack === [] ? null : $stack[count($stack) - 1];
     }
@@ -58,8 +57,6 @@ final class Context
      */
     public static function run(self $context, callable $callback): mixed
     {
-        $previous = self::$current;
-        self::$current = $context;
         $stack = self::stack();
         $stack[] = $context;
         self::writeStack($stack);
@@ -67,10 +64,12 @@ final class Context
         try {
             return $callback($context);
         } finally {
-            self::$current = $previous;
+            // 只出栈，不碰 $current：栈是唯一真相源，
+            // 同时恢复 $current 会引入第二份状态，容易出现「读到的和栈里不是同一个」。
             $stack = self::stack();
             array_pop($stack);
             self::writeStack($stack);
+            self::$current = $stack === [] ? null : $stack[count($stack) - 1];
         }
     }
 
@@ -79,6 +78,34 @@ final class Context
     {
         return new self(Event::fromArray(['post_type' => '', 'time' => time()]), $adapter);
     }
+
+    /**
+     * 只绑定适配器（保留 v1 `Protocol\Core\Context::bind()` 的语义）。
+     *
+     * 用于「没有入站事件、但需要指定出站后端」的场景：单测、CLI 主动推送、
+     * 以及协议层在分发前预置适配器。语义与 v1 一致：
+     *   - 已有上下文 → 替换其 adapter（保留原事件）
+     *   - 没有上下文 → 建立空上下文
+     * 调用方负责在结束后 `clear()`，否则残留会影响后续无上下文场景。
+     */
+    public static function bind(?Adapter $adapter): void
+    {
+        // 替换栈顶而不是压栈：bind 的语义是「当前上下文的出站后端是它」，
+        // 不是「进入一层新上下文」。压栈会让 clear() 之后仍残留一层。
+        $stack = self::stack();
+        $current = $stack === [] ? null : $stack[count($stack) - 1];
+        $event = $current?->event ?? Event::fromArray(['post_type' => '', 'time' => time()]);
+        $replacement = new self($event, $adapter, $current?->responder);
+
+        if ($stack === []) {
+            $stack[] = $replacement;
+        } else {
+            $stack[count($stack) - 1] = $replacement;
+        }
+        self::writeStack($stack);
+    }
+
+
 
     /** 当前上下文的事件（没有则返回空事件，避免调用方到处判空） */
     public static function eventOrDefault(): Event

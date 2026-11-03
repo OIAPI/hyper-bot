@@ -40,6 +40,11 @@ app/Plugins/*                            ← 业务插件（写法与 v1 一致�
 | `public/webui/` | WebUI 前端（无构建，原生 ESM） |
 | `bin/hyper` | 统一 CLI 入口 |
 | `bin/hyper.sh` | 进程管理脚本 |
+| `controller/Server/HttpServer.php` | Swoole 架构的进程/事件宿主（HTTP 与 WS 都由它承载） |
+| `controller/Api.php` | 插件 API 容器（`$this->api->message` 的解析入口） |
+| `controller/Attr/` | 插件注解（Rule / Notice / Request） |
+| `controller/Enum/` | 权限与业务枚举 |
+| `api/` | 各业务域 API 实现（message / groupSetup / friend ...） |
 
 ## 3. 一次事件的完整路径
 
@@ -164,10 +169,45 @@ WebSocket 相关的**真实连接**行为无法在本机验证（没有扩展）
 
 保留：插件写法、注解语义、`$this->api` / `$this->Redis` 调用方式、权限等级编号、配置键。
 
-丢弃：
-- `Controller\Trigger\*`（职责并入 Dispatcher）
-- `Controller\Api` 的 per-CID 缓存字典（内存泄漏 + 死代码 `getCacheKey()`）
-- `Cache::set('param'/'adapter'/'server')` 全局传参
-- `Router::scanAppClasses()` 每次分发反射
-- `Utils\TaskManager` 的硬编码 `Swoole\Timer`
-- 各处裸 `\Swoole\Coroutine::create`（改由 `Context::run` 统一）
+### 已彻底删除的 v1 代码（无任何运行时引用）
+
+| 已删除 | 替代者 | 删除依据 |
+|---|---|---|
+| `index.php` | `bin/hyper` | 旧入口，等价于 `bin/hyper serve --arch=swoole` |
+| `bin/webui-serve.php` | `bin/hyper` | 旧 WebUI 入口 |
+| `public/dev-server.php` | `public/index.php` | 旧开发入口 |
+| `public/manager.html` | `public/webui/` | 旧管理页（1179 行，无引用） |
+| `public/Api/App.php` | — | 空文件（0 行） |
+| `app/Controller/{Api,Common,Protocol}.php` | `core/Http/AppRoutes.php` + WebUI | 协议端点与 WebUI 完全重复 |
+| `app/BaseController.php` | `app/BaseApp.php` | 旧控制器基类 |
+| `controller/Router.php` | `core/Bot/Registry` | 反射扫描 + 菜单 |
+| `controller/Traits/{Worker,staticWorker}.php` | `core/Bot/Registry` | worker 列表 |
+| `controller/Trigger/{Message,Notice,Request,Meta_event}.php` | `core/Bot/Dispatcher` | 分发逻辑（共 902 行） |
+| `controller/Attr/{Route,RoutePrefix}.php` | `core/Http/Router` | 注解 HTTP 路由 |
+| `controller/Server/RequestHandler.php` | `core/Http/Kernel` | v1 请求处理（swoole 已改走内核） |
+| `utils/Route.php` | `core/Http/Router` | 注解路由实现 |
+| `utils/TaskManager.php` | `core/Scheduler` | 硬编码 `Swoole\Timer` |
+| `utils/{Worker,PluginManager}.php` | `core/Bot/Registry` | worker / 插件扫描 |
+| `utils/{Yargs,Number,DeviceRegister}.php` | `bin/hyper` 内置解析 | 从未被调用（共 1558 行） |
+| `api/uin.php` | — | 依赖 `global $api` + Redis，从未被调用 |
+| `protocol/Core/Context.php` | `core/Bot/Context` | `Cache::set('adapter')` 的包装 |
+| `protocol/WebhookRouter.php` | `Core\Bootstrap::bootProtocolClients` | 协议客户端启动 |
+| `core/Http/RequestContext.php` | `core/Bot/Context` | 空壳（11 行，无引用） |
+| `redis.sh` / `init-project.sh` | — | 部署辅助脚本（无引用） |
+
+合计删除 **31 个文件、约 9000 行**。所有改动都在 git 历史里（提交 `38362a5` 之后的
+删除提交），需要时可用 `git revert` 或从历史中取回。
+
+### 因删除而做的迁移
+
+| 位置 | 改动 |
+|---|---|
+| `controller/Server/HttpServer::onRequest` | 改为走 `Webui\Routes::kernel()`，与 php 架构同一管线 |
+| `controller/Server/HttpServer::startProtocolClients` | 改为 `Core\Bootstrap::bootProtocolClients()` |
+| `app/Plugins/Help.php` | `Router::scanAppClasses()` → `Registry::plugins()` |
+| `webui/Controller/PluginsController.php` | `Router::clean()` → `Registry::invalidate()` |
+| `webui/Controller/SystemController.php` | `Router::clean()` → `Registry::invalidate()` |
+| `webui/Metrics.php` | 自己反射扫描 → 读 `Registry`（消除两份扫描漂移） |
+| `protocol/Core/Bridge.php` | `Protocol\Core\Context::current()` → `Core\Bot\Context::adapter()` |
+| `core/Bot/Context.php` | 新增 `bind()`（替代 v1 `Protocol\Core\Context::bind()`） |
+| `composer.json` | `ext-swoole` 必装 → `suggest`（php 架构不装 Swoole 也能装依赖） |

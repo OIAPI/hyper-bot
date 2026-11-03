@@ -11,9 +11,10 @@ use Swoole\Coroutine\System;
 use Utils\Logger;
 use Utils\Env;
 use Utils\Cache;
-use Utils\TaskManager as task;
+
 use Controller\Api;
-use Controller\Server\RequestHandler;
+use Core\Http\Request as CoreRequest;
+use Webui\Routes as WebuiRoutes;
 
 
 /**
@@ -113,7 +114,8 @@ class HttpServer {
 		$this->initSuperPermission();
 		$this->registerStdinCommand();
 		$this->initSIGINT();
-		task::getInstance()->init();
+		// 调度器由 Core\Scheduler 统一管理（Swoole 下映射到 Swoole\Timer），
+		// 这里不再初始化 v1 的 TaskManager。
 	}
 
 	/**
@@ -412,7 +414,6 @@ class HttpServer {
 			$time--;
 		}
 		// Logger::tput($time, $time);
-		task::getInstance()->shutdown();
 		System::exec("kill -9 {$pid}");
 		Logger::info("服务退出成功");
 		exit(0);
@@ -439,50 +440,61 @@ HELP;
 	 */
 	public function onRequest(\Swoole\Http\Request $request, \Swoole\Http\Response $response): void {
 		try {
-			$requestTime = round($request->server['request_time_float'] * 1000);
-			Cache::set('request_time', $requestTime);
-			// 保存原始请求体与请求头（QQ 官方机器人 / Milky WebHook 验签必须使用原始字节）
-			// 使用协程私有存储：并发请求时不能互相覆盖
-			Cache::setLocal('raw_body', $request->getContent() ?: '');
+			// 原始请求体与请求头（QQ 官方机器人 / Milky WebHook 验签必须使用原始字节）
+			$rawBody = $request->getContent() ?: '';
 			$headers = [];
 			foreach (($request->header ?: []) as $key => $value) {
 				$headers[strtolower($key)] = $value;
 			}
-			Cache::setLocal('headers', $headers);
-			$param = $this->mergeRequestParam($request);
-			// 用 Cache::set 写入「协程私有」上下文，避免并发请求互相覆盖
-			Cache::set('param', $param);
-			$handler = new RequestHandler($request, $response);
-			$handler->registerType((array_keys(array_filter(Env::get('type'), fn($val) => $val === 1))));
-			Cache::set('server', $handler);
 
-			$handler->handle();
-		} catch (\Exception $e) {
-			$response->status(500);
-			$response->header('Content-Type', 'application/json');
-			$errorResp = json_encode([
-				'code' => -1,
-				'message' => "请求处理异常：{$e->getMessage()}",
-				'data' => null
+			$path = (string)($request->server['path_info'] ?? '/');
+
+			// 说明：WebSocket 升级请求不会走到这里。
+			// open_websocket_protocol = true 时，Swoole 完成握手后直接派发
+			// open/message/close 事件给 WsHub，onRequest 根本不会被调用。
+			// （v1 这里有一份「退化兜底」的 upgrade 逻辑，实际不可达，已删除。）
+
+			// 静态资源交给 Swoole 的 enable_static_handler（document_root = public）；
+			// 但目录本身不会自动补 index.html，这里显式跳转一次。
+			if ($path === '/webui' || $path === '/webui/') {
+				$response->status(302);
+				$response->header('Location', '/webui/index.html');
+				$response->end();
+				return;
+			}
+
+			// v2：所有请求走统一内核路由（WebUI + 协议 Webhook + 健康检查），
+			// 与 php 架构完全同一条管线，不再有第二套注解路由。
+			$core = CoreRequest::fromSwoole((object)[
+				'server'  => $request->server ?: [],
+				'header'  => $headers,
+				'get'     => $request->get ?: [],
+				'post'    => $request->post ?: [],
+				'cookie'  => $request->cookie ?: [],
+				'files'   => $request->files ?: [],
+				'rawBody' => $rawBody,
 			]);
-			$response->end($errorResp);
-			Logger::error("请求处理异常：{$e->getMessage()} | 堆栈：{$e->getTraceAsString()}");
+
+			$result = WebuiRoutes::kernel()->handle($core);
+
+			$response->status($result->status);
+			foreach ($result->headers as $name => $value) {
+				$response->header((string)$name, (string)$value);
+			}
+			foreach ($result->cookies as $cookie) {
+				$response->header('Set-Cookie', (string)$cookie, false);
+			}
+			$response->end($result->body);
+		} catch (\Throwable $e) {
+			$response->status(500);
+			$response->header('Content-Type', 'application/json; charset=utf-8');
+			$response->end((string)json_encode([
+				'code'    => -1,
+				'message' => '请求处理异常：' . $e->getMessage(),
+				'data'    => null,
+			], JSON_UNESCAPED_UNICODE));
+			Logger::error('请求处理异常：' . $e->getMessage() . ' | ' . $e->getFile() . ':' . $e->getLine());
 		}
-	}
-
-
-	/**
-	 * 合并请求参数（get+post+raw body）
-	 * @param \Swoole\Http\Request $request 请求对象
-	 * @return object 参数对象
-	 */
-	private function mergeRequestParam(\Swoole\Http\Request $request): object {
-		$get = $request->get ?: [];
-		$post = $request->post ?: [];
-		$raw = $request->getContent() ? json_decode($request->getContent(), true) : [];
-		$raw = is_array($raw) ? $raw : [];
-		$merged = array_merge($get, $post, $raw);
-		return json_decode(json_encode($merged)) ?: new \stdClass();
 	}
 
 
@@ -499,7 +511,6 @@ HELP;
 		$workerNum = $server->setting['worker_num'];
 		if ($workerId === $workerNum - 1) {
 			Logger::debug("Task Worker 数量：{$workerNum}");
-			task::getInstance()->init();
 		}
 
 		// WebUI 首次运行需要生成管理员账号（多 Worker 下每个进程都会检查，
@@ -518,7 +529,7 @@ HELP;
 	private function startProtocolClients(): void {
 		\Swoole\Coroutine::create(function () {
 			try {
-				\Protocol\WebhookRouter::boot();
+				\Core\Bootstrap::bootProtocolClients();
 			} catch (\Throwable $e) {
 				Logger::error("协议客户端启动失败：{$e->getMessage()} | {$e->getFile()}:{$e->getLine()}");
 			}
@@ -575,7 +586,6 @@ HELP;
 	{
 		$this->server->on('BeforeShutdown', function (Server $server) {
 			Logger::warning("服务开始关闭（触发 BeforeShutdown） | Master PID：" . constant(self::MASTER_PID_KEY));
-			task::getInstance()->shutdown();
 		});
 	
 		$this->server->on('Shutdown', function (Server $server) {
@@ -618,9 +628,8 @@ HELP;
 	 */
 	public function stop(): void {
 		if ($this->server && $this->server->master_pid > 0) {
-			task::getInstance()->shutdown();
 			$this->server->shutdown();
-			Logger::success("Task已停止，Server已停止");
+			Logger::success("Server已停止");
 			System::exec('kill -15 ' . constant(self::MASTER_PID_KEY));
 			System::exec('kill -9 ' . constant(self::MASTER_PID_KEY));
 		}

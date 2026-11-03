@@ -105,6 +105,65 @@ final class Bootstrap
         }
     }
 
+    /**
+     * 启动各协议的常驻客户端（仅在 swoole 架构的单个 worker 内调用）。
+     *
+     * 这些客户端都是「框架主动连出去」的长连接：
+     *   - OneBot11 正向 WS（连协议端）
+     *   - Milky WS / SSE（连协议端）
+     *   - QQ 官方 Gateway WS
+     *
+     * OneBot11 反向 WS 不在这里：那是服务端监听，由 Swoole 的
+     * open/message/close 事件驱动（见 WsHub::bindServer）。
+     *
+     * v1 这段逻辑在 Protocol\WebhookRouter::boot()，v2 收进 Bootstrap，
+     * 让它和「启动」这件事待在一起，避免又多一个只有一处调用的入口类。
+     */
+    public static function bootProtocolClients(): void
+    {
+        $app = App::boot();
+
+        // php / webui 架构不支持常驻连接，直接跳过（Bootstrap::run 已告警）
+        if (!$app->runtime->supportsPersistentClients()) {
+            return;
+        }
+
+        $started = [];
+
+        // ---------- OneBot11 正向 WS ----------
+        if (Config::bool('protocol.onebot.enable', false)) {
+            $url = Config::string('protocol.onebot.forward.url', '');
+            if (Config::bool('protocol.onebot.forward.enable', false) && $url !== '') {
+                \Protocol\OneBot\WsHub::startForward($url, Config::string('protocol.onebot.forward.token', ''));
+                $started[] = "OneBot 正向 WS → {$url}";
+            } elseif (Config::bool('protocol.onebot.forward.enable', false)) {
+                $app->logger->warning('[OneBot] 已开启正向 WS 但未配置 url（protocol.onebot.forward.url）');
+            }
+        }
+
+        // ---------- Milky ----------
+        if (Config::bool('protocol.milky.enable', false)) {
+            \Protocol\Milky\EventClient::start();
+            $started[] = 'Milky → ' . Config::string('protocol.milky.api', '')
+                . '（事件：' . Config::string('protocol.milky.event.mode', 'webhook') . '）';
+        }
+
+        // ---------- QQ 官方机器人 ----------
+        if (Config::bool('protocol.qqbot.enable', false)) {
+            \Protocol\QqBot\EventClient::start();
+            $started[] = 'QQ 官方机器人 → ' . Config::string('protocol.qqbot.api', 'https://api.bot.qq.com')
+                . '（事件：' . Config::string('protocol.qqbot.event.mode', 'ws') . '）';
+        }
+
+        if ($started === []) {
+            $app->logger->info('[协议] 未启用任何常驻协议客户端');
+            return;
+        }
+        foreach ($started as $line) {
+            $app->logger->success('[协议] 已启动：' . $line);
+        }
+    }
+
     /** 启动横幅 */
     public static function banner(App $app): void
     {

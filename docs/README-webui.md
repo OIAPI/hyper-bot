@@ -7,9 +7,10 @@
 ### 独立运行（无需 Swoole，适合本地/救援）
 
 ```bash
-php bin/webui-serve.php --port=8092
+bash bin/hyper.sh start --port=8092            # 推荐
+# 或 php bin/hyper serve --arch=php --port=8092
 # 或指定监听地址
-php bin/webui-serve.php --host=0.0.0.0 --port=8092
+bash bin/hyper.sh start --host=0.0.0.0 --port=8092
 ```
 
 启动时会打印访问地址与账号信息：

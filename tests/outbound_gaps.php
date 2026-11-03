@@ -40,7 +40,7 @@ with_config("[cq]\napi = \"http://127.0.0.1:5700\"\nauth = token\n", function ()
     ok('isProtocolUrl 拒绝第三方 URL', !\Protocol\Core\Bridge::isProtocolUrl('http://oiapi.net/api/Protobuf/'));
 
     // 绑定假适配器后：协议端 URL 应走桥，第三方 URL 不应走桥
-    \Protocol\Core\Context::bind(new class extends \Protocol\Core\Adapter {
+    \Core\Bot\Context::bind(new class extends \Protocol\Core\Adapter {
         protected string $name = 'spy';
         public function call(string $action, array $params = [], string $method = 'POST'): object {
             return (object)['status' => 'ok', 'retcode' => 0, 'data' => null, 'message' => ''];
@@ -64,11 +64,42 @@ $ad = (string)file_get_contents(dirname(__DIR__) . '/protocol/OneBot/Adapter.php
 ok('Adapter 仅在 array 时直接返回', str_contains($ad, 'if (is_array($response))'));
 ok('收到 false 时报超时且不回落 HTTP', str_contains($ad, '已发出，未收到 echo'));
 
-echo "\n== 3. 子协程恢复上下文 ==\n";
-foreach (['Message', 'Notice', 'Request'] as $trigger) {
-    $src = (string)file_get_contents(dirname(__DIR__) . "/controller/Trigger/{$trigger}.php");
-    ok("Trigger/{$trigger} 恢复上下文", str_contains($src, 'Cache::snapshot()') && str_contains($src, 'Cache::restore($snapshot)'));
+echo "\n== 3. 上下文在嵌套/异常下都能正确恢复 ==\n";
+
+// v1 靠每个 Trigger 里手写 Cache::snapshot()/restore()（漏一处就串号）。
+// v2 由 Context::run() 统一保证：进入压栈、退出出栈，异常也不遗漏。
+$outer = new class extends \Protocol\Core\Adapter {
+    protected string $name = 'outer';
+    public function call(string $a, array $p = [], string $m = 'POST'): object {
+        return (object)['status' => 'ok', 'retcode' => 0, 'data' => null, 'message' => ''];
+    }
+};
+$inner = clone $outer;
+
+\Core\Bot\Context::clear();
+\Core\Bot\Context::bind($outer);
+
+$ctx = static fn(\Protocol\Core\Adapter $a) => new \Core\Bot\Context(
+    \Core\Bot\Event::fromArray(['post_type' => 'message', 'time' => time()]),
+    $a
+);
+
+// 嵌套：内层运行期间看到内层，退出后回到外层
+\Core\Bot\Context::run($ctx($inner), function () use ($inner) {
+    ok('嵌套内层可见', \Core\Bot\Context::adapter() === $inner);
+});
+ok('嵌套退出后恢复外层', \Core\Bot\Context::adapter() === $outer);
+
+// 异常路径：同样要恢复
+try {
+    \Core\Bot\Context::run($ctx($inner), function () {
+        throw new \RuntimeException('模拟业务异常');
+    });
+} catch (\RuntimeException) {
 }
+ok('异常后恢复外层', \Core\Bot\Context::adapter() === $outer);
+
+\Core\Bot\Context::clear();
 
 echo "\n== 4. 默认后端可按配置选择 ==\n";
 $b = (string)file_get_contents(dirname(__DIR__) . '/protocol/Core/Bridge.php');

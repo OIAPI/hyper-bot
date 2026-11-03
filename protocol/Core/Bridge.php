@@ -1,6 +1,7 @@
 <?php
 namespace Protocol\Core;
 
+use Core\Bot\Context as BotContext;
 use Utils\Cache;
 use Utils\Logger;
 
@@ -19,7 +20,9 @@ class Bridge {
 
 	public static function call(string $action, array $params = [], string $method = 'POST'): object {
 		$params = self::enrich($action, $params);
-		$adapter = Context::current();
+		// v2：适配器来自 Core\Bot\Context（事件上下文），
+		// 替代 v1 的 Protocol\Core\Context（后者只是 Cache::set('adapter') 的包装）。
+		$adapter = BotContext::adapter();
 		if ($adapter !== null && $adapter->handles($action)) {
 			try {
 				return self::shape($adapter->call($action, $params, $method));

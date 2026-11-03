@@ -196,37 +196,45 @@ final class Metrics {
         ];
     }
 
-    /** 插件（来自 Router::scanAppClasses + 反射元信息） */
+    /**
+     * 插件清单。
+     *
+     * v1 这里自己反射扫描目录（和 Controller\Router 各扫一遍）；
+     * v2 统一读 Core\Bot\Registry——它已经解析好元信息与 hook，
+     * WebUI 只是展示，不该再重复实现一遍扫描逻辑（两份必然漂移）。
+     */
     public function plugins(): array {
         $items = [];
         try {
-            $classes = \Controller\Router::scanAppClasses();
+            $registry = \Core\App::boot()->container->get(\Core\Bot\Registry::class);
+            $plugins = $registry->plugins();
         } catch (\Throwable $e) {
             Logger::debug('[WebUI] 插件扫描失败：' . $e->getMessage());
-            $classes = [];
+            $plugins = [];
         }
-        // Router::scanAppClasses() 返回「类名 => 状态」的关联数组，也可能是纯索引数组
-        foreach ($classes as $key => $value) {
-            $class = is_string($key) ? $key : (string)$value;
-            if ($class === '' || !class_exists($class)) {
+
+        foreach ($plugins as $plugin) {
+            $class = (string)($plugin['class'] ?? '');
+            if ($class === '') {
                 continue;
             }
             try {
                 $ref = new \ReflectionClass($class);
+                $methodCount = count($ref->getMethods(\ReflectionMethod::IS_PUBLIC));
             } catch (\Throwable) {
-                continue;
+                $methodCount = 0;
             }
-            $doc = $ref->getDocComment() ?: '';
             $items[] = [
                 'class'       => $class,
-                'short'       => $ref->getShortName(),
-                'name'        => self::docTag($doc, 'name') ?: $ref->getShortName(),
-                'description' => self::docTag($doc, 'description') ?: '',
-                'author'      => self::docTag($doc, 'author') ?: '',
-                'version'     => self::docTag($doc, 'version') ?: '',
+                'short'       => $plugin['name'] ?? $class,
+                'name'        => $plugin['displayName'] ?? ($plugin['name'] ?? $class),
+                'description' => $plugin['description'] ?? '',
+                'author'      => $plugin['author'] ?? '',
+                'version'     => $plugin['version'] ?? '',
+                'lastUpdate'  => $plugin['lastUpdate'] ?? '',
                 'enabled'     => true,
-                'methods'     => count($ref->getMethods(\ReflectionMethod::IS_PUBLIC)),
-                'hooks'       => $this->hooksOf($ref),
+                'methods'     => $methodCount,
+                'hooks'       => $plugin['hooks'] ?? [],
             ];
         }
         usort($items, fn($a, $b) => strcmp($a['short'], $b['short']));

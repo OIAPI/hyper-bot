@@ -26,7 +26,7 @@ php tests/webui_bridge_test.php  # Swoole 桥接：分流、401、Cookie、重�
 
 ```bash
 npm i jsdom     # 一次性依赖
-php bin/webui-serve.php --port=8095 &
+bash bin/hyper.sh start --port=8095 &
 WB_PASS=$(cat runtime/webui/initial-password.txt) node tests/webui_dom_test.mjs
 ```
 

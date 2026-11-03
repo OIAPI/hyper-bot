@@ -3,7 +3,7 @@ namespace Webui\Controller;
 
 use Core\Http\Request;
 use Core\Http\Response;
-use Controller\Router;
+use Core\Bot\Registry;
 
 /** 插件：列表 / 详情 / 重载扫描 / 群内批量开关 */
 final class PluginsController extends Base {
@@ -30,9 +30,9 @@ final class PluginsController extends Base {
         return $this->fail('插件不存在', -404, 404);
     }
 
-    /** 重新扫描（清空 Router 缓存后重建） */
+    /** 重新扫描插件（清空注册表缓存后重建） */
     public function reload(Request $request): Response {
-        Router::clean();
+        \Core\App::boot()->container->get(Registry::class)->invalidate();
         $items = $this->metrics->plugins()['items'];
         return $this->ok(['items' => $items, 'total' => count($items)], '已重新扫描');
     }

@@ -43,9 +43,15 @@ final class RecordingAdapter extends \Protocol\Core\Adapter {
 
 echo "== 出站：Bridge 按上下文转发 ==\n";
 
+// 先清空上下文：Include.php 启动时可能已留下栈帧，
+// bind() 会替换栈顶而不是压新栈，残留会导致断言比较的是旧对象。
+\Core\Bot\Context::clear();
+
 $rec = new RecordingAdapter();
-\Protocol\Core\Context::bind($rec);
-ok('上下文已绑定', \Protocol\Core\Context::current() === $rec);
+\Core\Bot\Context::bind($rec);
+// v2 的 bind() 只绑定「出站适配器」，Context 是不可变对象、每次替换栈顶，
+// 因此断言应该看 adapter 而不是 Context 实例身份。
+ok('上下文已绑定', \Core\Bot\Context::adapter() === $rec);
 
 $res = \Protocol\Core\Bridge::call('send_group_msg', [
     'group_id' => 123456,
@@ -72,7 +78,7 @@ $thrower = new class extends \Protocol\Core\Adapter {
         throw new \RuntimeException('模拟适配器故障');
     }
 };
-\Protocol\Core\Context::bind($thrower);
+\Core\Bot\Context::bind($thrower);
 $res = \Protocol\Core\Bridge::call('send_group_msg', ['group_id' => 9]);
 ok('适配器异常不冒泡', is_object($res) && isset($res->status));
 
@@ -88,14 +94,14 @@ $shape = new class extends \Protocol\Core\Adapter {
         ];
     }
 };
-\Protocol\Core\Context::bind($shape);
+\Core\Bot\Context::bind($shape);
 $r = \Protocol\Core\Bridge::call('send_group_msg', ['group_id' => 1, 'message' => 'hi']);
 ok('data 归一化为 stdClass（旧代码写 $res->data->message_id）', is_object($r->data));
 ok('$res->data->message_id 可读', ($r->data->message_id ?? null) === 456);
 ok('列表仍为数组（旧形态即 stdClass[]）', is_array($r->data->list) && ($r->data->list[0]->id ?? null) === 1);
 
-\Protocol\Core\Context::clear();
-ok('解绑后无当前适配器', \Protocol\Core\Context::current() === null);
+\Core\Bot\Context::clear();
+ok('解绑后无当前适配器', \Core\Bot\Context::adapter() === null);
 ok('无适配器时 hasAdapter() = false（回落 HTTP）', \Protocol\Core\Bridge::hasAdapter() === false);
 
 echo "\n== 出站：各协议参数映射 ==\n";
@@ -144,7 +150,7 @@ ok('OneBot 无 WS 时回落 HTTP 并返回统一结构', is_object($r3) && isset
 echo "\n== 出站：Bridge 自动补齐会话参数 ==\n";
 
 $rec2 = new RecordingAdapter();
-\Protocol\Core\Context::bind($rec2);
+\Core\Bot\Context::bind($rec2);
 \Utils\Cache::set('param', (object)['group_id' => 888, 'user_id' => 999, 'message_type' => 'group']);
 
 \Protocol\Core\Bridge::call('delete_msg', ['message_id' => 77]);

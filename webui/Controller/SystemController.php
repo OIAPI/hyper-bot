@@ -60,7 +60,8 @@ final class SystemController extends Base {
         }
         $this->store->del('webui:events');
         $this->store->del('webui:messages');
-        \Controller\Router::clean();
+        // 插件注册表一并失效（下次访问会重新扫描）
+        \Core\App::boot()->container->get(\Core\Bot\Registry::class)->invalidate();
         return $this->ok(null, '缓存已清理');
     }
 

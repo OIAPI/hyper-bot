@@ -12,17 +12,22 @@
       "App\\": "app/",
       "Controller\\": "controller/",
       "Core\\": "core/",
-      "Games\\": "games/",
       "Protocol\\": "protocol/",
-      "Public\\": "public/",
       "Utils\\": "utils/",
       "Webui\\": "webui/"
     }
   },
   "require": {
-    "php": ">=8.0",
+    "php": ">=8.1",
     "composer/composer": "^2.8",
-    "ext-swoole": ">=4.8"
+    "ext-json": "*",
+    "ext-mbstring": "*",
+    "ext-curl": "*"
+  },
+  "suggest": {
+    "ext-swoole": "swoole 运行架构必需（协程并发 / WebSocket 服务端 / 常驻连接）；没有则自动降级为 php 架构",
+    "ext-redis": "使用 Redis 存储时必需；没有则自动降级为文件存储",
+    "ext-sodium": "QQ 官方机器人 webhook 签名校验必需"
   },
   "config": {
     "optimize-autoloader": false

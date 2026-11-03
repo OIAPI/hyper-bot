@@ -56,6 +56,8 @@ interface RequestOptions {
   /** 登录接口本身不需要带 token，也不该在 401 时触发跳转 */
   anonymous?: boolean
   signal?: AbortSignal
+  /** 超时毫秒数，默认 20s：请求挂住时不能无限等 */
+  timeoutMs?: number
 }
 
 const BASE = '/webui/api'
@@ -81,17 +83,35 @@ async function request<T>(method: Method, path: string, opts: RequestOptions = {
     headers['Content-Type'] = 'application/json'
   }
 
+  // 超时兜底：接口卡住时页面会一直等，用户只看到空白
+  const ctrl = new AbortController()
+  const timeoutMs = opts.timeoutMs ?? 20000
+  let timedOut = false
+  const timer = window.setTimeout(() => {
+    timedOut = true
+    ctrl.abort()
+  }, timeoutMs)
+  if (opts.signal) {
+    if (opts.signal.aborted) ctrl.abort()
+    else opts.signal.addEventListener('abort', () => ctrl.abort(), { once: true })
+  }
+
   let res: Response
   try {
     res = await fetch(url.toString(), {
       method,
       headers,
       body: payloadBody,
-      signal: opts.signal,
+      signal: ctrl.signal,
     })
   } catch (e) {
-    if ((e as Error).name === 'AbortError') throw e
+    if ((e as Error).name === 'AbortError') {
+      if (timedOut) throw new ApiError('请求超时（' + Math.round(timeoutMs / 1000) + 's）：' + path, -1, 0)
+      throw e
+    }
     throw new ApiError('网络请求失败，请检查服务是否在运行', -1, 0)
+  } finally {
+    window.clearTimeout(timer)
   }
 
   // 401：只有非匿名请求才踢人

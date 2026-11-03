@@ -16,7 +16,7 @@ import {
 import {
   useThemeStore, THEME_PRESETS, FRAMEWORKS, type ThemeMode, type FrameworkId,
 } from '@/stores/theme'
-import { useUiRuntime } from '@/ui/provider'
+import { useUiRuntime, loadFramework } from '@/ui/provider'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { overviewApi, authApi } from '@/api'
@@ -28,6 +28,12 @@ const router = useRouter()
 const theme = useThemeStore()
 const auth = useAuthStore()
 const toast = useToastStore()
+
+// 组件库是独立 chunk：下载中给个提示，失败时把原因摆出来（而不是留一片空白）
+const { loading: uiLoading, failed: uiFailed } = useUiRuntime()
+function retryUi(): void {
+  void loadFramework(theme.framework)
+}
 const runtime = useUiRuntime()
 
 const collapsed = ref(localStorage.getItem('hyper-nav-collapsed') === '1')
@@ -333,12 +339,27 @@ async function doLogout(): Promise<void> {
         </UiDropdown>
       </header>
 
+      <div v-if="uiLoading && !uiFailed" class="ui-progress"><i /></div>
+
+      <div v-if="uiFailed" class="ui-banner">
+        <span class="ui-banner-text">界面组件库加载失败：{{ uiFailed }}</span>
+        <button type="button" class="ui-banner-btn" @click="retryUi">重试</button>
+      </div>
+
       <div class="content">
-        <RouterView v-slot="{ Component }">
-          <Transition name="fade" mode="out-in">
-            <component :is="Component" />
-          </Transition>
-        </RouterView>
+        <Suspense>
+          <RouterView v-slot="{ Component }">
+            <Transition name="fade" mode="out-in">
+              <component :is="Component" />
+            </Transition>
+          </RouterView>
+          <template #fallback>
+            <div class="route-loading">
+              <span class="route-spinner" />
+              <span>{{ uiLoading ? '正在加载界面组件…' : '载入中…' }}</span>
+            </div>
+          </template>
+        </Suspense>
       </div>
     </main>
 
@@ -530,6 +551,63 @@ async function doLogout(): Promise<void> {
 .account-caret { font-size: 11px; color: var(--text-faint); }
 
 .content { flex: 1; overflow-y: auto; padding: 16px; background: var(--bg); }
+
+.ui-progress {
+  height: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.ui-progress i {
+  display: block;
+  height: 100%;
+  width: 30%;
+  background: var(--accent);
+  animation: ui-progress 1.1s ease-in-out infinite;
+}
+@keyframes ui-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.ui-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  color: var(--danger, #d33);
+  background: color-mix(in srgb, var(--danger, #d33) 8%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--danger, #d33) 30%, transparent);
+}
+.ui-banner-text { flex: 1; user-select: text; }
+.ui-banner-btn {
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.route-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 40vh;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.route-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--text-faint) 35%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: route-spin 0.7s linear infinite;
+}
+@keyframes route-spin { to { transform: rotate(360deg); } }
 
 /* ---------- 主题面板 ---------- */
 .theme-panel {

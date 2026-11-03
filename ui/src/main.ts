@@ -71,5 +71,8 @@ router.afterEach(() => {
   document.getElementById('hyper-fatal')?.remove()
 })
 
-// 先加载当前框架的适配器再挂载，避免首屏空白
-void initUi(app).finally(() => app.mount('#app'))
+// 先挂载再加载组件库：适配器是几百 KB 的独立 chunk，
+// 等它下载完再挂载会让整页空白好几秒（网速慢时像卡死）。
+// 页面本身能渲染，控件在适配器就绪后自动出现。
+app.mount('#app')
+void initUi(app)

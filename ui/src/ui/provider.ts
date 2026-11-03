@@ -44,6 +44,12 @@ export async function loadFramework(id: string): Promise<void> {
     }
     adapter.value = next
     activeId.value = next.id
+    // 调试用：任何页面 ?diag=1 时会把这两项打印出来
+    ;(window as unknown as Record<string, unknown>).__HYPER_UI__ = {
+      id: next.id,
+      parts: Object.keys(next.components ?? {}).length,
+      root: Boolean(next.Root),
+    }
     next.applyTheme?.({ accent: uiTheme.accent, dark: uiTheme.dark })
     failed.value = null
   } catch (err) {

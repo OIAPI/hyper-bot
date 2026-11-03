@@ -7,7 +7,7 @@
  *  - 主题色（--brand-h/s/l 派生 --accent，适配器 applyTheme 再同步给各组件库）
  * 导航与外壳用自有标记 + CSS，不做成组件库控件——它是品牌骨架，切换框架时不应跳动。
  */
-import { ref, computed, nextTick, onMounted, onUnmounted, type Component } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Odometer, Connection, Download, Document, ChatDotRound, Grid, Box,
@@ -37,6 +37,35 @@ function retryUi(): void {
   void loadFramework(theme.framework)
 }
 const runtime = useUiRuntime()
+
+/* ---------- 布局自检：任意页面加 ?diag=1 即在右下角显示实测尺寸 ---------- */
+const diagOn = computed(() => route.query.diag === '1')
+const diagText = ref('')
+function measureDiag(): void {
+  if (!diagOn.value) return
+  const out: string[] = []
+  out.push('viewport ' + window.innerWidth + 'x' + window.innerHeight)
+  const ui = (window as unknown as Record<string, any>).__HYPER_UI__
+  out.push('ui=' + (ui ? ui.id + ' parts=' + ui.parts : '未加载'))
+  const names = ['.shell', '.main', '.content', '.page']
+  for (const n of names) {
+    const el = document.querySelector(n)
+    if (!el) { out.push(n + ' 缺失'); continue }
+    const r = el.getBoundingClientRect()
+    const cs = getComputedStyle(el)
+    out.push(n + ' h=' + Math.round(r.height) + ' w=' + Math.round(r.width) + ' disp=' + cs.display + ' ov=' + cs.overflowY + ' hcss=' + cs.height)
+  }
+  const cards = Array.from(document.querySelectorAll('.el-card'))
+  out.push('cards=' + cards.length)
+  cards.slice(0, 4).forEach((c, i) => {
+    const r = c.getBoundingClientRect()
+    const cs = getComputedStyle(c)
+    out.push('card' + i + ' y=' + Math.round(r.y) + ' h=' + Math.round(r.height) + ' pos=' + cs.position + ' hcss=' + cs.height)
+  })
+  diagText.value = out.join('\n')
+}
+onMounted(() => window.setTimeout(measureDiag, 1500))
+watch(() => route.fullPath, () => window.setTimeout(measureDiag, 1500))
 
 const collapsed = ref(localStorage.getItem('hyper-nav-collapsed') === '1')
 const narrow = ref(false)
@@ -362,6 +391,8 @@ async function doLogout(): Promise<void> {
     </main>
 
     <AppToast />
+
+    <pre v-if="diagOn" class="diag-overlay">{{ diagText }}</pre>
   </div>
 </template>
 
@@ -565,6 +596,25 @@ async function doLogout(): Promise<void> {
 @keyframes ui-progress {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(400%); }
+}
+
+.diag-overlay {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 99999;
+  margin: 0;
+  max-width: 46vw;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(20, 24, 32, 0.92);
+  color: #e6e9ef;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  user-select: text;
+  pointer-events: auto;
 }
 
 .ui-banner {

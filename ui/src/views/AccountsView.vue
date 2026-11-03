@@ -32,8 +32,28 @@ const columns: UiColumn[] = [
   { key: 'ops', title: '操作', width: 140, align: 'right' },
 ]
 
-const rows = computed(() => data.value?.accounts ?? [])
-const protocols = computed(() => data.value?.protocols ?? {})
+const DEFAULT_PROTOCOLS: Record<string, string> = {
+  onebot: 'OneBot 11',
+  milky: 'Milky',
+  qqbot: 'QQ 官方机器人',
+}
+
+const rows = computed(() => (Array.isArray(data.value?.accounts) ? data.value!.accounts : []))
+// 老版本后端没有 stats 字段：这里自己算一份，避免「一个字段缺失整页崩」
+const stats = computed(() => {
+  const given = data.value?.stats
+  if (given && typeof given.total === 'number') return given
+  const counts: Record<string, number> = {}
+  for (const row of rows.value) counts[row.protocol] = (counts[row.protocol] ?? 0) + 1
+  return {
+    total: rows.value.length,
+    enabled: rows.value.filter((row) => row.enable).length,
+    protocols: counts,
+  }
+})
+const protocols = computed(() =>
+  data.value?.protocols && Object.keys(data.value.protocols).length ? data.value.protocols : DEFAULT_PROTOCOLS,
+)
 const protocolOptions = computed(() =>
   Object.entries(protocols.value).map(([value, label]) => ({ label, value })),
 )
@@ -180,20 +200,20 @@ onMounted(load)
 
     <div class="stat-row">
       <div class="stat">
-        <div class="stat-value">{{ data?.stats.total ?? 0 }}</div>
+        <div class="stat-value">{{ stats.total }}</div>
         <div class="stat-label">账号总数</div>
       </div>
       <div class="stat">
-        <div class="stat-value">{{ data?.stats.enabled ?? 0 }}</div>
+        <div class="stat-value">{{ stats.enabled }}</div>
         <div class="stat-label">已启用</div>
       </div>
       <div class="stat">
-        <div class="stat-value">{{ Object.keys(data?.stats.protocols ?? {}).length }}</div>
+        <div class="stat-value">{{ Object.keys(stats.protocols).length }}</div>
         <div class="stat-label">协议种类</div>
       </div>
       <div class="stat wide">
         <div class="stat-value small">
-          <span v-for="(count, name) in (data?.stats.protocols ?? {})" :key="name" class="proto-chip">
+          <span v-for="(count, name) in stats.protocols" :key="name" class="proto-chip">
             {{ protocols[name] || name }} · {{ count }}
           </span>
         </div>

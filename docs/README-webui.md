@@ -178,6 +178,20 @@ arch / receives_events / arch_hint。
 - **面板读两套**：JSONL 与 `logger.log`（含轮转备份）都读，纯文本按 `[时间] [级别] [通道] 内容` 解析后与 JSONL 合并、按时间倒序。只读 JSONL 会导致「业务日志一大堆，日志页永远空白」。
 - **消息记录默认给最近有数据的那天**：不传日期时按 `runtime/message/*/*/*` 里最新的目录返回，并在响应里带 `date` 与 `dates`，避免打开页面就是空的。
 
+## 常见故障：面板 500 / 登录页说没初始化管理员
+
+先看日志里有没有这类行：
+
+```
+[app] http kernel exception {"path":"/webui/api/overview/counts","error":"protocol error, got '{' as reply type byte"}
+```
+
+这是 **Redis 连得上、但对端不是 Redis**（端口被 Nginx/面板占用、走了 HTTP 反向代理、host/port 配错）。旧版会因此每个请求都 500，连登录页都进不去。
+
+- 2.1.5 起：存储层自动降级到文件存储（`runtime/store`），面板可继续用，系统页的「存储」会标注「主存储故障，已降级文件存储」
+- 想彻底解决：`store.driver = file`，或把 `Redis.host / Redis.port` 改回真正的 Redis
+- 自检：`php bin/hyper doctor` 会真的 PING 一次并说明「连上了但不是 Redis」
+
 ## 忘记密码（重置面板账号）
 
 面板账号存在 `runtime/webui/users.json`，密码是 bcrypt 哈希。下面三种情况都会让「原来那个密码」失效：

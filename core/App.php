@@ -199,6 +199,8 @@ final class App {
             return new \Core\Store\MemoryStore();
         }
 
+        $fileFallback = new \Core\Store\FileStore($root . '/store');
+
         // auto / redis：能用 Redis 就用，否则退化为文件存储
         if (class_exists('Redis')) {
             try {
@@ -215,13 +217,23 @@ final class App {
                     if ($select > 0) {
                         @$client->select($select);
                     }
-                    return new \Core\Store\RedisStore($client);
+                    // 连上了不代表对端是 Redis（端口被 HTTP 服务占用时也会 connect 成功），
+                    // 先 PING 一次，失败就直接用文件存储
+                    try {
+                        $pong = @$client->ping();
+                        if ($pong === false) {
+                            throw new \RuntimeException('PING 无响应');
+                        }
+                        return new \Core\Store\ResilientStore(new \Core\Store\RedisStore($client), $fileFallback);
+                    } catch (\Throwable) {
+                        @$client->close();
+                    }
                 }
             } catch (\Throwable) {
                 // 落到文件存储
             }
         }
 
-        return new \Core\Store\FileStore($root . '/store');
+        return $fileFallback;
     }
 }

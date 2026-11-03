@@ -42,12 +42,18 @@ function showFatalError(err: unknown, info = ''): void {
       '<button id="hyper-fatal-reload" style="padding:7px 14px;border-radius:6px;border:1px solid #3a4152;' +
       'background:#1d2230;color:#e6e6e6;cursor:pointer">刷新页面</button>' +
       '<button id="hyper-fatal-home" style="padding:7px 14px;border-radius:6px;border:1px solid #3a4152;' +
-      'background:#1d2230;color:#e6e6e6;cursor:pointer">回到概览</button></div>'
+      'background:#1d2230;color:#e6e6e6;cursor:pointer">回到概览</button>' +
+      '<button id="hyper-fatal-close" style="padding:7px 14px;border-radius:6px;border:1px solid #3a4152;' +
+      'background:transparent;color:#9aa4b2;cursor:pointer">关掉这个提示</button></div>' +
+      '<div style="margin-top:10px;color:#6b7482;font-size:12px">关掉后可以继续操作其它页面；' +
+      '这条错误同时打在浏览器控制台里。</div>'
     document.body.appendChild(box)
     document.getElementById('hyper-fatal-reload')?.addEventListener('click', () => location.reload())
     document.getElementById('hyper-fatal-home')?.addEventListener('click', () => {
+      box?.remove()
       location.href = '/webui/'
     })
+    document.getElementById('hyper-fatal-close')?.addEventListener('click', () => box?.remove())
   }
   const where = document.getElementById('hyper-fatal-where')
   if (where) {
@@ -60,6 +66,10 @@ function showFatalError(err: unknown, info = ''): void {
 app.config.errorHandler = (err, _instance, info) => showFatalError(err, info)
 window.addEventListener('unhandledrejection', (event) => showFatalError(event.reason, 'unhandledrejection'))
 router.onError((err) => showFatalError(err, 'router'))
+// 换页就把遮罩摘掉：否则一个页面的渲染错误会挡住整个面板（连登录页都进不去）
+router.afterEach(() => {
+  document.getElementById('hyper-fatal')?.remove()
+})
 
 // 先加载当前框架的适配器再挂载，避免首屏空白
 void initUi(app).finally(() => app.mount('#app'))

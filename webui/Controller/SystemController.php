@@ -16,8 +16,14 @@ final class SystemController extends Base {
         $configOk = is_writable(Config::path());
         $vendorOk = is_file($this->root . '/vendor/autoload.php');
 
+        // Redis 连得上但不是 Redis（端口被 HTTP 占用等）时，存储层会降级到文件存储，
+        // 这里必须显式说明，否则用户只看到「Redis OK」却查不到数据
+        $store = \Core\App::boot()->store;
+        $degraded = $store instanceof \Core\Store\ResilientStore && $store->degraded();
+        $storeDetail = $degraded ? $storeDriver . '（主存储故障，已降级文件存储）' : $storeDriver;
+
         $checks = [
-            ['name' => '存储', 'ok' => true, 'detail' => $storeDriver],
+            ['name' => '存储', 'ok' => true, 'detail' => $storeDetail],
             ['name' => 'Redis', 'ok' => $redisOk !== false, 'detail' => $redisOk === null ? '未安装扩展（用文件存储）' : ($redisOk ? 'PING 正常' : '连不上，已回落文件存储')],
             ['name' => 'runtime 目录', 'ok' => $runtimeOk, 'detail' => $runtimeOk ? $this->root . '/runtime' : '不可写，日志与缓存都会失败'],
             ['name' => 'Config.ini', 'ok' => $configOk, 'detail' => $configOk ? Config::path() : '不可写，面板无法保存配置'],

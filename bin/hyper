@@ -448,6 +448,32 @@ function commandDoctor(array $ctx): void
     $check('ext-sodium', extension_loaded('sodium'), '可选：QQ 官方 Webhook 验签需要', true);
     $check('ext-redis', extension_loaded('redis'), '可选：缺失时用文件存储', true);
 
+    // 连得上不等于对端是 Redis：端口被 HTTP 服务占用时会报 protocol error，
+    // 面板表现为「每个请求都 500」，所以这里真的 PING 一次
+    $driver = strtolower(\Core\Config::string('store.driver', 'auto'));
+    if (extension_loaded('redis') && in_array($driver, ['auto', 'redis'], true)) {
+        $host = \Core\Config::string('Redis.host', '127.0.0.1');
+        $port = \Core\Config::int('Redis.port', 6379);
+        $pingOk = false;
+        $detail = '连不上 ' . $host . ':' . $port;
+        try {
+            $probe = new \Redis();
+            if (@$probe->connect($host, $port, 0.8) === true) {
+                try {
+                    $pong = @$probe->ping();
+                    $pingOk = $pong !== false;
+                    $detail = $pingOk ? 'PING ' . $host . ':' . $port . ' 正常' : 'PING 无响应：' . $host . ':' . $port;
+                } catch (\Throwable $e) {
+                    $detail = '连上了但不是 Redis（' . $host . ':' . $port . '）：' . $e->getMessage();
+                }
+                @$probe->close();
+            }
+        } catch (\Throwable $e) {
+            $detail = 'Redis 探测失败：' . $e->getMessage();
+        }
+        $check('Redis 可用（可选）', $pingOk, $detail, true);
+    }
+
     // 目录
     foreach (['runtime', 'runtime/log', 'runtime/store', 'runtime/webui'] as $dir) {
         $path = $root . '/' . $dir;

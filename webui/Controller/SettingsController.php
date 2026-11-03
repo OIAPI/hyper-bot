@@ -42,9 +42,20 @@ final class SettingsController extends Base {
             return $this->fail('配置键不合法', -1, 400);
         }
         if (!Config::set($key, $request->input('value'))) {
-            return $this->fail('写入失败（Config.ini 不可写或键不存在的小节无法创建）', -2, 500);
+            // 具体原因在 Config::warnings() 里（值含换行被拒、文件不可写等），
+            // 不透出来用户只会看到一句笼统的"写入失败"，不知道该改什么。
+            $warnings = Config::warnings();
+            $reason = $warnings === []
+                ? '写入失败（Config.ini 不可写或键所在小节无法创建）'
+                : (string)end($warnings);
+            return $this->fail($reason, -2, 500);
         }
-        return $this->ok(['key' => $key, 'value' => Config::get($key)]);
+        return $this->ok([
+            'key'      => $key,
+            'value'    => Config::get($key),
+            'backup'   => Config::lastBackup(),
+            'warnings' => Config::warnings(),
+        ]);
     }
 
     /** 重新加载配置缓存 */

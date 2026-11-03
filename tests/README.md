@@ -18,9 +18,15 @@ php tests/adapters.php        # 三个适配器的注册、name()/handles()/meta
 
 ```bash
 php tests/kernel_test.php        # Config / Router / Kernel / Auth / Store / Logger / Container
+php tests/config_test.php        # 配置内核：分号截断、# 注释、大小写、备份、UTF-8、数字类型
 php tests/webui_api_test.php     # WebUI 全部路由的端到端行为（内存存储，不落地）
 php tests/webui_bridge_test.php  # Swoole 桥接：分流、401、Cookie、重定向（用桩对象）
 ```
+
+`config_test.php` 的每个用例都对应一个**实测复现过**的缺陷，不能作为"锦上添花"删掉：
+值含分号被截断、行首 `#` 被当成键名、`[Redis]` 大小写不一致读不到、
+写回无备份、以及 `preg_split('/\R/')` 缺少 `/u` 把 UTF-8 中文按字节切断
+（后果是配置树 json_encode 失败、WebUI 配置页 500）。
 
 ### 前端端到端（真实 DOM）
 

@@ -76,12 +76,28 @@ export async function render(container) {
         ),
       ));
 
+    const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+
+    // 告警必须展开可见：这些不是"解析失败"，而是"语法合法但语义被改写了"
+    // （值里的分号被截断、# 被当成键名、注释行被误写等），
+    // 只看一个数字角标用户根本不知道要去改哪一行。
+    const warningPanel = warnings.length
+      ? h('div.card.mb-12', { style: { borderColor: 'var(--warn, #b8860b)' } },
+          h('div.card-head', {}, h('div.grow', {}, h('h2', {}, '配置告警')),
+            badge(warnings.length + ' 项', 'warn')),
+          h('div.card-body.tight', {},
+            h('ul.col', { style: { gap: '6px', paddingLeft: '18px', margin: 0 } },
+              warnings.map((w) => h('li.tiny', {}, String(w)))),
+          ))
+      : null;
+
     mount(h('div', {},
       h('div.row.wrap.mb-8', {},
         badge(data.writable ? 'Config.ini 可写' : 'Config.ini 只读', data.writable ? 'ok' : 'danger'),
         data.path ? h('span.tiny.subtle.mono', {}, data.path) : null,
-        data.warnings?.length ? badge(data.warnings.length + ' 个告警', 'warn') : null,
+        warnings.length ? badge(warnings.length + ' 个告警', 'warn') : null,
       ),
+      warningPanel,
       sections,
     ), treeWrap);
   }
@@ -113,6 +129,7 @@ export async function render(container) {
               await api.put('/webui/api/settings', { key, value: input.value });
               ok('已保存（重启后生效）');
               await loadTree();
+              // 写入失败时后端会返回 500 并在 message 里说明（例如值里含换行被拒）
             } catch (e) { reportError(e); return false; }
           },
         },

@@ -125,21 +125,28 @@ $ok('全通配不遗漏', count($g->keys('*')) === 3);
 echo "== Config: 写回（回归） ==\n";
 // 回归 1：替换串用了字面量前缀，把 "debug = true" 写成了 "1false"。
 // 回归 2：只按键名替换，会改到同名键所在的其它小节。
-$cfg = \Core\Config::path();
-$backup = is_file($cfg) ? \Core\Fs::read($cfg) : null;
+// 用临时配置文件，不碰真实 Config.ini——
+// 之前这里直接覆盖真实配置再恢复，而 Config::set() 现在会写 .bak 备份，
+// 结果每跑一次测试就在仓库根目录留下一个备份文件。
+$realConfig = \Core\Config::path();
+$scratch = sys_get_temp_dir() . '/kernel-cfg-' . bin2hex(random_bytes(4)) . '.ini';
 try {
     $src = "\n[app]\ndebug = true\nname = app1\n\n[probe]\ndebug = keep\n";
-    \Core\Fs::write($cfg, $src);
+    \Core\Fs::write($scratch, $src);
+    \Core\Config::path($scratch);
     \Core\Config::refresh();
     $ok('写入返回 true', \Core\Config::set('app.debug', false) === true);
     \Core\Config::refresh();
     $ok('布尔值被读回为 false', \Core\Config::bool('app.debug') === false);
     $ok('同名键未被误改', \Core\Config::string('probe.debug') === 'keep');
-    $head = \Core\Fs::read($cfg);
+    $head = \Core\Fs::read($scratch);
     $ok('未被写成 "1false"', !str_contains($head, '1false'));
     $ok('行格式保持 "键 = 值"', (bool)preg_match('/^debug = false$/m', $head));
 } finally {
-    if ($backup !== null) { \Core\Fs::write($cfg, $backup); \Core\Config::refresh(); }
+    \Core\Config::path($realConfig);
+    \Core\Config::refresh();
+    @unlink($scratch);
+    foreach (glob($scratch . '.*.bak') ?: [] as $f) { @unlink($f); }
 }
 
 echo $fail === 0 ? "\n全部通过\n" : "\n失败 {$fail} 项\n";

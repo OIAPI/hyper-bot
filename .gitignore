@@ -3,3 +3,6 @@ runtime/
 *.log
 .idea/
 .vscode/
+
+# Config.ini 写回前自动生成的备份（保留最近 5 份，仅用于本地回滚）
+Config.ini.*.bak

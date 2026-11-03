@@ -15,6 +15,11 @@ define('__message__', __runtime__ . '/message');
 define('debug', true);
 define('APP_PATH', __app__);
 
+// 依赖缺失是最常见的部署故障，且 display_errors 已关，直接给出可操作的提示
+if (!is_file(__root__ . '/vendor/autoload.php')) {
+    fwrite(STDERR, '缺少依赖：vendor/ 未安装。请先运行 composer install --no-dev -o' . PHP_EOL);
+    exit(1);
+}
 
 require __root__ . '/vendor/autoload.php';
 

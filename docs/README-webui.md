@@ -135,3 +135,32 @@ php tests/kernel_test.php         # 内核各组件
 7. **首次启动**：没有任何账号时，bootstrap 会把首个登录账号建为 owner；之后在「账号」页管理。
 8. **可选扩展**：sodium（QQ 官方 Webhook 验签）、redis（可省，缺失走文件存储）、swoole（php 架构不需要）。
 9. **自检**：`php bin/hyper doctor`、`php tests/webui_api_test.php`（67 项）。
+
+## 启动脚本的适用环境
+
+两个入口都不写死绝对路径（分别用 __DIR__ 与 BASH_SOURCE 推导项目根），整个目录可以搬到任意路径运行。
+实测：把项目复制到 ~/relocate-test2 后执行 bin/hyper.sh start --port=8095，正常启动，/webui/ 302、/webui/api/health 200。
+
+| 环境 | php bin/hyper | bin/hyper.sh |
+|---|---|---|
+| Linux（PHP ≥ 8.1 CLI） | 全部命令可用 | 需 bash + nohup |
+| macOS | 可用 | 系统自带 bash 3.2 即可（未用 bash 4 语法） |
+| Android / Termux | 可用 | 可用 |
+| Docker / 容器 | 可用 | 可用 |
+| Windows 原生 | help/status/doctor/config 可用，serve --arch=php 起不来 | 不可用 |
+
+### 具体依赖
+
+- php bin/hyper：PHP ≥ 8.1 CLI（json / mbstring / openssl / curl）。起服务需要能创建子进程：
+  有 pcntl 走 pcntl_fork + pcntl_exec('/bin/sh', …)，否则退回 shell_exec + bash -c nohup。
+  两者都没有（典型是 Windows 原生、缺 /bin/sh）时会提示「启动内置服务器失败」，并打印可手动执行的命令。
+- bin/hyper.sh：bash 3.2+、nohup、seq、head、grep、awk、kill；端口检测按 ss → netstat → curl 逐级降级，都缺也能跑。
+  PHP 查找顺序：$HYPER_PHP → 项目自带 .phpext/php → PATH 里的 php。
+- 可写目录：runtime/（PID、日志、缓存）。vendor/ 缺失时启动会直接提示 composer install --no-dev -o，不再静默退出。
+- 多实例：PID 与日志按端口命名（runtime/hyper-<port>.pid），不同端口可并存。
+- git 模式：bin/hyper 与 bin/hyper.sh 已置 100755，clone 到普通文件系统后可直接 ./bin/hyper serve；
+  在 /sdcard 这类忽略执行位的挂载上改用 php bin/hyper 或 bash bin/hyper.sh。
+
+### Windows 上的建议
+
+用 WSL2 或 Docker 跑 Linux 容器；Windows 原生缺 /bin/sh 与 bash，serve 的子进程创建会失败（help、status、doctor 仍可用）。

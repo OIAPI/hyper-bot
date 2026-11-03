@@ -348,8 +348,9 @@ function commandDoctor(array $ctx): void
     $root = dirname(__DIR__);
     $rows = [];
 
-    $check = static function (string $name, bool $ok, string $detail = '') use (&$rows): void {
-        $rows[] = [$name, $ok ? 'OK' : 'FAIL', $detail];
+    // optional=true 的项缺失只提示（WARN），不算失败
+    $check = static function (string $name, bool $ok, string $detail = '', bool $optional = false) use (&$rows): void {
+        $rows[] = [$name, $ok ? 'OK' : ($optional ? 'WARN' : 'FAIL'), $detail];
     };
 
     // 扩展
@@ -358,9 +359,9 @@ function commandDoctor(array $ctx): void
     $check('ext-mbstring', extension_loaded('mbstring'), '中文处理必需');
     $check('ext-curl', extension_loaded('curl'), '协议调用必需');
     $check('ext-openssl', extension_loaded('openssl'), 'HTTPS 必需');
-    $check('ext-swoole', extension_loaded('swoole'), 'swoole 架构必需（php 架构可省）');
-    $check('ext-sodium', extension_loaded('sodium'), 'QQ 官方 Webhook 验签需要');
-    $check('ext-redis', extension_loaded('redis'), '可选（缺失时用文件存储）');
+    $check('ext-swoole', extension_loaded('swoole'), '可选：装了就默认跑 swoole，否则降级 php', true);
+    $check('ext-sodium', extension_loaded('sodium'), '可选：QQ 官方 Webhook 验签需要', true);
+    $check('ext-redis', extension_loaded('redis'), '可选：缺失时用文件存储', true);
 
     // 目录
     foreach (['runtime', 'runtime/log', 'runtime/store', 'runtime/webui'] as $dir) {
@@ -378,7 +379,7 @@ function commandDoctor(array $ctx): void
 
     // composer autoload
     $autoloadOk = is_file($root . '/vendor/autoload.php');
-    $check('vendor/autoload.php', $autoloadOk, $autoloadOk ? '' : '运行 php bin/hyper install');
+    $check('vendor/autoload.php', $autoloadOk, $autoloadOk ? '依赖已就绪' : '运行 php bin/hyper install');
 
     echo PHP_EOL . '  Hyper Bot ' . Version::current() . ' 环境体检' . PHP_EOL;
     echo '  ' . str_repeat('─', 62) . PHP_EOL;
@@ -395,10 +396,21 @@ function commandDoctor(array $ctx): void
     }
     echo PHP_EOL;
 
-    $failed = count(array_filter($rows, static fn($r) => $r[1] === 'FAIL'));
-    // 只有「必需」项失败才返回非 0
-    $fatal = array_filter($rows, static fn($r) => $r[1] === 'FAIL' && str_contains($r[0], '必需'));
-    exit($fatal === [] ? 0 : 1);
+    $fails = [];
+    $warns = 0;
+    foreach ($rows as [$name, $status]) {
+        if ($status === 'FAIL') {
+            $fails[] = $name;
+        } elseif ($status === 'WARN') {
+            $warns++;
+        }
+    }
+    if ($fails === []) {
+        echo '  ✓ 必需项全部通过' . ($warns > 0 ? "（{$warns} 项可选扩展未安装）" : '') . PHP_EOL . PHP_EOL;
+    } else {
+        echo '  ✗ 失败 ' . count($fails) . ' 项：' . implode('、', $fails) . PHP_EOL . PHP_EOL;
+    }
+    exit($fails === [] ? 0 : 1);
 }
 
 // ---------------- status ----------------
@@ -506,10 +518,13 @@ function commandInstall(array $args, array $options): void
     }
 
     // 2) 运行时目录与配置可写
-    foreach (['runtime', 'runtime/log', 'runtime/store', 'runtime/webui'] as $dir) {
+    $created = 0;
+    foreach (['runtime', 'runtime/log', 'runtime/store', 'runtime/webui', 'runtime/github'] as $dir) {
         $path = $root . '/' . $dir;
         if (!is_dir($path)) {
-            @mkdir($path, 0775, true);
+            if (@mkdir($path, 0775, true)) {
+                $created++;
+            }
         }
         $writable = is_dir($path) && is_writable($path);
         if (!$writable) {
@@ -526,8 +541,9 @@ function commandInstall(array $args, array $options): void
 
     // 3) Composer 依赖
     $autoload = $root . '/vendor/autoload.php';
+    $deps = 'skip';
     if (is_file($autoload) && !$force) {
-        $say('OK', 'vendor/autoload.php', '已存在（--force 可重装）');
+        $say('OK', 'vendor/autoload.php', '已就绪，跳过依赖安装（--force 重装）');
     } else {
         $composer = findComposer();
         if ($composer === null && isset($options['download-composer'])) {
@@ -546,6 +562,7 @@ function commandInstall(array $args, array $options): void
             $code = runInDir($root, $cmd, true);
             if ($code === 0 && is_file($autoload)) {
                 $say('OK', 'composer install', '依赖已就绪');
+                $deps = 'installed';
             } else {
                 $say('FAIL', 'composer install', '退出码 ' . $code);
                 $ok = false;
@@ -555,7 +572,12 @@ function commandInstall(array $args, array $options): void
 
     echo '  ' . str_repeat('─', 64) . PHP_EOL;
     if ($ok) {
-        echo '  完成。下一步：php bin/hyper doctor，然后 php bin/hyper serve（默认 swoole）' . PHP_EOL . PHP_EOL;
+        // 明确说清楚这次到底做了什么，避免「跑完好像什么都没变」的误解
+        $changes = [];
+        $changes[] = $deps === 'installed' ? '已安装依赖' : '依赖已就绪（未重复下载）';
+        $changes[] = $created > 0 ? "新建 {$created} 个运行时目录" : '运行时目录已就绪';
+        echo '  环境就绪：' . implode('，', $changes) . PHP_EOL;
+        echo '  下一步：php bin/hyper doctor，然后 php bin/hyper serve（默认 swoole）' . PHP_EOL . PHP_EOL;
         exit(0);
     }
     echo '  有未通过的项，按上面提示处理后重跑。' . PHP_EOL . PHP_EOL;

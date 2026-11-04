@@ -73,11 +73,11 @@ final class Github extends BaseApp
                     'endpoint' => '/deliveries',
                     'rowKey' => 'at',
                     'columns' => [
-                        ['key' => 'time_text', 'title' => '时间', 'width' => 170],
+                        ['key' => 'at_text', 'title' => '时间', 'width' => 170],
                         ['key' => 'hook', 'title' => '订阅', 'width' => 130],
                         ['key' => 'event', 'title' => '事件', 'width' => 150],
                         ['key' => 'summary', 'title' => '内容', 'minWidth' => 260],
-                        ['key' => 'ok', 'title' => '结果', 'width' => 80],
+                        ['key' => 'ok_text', 'title' => '结果', 'width' => 80],
                     ],
                 ],
             ],
@@ -85,6 +85,57 @@ final class Github extends BaseApp
     }
 
     /** 插件自己的接口，ExtController 会转发到这里 */
+    /**
+     * 注入到「概览」页的小块：最近几次投递。
+     * 与 adminPage 的区别是「不占一个侧边栏入口」，直接长在已有页面上。
+     */
+    public static function adminWidgets(): array
+    {
+        return [[
+            'slot'  => 'overview',
+            'title' => 'GitHub 投递',
+            'blocks' => [[
+                'type'     => 'table',
+                'endpoint' => '/deliveries',
+                'columns'  => [
+                    ['key' => 'at_text', 'title' => '时间', 'width' => 150],
+                    ['key' => 'event', 'title' => '事件', 'width' => 120],
+                    ['key' => 'hook', 'title' => '订阅', 'width' => 110],
+                    ['key' => 'ok_text', 'title' => '结果', 'width' => 80],
+                    ['key' => 'summary', 'title' => '摘要', 'minWidth' => 200],
+                ],
+            ]],
+        ]];
+    }
+
+    /** 命令行：php bin/hyper ext github.ping */
+    public static function commands(): array
+    {
+        return [
+            'github.ping' => [
+                'desc'    => '打印最近的 WebHook 投递，确认配置是否生效',
+                'handler' => static function (array $args): string {
+                    $items = WebhookStore::deliveries(5);
+                    if ($items === []) {
+                        return '还没有投递记录。把 WebHook 地址填到 GitHub 仓库设置里，随便触发一次 push。';
+                    }
+                    $lines = [];
+                    foreach ($items as $item) {
+                        $lines[] = sprintf(
+                            '%s  事件=%s  订阅=%s  结果=%s  %s',
+                            date('m-d H:i:s', (int)($item['at'] ?? 0)),
+                            (string)($item['event'] ?? '-'),
+                            (string)($item['hook'] ?? '-'),
+                            !empty($item['ok']) ? 'OK' : 'FAIL',
+                            (string)($item['summary'] ?? '')
+                        );
+                    }
+                    return implode(PHP_EOL, $lines);
+                },
+            ],
+        ];
+    }
+
     public static function extRoutes(): array
     {
         return [
@@ -129,15 +180,15 @@ final class Github extends BaseApp
             },
 
             'GET /deliveries' => static function (array $in): array {
-                $items = [];
-                foreach (WebhookStore::deliveries('', 50) as $row) {
-                    $items[] = $row + [
-                        'time_text' => date('Y-m-d H:i:s', (int)($row['at'] ?? 0)),
-                        'ok'        => !empty($row['ok']) ? '成功' : '失败',
-                    ];
+                $rows = [];
+                foreach (WebhookStore::deliveries((int)($in['limit'] ?? 20)) as $item) {
+                    $item['at_text'] = date('m-d H:i:s', (int)($item['at'] ?? 0));
+                    $item['ok_text'] = !empty($item['ok']) ? '成功' : '失败';
+                    $rows[] = $item;
                 }
-                return ['items' => $items];
+                return ['items' => $rows];
             },
+
         ];
     }
 

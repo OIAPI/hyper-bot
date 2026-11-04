@@ -20,12 +20,35 @@ final class Kernel {
         private ?\Closure $errorHandler = null,
     ) {}
 
+    /** @var array<int, callable> 插件注册的响应过滤器 */
+    private array $responseFilters = [];
+
+    /** 插件可以追加「拿到 Response 之后再改一把」的过滤器（CORS、统一头等） */
+    public function addResponseFilter(callable $filter): void {
+        $this->responseFilters[] = $filter;
+    }
+
     public function router(): Router {
         return $this->router;
     }
 
     public function setFallback(?\Closure $fallback): void {
         $this->fallback = $fallback;
+    }
+
+    /** 依次跑插件过滤器；任何一步抛错都只记日志，不影响原响应 */
+    private function applyFilters(Request $request, Response $response): Response {
+        foreach ($this->responseFilters as $filter) {
+            try {
+                $next = $filter($request, $response);
+                if ($next instanceof Response) {
+                    $response = $next;
+                }
+            } catch (\Throwable $e) {
+                $this->logger?->warning('response filter failed: ' . $e->getMessage());
+            }
+        }
+        return $response;
     }
 
     public function handle(Request $request): Response {
@@ -35,7 +58,7 @@ final class Kernel {
             if ($match === null) {
                 if ($this->fallback !== null) {
                     $result = ($this->fallback)($request);
-                    return $result instanceof Response ? $result : Response::json($result);
+                    return $this->applyFilters($request, $result instanceof Response ? $result : Response::json($result));
                 }
                 $allowed = $this->router->allowedMethods($request->path);
                 if ($allowed !== []) {
@@ -60,7 +83,7 @@ final class Kernel {
                 $core
             );
 
-            return $pipeline($request);
+            return $this->applyFilters($request, $pipeline($request));
         } catch (\Throwable $e) {
             $this->logger?->error('http kernel exception', [
                 'path'  => $request->path,

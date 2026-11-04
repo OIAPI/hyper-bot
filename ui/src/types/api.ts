@@ -603,12 +603,21 @@ export interface ExtBlock {
   title?: string
   text?: string
   endpoint?: string
+  /** 表格/表单额外参数（如 {limit: 5}） */
+  params?: Record<string, unknown>
   method?: string
   rowKey?: string
   columns?: ExtColumn[]
   fields?: ExtField[]
   submitLabel?: string
   actions?: ExtAction[]
+}
+
+export interface ExtWidget {
+  plugin: string
+  slot: string
+  title: string
+  blocks: ExtBlock[]
 }
 
 export interface ExtPageData {

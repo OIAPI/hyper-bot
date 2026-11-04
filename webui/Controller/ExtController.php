@@ -26,6 +26,22 @@ final class ExtController extends Base
         return $this->ok(['items' => $menus]);
     }
 
+    /** 注入到已有页面的小块（概览、账号页等），前端按 slot 取 */
+    public function widgets(Request $request): Response
+    {
+        $slot = (string)$request->input('slot', '');
+        return $this->ok([
+            'slot'  => $slot,
+            'items' => ExtensionPoint::widgets($this->registry(), $slot),
+        ]);
+    }
+
+    /** 扩展点自检：钩子、注入块、命令、中间件都有哪些 */
+    public function diag(Request $request): Response
+    {
+        return $this->ok(ExtensionPoint::diag($this->registry()));
+    }
+
     /** 某个插件的页面 schema */
     public function pageSchema(Request $request, array $params): Response
     {

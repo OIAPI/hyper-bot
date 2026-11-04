@@ -29,6 +29,8 @@ class Adapter extends BaseAdapter {
 	}
 
 	public function call(string $action, array $params = [], string $method = 'POST'): object {
+		// 插件钩子：发出去之前可以改参数（例如统一加 auto_escape、改写消息段）
+		$params = (array)\Core\Extension\Hooks::filter('onebot.call', $params, $action);
 		/*
 		 * 优先使用「事件来源连接」回包：反向 WS 的每条连接各自持有会话，
 		 * 若把回复推到别的连接，实现端可能回错人或直接查不到上下文。

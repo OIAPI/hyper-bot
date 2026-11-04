@@ -68,7 +68,10 @@ class EventDispatcher
 
         try {
             $app = App::boot();
+            // 插件钩子：分发前可以改事件（加字段、临时改类型、拒收）
+            $event = \Core\Extension\Hooks::filter('event.before_dispatch', $event, $adapter);
             $result = $app->dispatcher->dispatch(Event::fromArray($event), $adapter);
+            \Core\Extension\Hooks::do('event.after_dispatch', $event, $result);
             Logger::debug('[事件分发] ' . json_encode($result, JSON_UNESCAPED_UNICODE));
         } catch (\Throwable $e) {
             Logger::error("[事件分发] {$postType} 处理异常：{$e->getMessage()} | {$e->getFile()}:{$e->getLine()}");

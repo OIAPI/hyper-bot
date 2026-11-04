@@ -12,6 +12,7 @@ import { useMetricsStore } from '@/stores/metrics'
 import { useToastStore } from '@/stores/toast'
 import { formatBytes, formatRelative, formatUptime } from '@/utils/format'
 import StreamChart from '@/components/StreamChart.vue'
+import ExtWidgets from '@/components/ExtWidgets.vue'
 import type { Overview, ProtocolStatus, TimelineEvent } from '@/types/api'
 
 const toast = useToastStore()
@@ -335,6 +336,9 @@ function eventTitle(e: TimelineEvent): string {
     <UiEmpty v-else description="没有取到概览数据">
       <UiButton type="primary" @click="load">重试</UiButton>
     </UiEmpty>
+
+    <!-- 插件注入块：插件实现 adminWidgets() 就能往这一页补内容，不用新开页面 -->
+    <ExtWidgets slot="overview" />
   </div>
 </template>
 

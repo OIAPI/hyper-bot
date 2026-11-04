@@ -153,6 +153,8 @@ final class Routes {
 
                 // 插件后台页面（schema 驱动，前端通用渲染）
                 $r->get('/ext/pages', [$ext, 'pages'], 'ext.pages');
+                $r->get('/ext/widgets', [$ext, 'widgets'], 'ext.widgets');
+                $r->get('/ext/diag', [$ext, 'diag'], 'ext.diag');
                 $r->get('/ext/pages/{plugin}', [$ext, 'pageSchema'], 'ext.page');
                 $r->post('/ext/{plugin}/call', [$ext, 'call'], 'ext.call');
 
@@ -231,7 +233,7 @@ final class Routes {
             };
         }
 
-        return new Kernel(
+        $kernel = new Kernel(
             $app->router,
             $app->logger,
             $fallback,
@@ -241,5 +243,17 @@ final class Routes {
                 500
             )
         );
+
+        // 插件扩展：boot 一次（可注册服务/钩子），再挂响应过滤器。
+        // http.response 是最外层钩子，插件改完状态码/头之后再跑中间的过滤器。
+        \Core\Extension\ExtensionPoint::boot($app->registry);
+        $kernel->addResponseFilter(
+            static fn(Request $req, Response $res): Response => \Core\Extension\Hooks::filter('http.response', $res, $req)
+        );
+        foreach (\Core\Extension\ExtensionPoint::middlewares($app->registry) as $filter) {
+            $kernel->addResponseFilter($filter);
+        }
+
+        return $kernel;
     }
 }

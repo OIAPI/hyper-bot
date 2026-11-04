@@ -78,6 +78,58 @@ final class Rss extends BaseApp
         ];
     }
 
+    /** 注入到「概览」页：最新几条订阅内容 */
+    public static function adminWidgets(): array
+    {
+        return [[
+            'slot'  => 'overview',
+            'title' => 'RSS 最新',
+            'blocks' => [[
+                'type'     => 'table',
+                'endpoint' => '/items',
+                'params'   => ['limit' => 5],
+                'columns'  => [
+                    ['key' => 'time_text', 'title' => '时间', 'width' => 140],
+                    ['key' => 'feed_title', 'title' => '来源', 'width' => 140],
+                    ['key' => 'title', 'title' => '标题', 'minWidth' => 240],
+                ],
+            ]],
+        ]];
+    }
+
+    /** 命令行：php bin/hyper ext rss.poll */
+    public static function commands(): array
+    {
+        return [
+            'rss.poll' => [
+                'desc'    => '立刻抓取所有到期的订阅源',
+                'handler' => static function (array $args): string {
+                    $result = Poller::pollDue(true);
+                    return sprintf(
+                        '抓取 %d 个源，新增 %d 条%s',
+                        (int)($result['feeds'] ?? 0),
+                        (int)($result['items'] ?? 0),
+                        isset($result['error']) && $result['error'] !== '' ? '（' . $result['error'] . '）' : ''
+                    );
+                },
+            ],
+            'rss.items' => [
+                'desc'    => '列出最近抓到的 10 条',
+                'handler' => static function (array $args): string {
+                    $items = FeedStore::items('', 10);
+                    if ($items === []) {
+                        return '还没有抓取到任何条目。先在面板里加一个订阅源。';
+                    }
+                    $lines = [];
+                    foreach ($items as $item) {
+                        $lines[] = sprintf('[%s] %s', (string)($item['feed_title'] ?? $item['feed'] ?? '-'), (string)($item['title'] ?? ''));
+                    }
+                    return implode(PHP_EOL, $lines);
+                },
+            ],
+        ];
+    }
+
     public static function extRoutes(): array
     {
         return [
@@ -122,7 +174,7 @@ final class Rss extends BaseApp
 
             'GET /items' => static function (array $in): array {
                 $items = [];
-                foreach (FeedStore::items('', 60) as $row) {
+                foreach (FeedStore::items('', (int)($in['limit'] ?? 60)) as $row) {
                     $items[] = $row + [
                         'time_text' => (int)($row['published'] ?? 0) > 0 ? date('Y-m-d H:i', (int)$row['published']) : '',
                     ];

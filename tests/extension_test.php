@@ -124,5 +124,54 @@ try {
     FeedStore::flush();
 }
 
+
+/* ---------------- 钩子 / 注入块 / 命令（v3.1） ---------------- */
+echo PHP_EOL . "== 扩展点" . PHP_EOL;
+
+$registry = \Core\App::boot()->registry;
+\Core\Extension\ExtensionPoint::boot($registry);
+
+$hooks = \Core\Extension\Hooks::summary();
+$hookNames = array_column($hooks, 'name');
+check('Demo 插件注册了 http.response 钩子', in_array('http.response', $hookNames, true));
+
+$response = \Core\Extension\Hooks::filter('http.response', \Core\Http\Response::json(['code' => 1]));
+check('钩子能改 Response（加响应头）', ($response->headers['X-Plugins'] ?? '') === 'demo');
+
+// filter 链按优先级执行
+\Core\Extension\Hooks::reset();
+\Core\Extension\Hooks::on('test.chain', static fn($v) => $v . 'b', 20);
+\Core\Extension\Hooks::on('test.chain', static fn($v) => $v . 'a', 5);
+check('filter 按优先级串联', \Core\Extension\Hooks::filter('test.chain', '') === 'ab');
+
+// 处理器抛异常不影响后续
+\Core\Extension\Hooks::on('test.chain', static function ($v) {
+    throw new \RuntimeException('boom');
+}, 30);
+check('单个钩子抛错不影响其它', \Core\Extension\Hooks::filter('test.chain', '') === 'ab');
+\Core\Extension\Hooks::reset();
+
+// 重新注册（reset 后 summary 为空，清掉标记再 boot 一次会重新挂上）
+\Core\Extension\ExtensionPoint::resetRegistration();
+\Core\Extension\ExtensionPoint::boot($registry);
+
+$widgets = \Core\Extension\ExtensionPoint::widgets($registry, 'overview');
+$titles = array_column($widgets, 'title');
+check('概览页有 3 个注入块', count($widgets) >= 3);
+check('注入块包含 GitHub / RSS / 钩子', in_array('GitHub 投递', $titles, true) && in_array('RSS 最新', $titles, true) && in_array('插件钩子', $titles, true));
+check('注入块带 blocks', isset($widgets[0]['blocks']) && $widgets[0]['blocks'] !== []);
+
+$commands = \Core\Extension\ExtensionPoint::commands($registry);
+check('命令行命令包含 github.ping', isset($commands['github.ping']));
+check('命令行命令包含 rss.poll', isset($commands['rss.poll']));
+check('命令行命令包含 plugins.diag', isset($commands['plugins.diag']));
+
+$diag = \Core\Extension\ExtensionPoint::diag($registry);
+check('自检返回钩子列表', is_array($diag['hooks']) && $diag['hooks'] !== []);
+check('自检统计注入块数量', ($diag['widgets'] ?? 0) >= 3);
+
+// 中间件列表（当前没插件实现，应为数组）
+check('中间件列表是数组', is_array(\Core\Extension\ExtensionPoint::middlewares($registry)));
+
 echo PHP_EOL . ($fail === 0 ? "\033[32m全部通过\033[0m 通过 {$ok}，失败 0" : "失败 {$fail} 项") . PHP_EOL;
 exit($fail === 0 ? 0 : 1);

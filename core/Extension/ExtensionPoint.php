@@ -21,6 +21,20 @@ final class ExtensionPoint
     public const ADMIN_PAGE = 'adminPage';
     public const EXT_ROUTES = 'extRoutes';
     public const ON_EXTENSION = 'onExtension';
+    /** 进程启动时调一次：可以注册服务、挂钩子、装中间件 */
+    public const BOOT = 'boot';
+    /** hooks(): [ 'http.response' => fn($value, ...$args) => $value, ... ] */
+    public const HOOKS = 'hooks';
+    /** middleware(): [ fn(Request $r, Response $res): Response, ... ] */
+    public const MIDDLEWARE = 'middleware';
+    /** adminWidgets(): [{slot, title, blocks}] 注入到已有页面 */
+    public const WIDGETS = 'adminWidgets';
+    /** commands(): [name => ['desc' => '', 'handler' => fn(array $args)] ] */
+    public const COMMANDS = 'commands';
+
+    /** 已执行过 boot 的插件类 */
+    private static array $booted = [];
+    private static bool $hooksRegistered = false;
 
     /** 插件类是否实现了某个扩展点 */
     public static function has(string $class, string $method): bool
@@ -123,6 +137,174 @@ final class ExtensionPoint
         }
         $write = is_array($handler) ? false : false;
         return ['ok' => true, 'data' => $data, 'status' => 200, 'write' => $write];
+    }
+
+    /**
+     * 进程内初始化：boot() 一次 + 注册 hooks。
+     * 每个请求都会走到这里，用 static 标记避免重复注册。
+     */
+    public static function boot(Registry $registry): void
+    {
+        foreach ($registry->plugins() as $plugin) {
+            $class = (string)($plugin['class'] ?? '');
+            if ($class === '' || empty($plugin['enabled'])) {
+                continue;
+            }
+            if (isset(self::$booted[$class])) {
+                continue;
+            }
+            self::$booted[$class] = true;
+            if (self::has($class, self::BOOT)) {
+                try {
+                    $class::boot();
+                } catch (\Throwable $e) {
+                    \Utils\Logger::warning('[extension] 插件 boot 失败 | ' . $class . ' | ' . $e->getMessage());
+                }
+            }
+        }
+        if (self::$hooksRegistered) {
+            return;
+        }
+        self::$hooksRegistered = true;
+        foreach ($registry->plugins() as $plugin) {
+            $class = (string)($plugin['class'] ?? '');
+            if ($class === '' || empty($plugin['enabled']) || !self::has($class, self::HOOKS)) {
+                continue;
+            }
+            try {
+                $hooks = $class::hooks();
+            } catch (\Throwable $e) {
+                \Utils\Logger::warning('[extension] 读取 hooks 失败 | ' . $class . ' | ' . $e->getMessage());
+                continue;
+            }
+            foreach ((array)$hooks as $name => $handler) {
+                $priority = 10;
+                if (is_array($handler) && isset($handler['handler'])) {
+                    $priority = (int)($handler['priority'] ?? 10);
+                    $handler = $handler['handler'];
+                }
+                if (!is_callable($handler)) {
+                    continue;
+                }
+                Hooks::on((string)$name, $handler, $priority, $class);
+            }
+        }
+    }
+
+    /**
+     * 插件提供的响应过滤器（在 Kernel 出结果之后依次执行）。
+     * @return array<int, callable>
+     */
+    public static function middlewares(Registry $registry): array
+    {
+        $out = [];
+        foreach ($registry->plugins() as $plugin) {
+            $class = (string)($plugin['class'] ?? '');
+            if ($class === '' || empty($plugin['enabled']) || !self::has($class, self::MIDDLEWARE)) {
+                continue;
+            }
+            try {
+                foreach ((array)$class::middleware() as $fn) {
+                    if (is_callable($fn)) {
+                        $out[] = $fn;
+                    }
+                }
+            } catch (\Throwable $e) {
+                \Utils\Logger::warning('[extension] 读取 middleware 失败 | ' . $class . ' | ' . $e->getMessage());
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * 注入到已有页面的小块（按 slot 取）。
+     * @return array<int, array{plugin:string, slot:string, title:string, blocks:array}>
+     */
+    public static function widgets(Registry $registry, string $slot = ''): array
+    {
+        $out = [];
+        foreach ($registry->plugins() as $plugin) {
+            $class = (string)($plugin['class'] ?? '');
+            if ($class === '' || empty($plugin['enabled']) || !self::has($class, self::WIDGETS)) {
+                continue;
+            }
+            try {
+                $items = $class::adminWidgets();
+            } catch (\Throwable) {
+                continue;
+            }
+            if (is_array($items) && isset($items['title'])) {
+                $items = [$items];
+            }
+            foreach ((array)$items as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $itemSlot = (string)($item['slot'] ?? 'overview');
+                if ($slot !== '' && $itemSlot !== $slot) {
+                    continue;
+                }
+                $out[] = [
+                    'plugin' => $class,
+                    'slot'   => $itemSlot,
+                    'title'  => (string)($item['title'] ?? ''),
+                    'blocks' => (array)($item['blocks'] ?? []),
+                ];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * 插件注册的命令行命令（bin/hyper ext 里可执行）。
+     * @return array<string, array{plugin:string, desc:string, handler:callable}>
+     */
+    public static function commands(Registry $registry): array
+    {
+        $out = [];
+        foreach ($registry->plugins() as $plugin) {
+            $class = (string)($plugin['class'] ?? '');
+            if ($class === '' || empty($plugin['enabled']) || !self::has($class, self::COMMANDS)) {
+                continue;
+            }
+            try {
+                $items = $class::commands();
+            } catch (\Throwable) {
+                continue;
+            }
+            foreach ((array)$items as $name => $meta) {
+                $handler = is_array($meta) ? ($meta['handler'] ?? null) : $meta;
+                if (!is_callable($handler)) {
+                    continue;
+                }
+                $out[(string)$name] = [
+                    'plugin'  => $class,
+                    'desc'    => (string)(is_array($meta) ? ($meta['desc'] ?? '') : ''),
+                    'handler' => $handler,
+                ];
+            }
+        }
+        return $out;
+    }
+
+    /** 测试用：清掉「已 boot / 已注册钩子」的标记，让 boot() 重新跑一遍 */
+    public static function resetRegistration(): void
+    {
+        self::$booted = [];
+        self::$hooksRegistered = false;
+    }
+
+    /** 诊断：钩子、中间件、注入块、命令的概况 */
+    public static function diag(Registry $registry): array
+    {
+        return [
+            'plugins'     => count(array_filter($registry->plugins(), static fn(array $p): bool => !empty($p['enabled']))),
+            'menus'       => count(self::adminMenus($registry)),
+            'hooks'       => Hooks::summary(),
+            'middlewares' => count(self::middlewares($registry)),
+            'widgets'     => count(self::widgets($registry)),
+            'commands'    => array_keys(self::commands($registry)),
+        ];
     }
 
     /** 把外部事件（github/rss…）投递给所有实现了 onExtension 的插件 */

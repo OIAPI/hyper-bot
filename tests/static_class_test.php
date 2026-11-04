@@ -79,18 +79,20 @@ foreach ($files as $file) {
     }
 
     foreach ($tokens as $idx => $t) {
-        if (!is_array($t) || $t[0] !== T_STRING) continue;
+        // 完全限定名（\Core\Extension\Hooks）也是 T_NAME_FULLY_QUALIFIED，不能只看 T_STRING
+        if (!is_array($t) || !in_array($t[0], [T_STRING, T_NAME_FULLY_QUALIFIED], true)) continue;
         $prev = $tokens[$idx - 1] ?? null;
         $next = $tokens[$idx + 1] ?? null;
         $isNew = is_array($prev) && $prev[0] === T_NEW;
         $isStatic = is_array($next) && $next[0] === T_DOUBLE_COLON;
         if (!$isNew && !$isStatic) continue;
-        $name = $t[1];
+        $fully = $t[0] === T_NAME_FULLY_QUALIFIED || str_starts_with($t[1], '\\');
+        $name = ltrim($t[1], '\\');
         if (in_array(strtolower($name), ['self', 'static', 'parent'], true)) continue;
-        if (in_array($name, $declared, true)) continue;
+        if (!$fully && in_array($name, $declared, true)) continue;
         // PHP 类名不区分大小写：视图/插件里写 utils:: / cache:: 也能命中 Utils\Utils
-    $lower = array_change_key_case($uses, CASE_LOWER);
-    $fqcn = $lower[strtolower($name)] ?? ($ns !== '' ? $ns . '\\' . $name : $name);
+        $lower = array_change_key_case($uses, CASE_LOWER);
+        $fqcn = $fully ? $name : ($lower[strtolower($name)] ?? ($ns !== '' ? $ns . '\\' . $name : $name));
         if (str_starts_with($fqcn, '\\')) $fqcn = substr($fqcn, 1);
         $top = explode('\\', $fqcn)[0];
         if (!in_array($top, $projectRoots, true)) continue;

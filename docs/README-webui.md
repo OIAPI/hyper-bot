@@ -568,6 +568,41 @@ public static function extRoutes(): array {
 
 数据文件：`runtime/webhooks.json`、`runtime/webhook-deliveries.json`、`runtime/rss.json`、`runtime/rss-items.json`。
 
+### 插件还能注入进程与页面（v3.1）
+
+除了「挂一个后台页面」，插件可以挂到框架的执行链上，全部可选、都有默认实现：
+
+| 方法 | 作用 |
+|---|---|
+| `boot()` | 进程启动时调一次：注册服务、准备资源 |
+| `hooks()` | 注册钩子：`['http.response' => fn($res) => $res, ...]`，值也可写 `['handler'=>…, 'priority'=>5]` |
+| `middleware()` | 响应过滤器：`fn(Request $r, Response $res): Response`，拿到结果后再改 |
+| `adminWidgets()` | 注入到已有页面：`[{slot:'overview', title:'…', blocks:[…]}]`，不占侧边栏 |
+| `commands()` | 命令行命令：`['rss.poll' => ['desc'=>'…','handler'=>fn(array $args)]]` |
+
+框架内置的钩子：
+
+| 钩子 | 时机 | 参数 |
+|---|---|---|
+| `http.response` | 响应生成后、发出前 | `(Response $res, Request $req)` |
+| `event.before_dispatch` | 事件进入插件分发前 | `(array $event, ?Adapter $adapter)` |
+| `event.after_dispatch` | 分发完成后（动作，无返回值） | `(array $event, array $result)` |
+| `onebot.call` | 调协议端 API 前 | `(array $params, string $action)` |
+
+内置的 `app/Plugins/Demo.php` 把这四样都演示了一遍：给所有响应加 `X-Plugins: demo` 头、
+在「概览」页注入一张「插件钩子」表、提供 `plugins.diag` 命令。
+
+命令行：
+
+```bash
+php bin/hyper ext              # 列出菜单 / 钩子 / 注入块 / 命令
+php bin/hyper ext rss.poll     # 执行插件命令
+php bin/hyper ext rss.items '{"limit":5}'
+```
+
+> 钩子是按「名字」约定的字符串，插件写错名字不会报错，只是永远不触发；
+> `php bin/hyper ext` 会列出当前真正挂上的钩子与来源插件，排查时先看这里。
+
 ## 程序更新
 
 面板「系统 → 程序更新」，三种方式：

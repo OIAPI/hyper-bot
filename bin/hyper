@@ -56,6 +56,10 @@ switch ($command) {
     case 'password':
         commandPasswd($args);
         break;
+    case 'ext':
+    case 'extension':
+        commandExt($args);
+        break;
     case 'redis':
         commandRedis($args);
         break;
@@ -500,6 +504,64 @@ function commandRedis(array $ctx): void
  * 典型场景：换了发布包 / 清了 runtime 目录后 users.json 被重新初始化成随机密码，
  * 面板上怎么登都提示密码错误。这条命令直接改 bcrypt 记录，不用手动删文件。
  */
+function commandExt(array $args): void
+{
+    $app = \Core\App::boot();
+    $registry = $app->registry;
+    // 先 boot 一次，插件才会把钩子注册进来（HTTP 请求里由 Kernel 负责）
+    \Core\Extension\ExtensionPoint::boot($registry);
+    $commands = \Core\Extension\ExtensionPoint::commands($registry);
+
+    $name = (string)($args['args'][0] ?? '');
+    if ($name === '' || $name === 'list') {
+        $diag = \Core\Extension\ExtensionPoint::diag($registry);
+        echo PHP_EOL . '  插件扩展（开启 ' . $diag['plugins'] . ' 个）' . PHP_EOL;
+        echo '  ' . str_repeat('-', 64) . PHP_EOL;
+        echo '  菜单 ' . $diag['menus'] . ' 个 · 注入块 ' . $diag['widgets'] . ' 个 · 中间件 ' . $diag['middlewares'] . ' 个' . PHP_EOL;
+        if ($diag['hooks'] === []) {
+            echo '  钩子：没有插件注册' . PHP_EOL;
+        } else {
+            echo '  钩子：' . PHP_EOL;
+            foreach ($diag['hooks'] as $hook) {
+                echo '    ' . str_pad($hook['name'], 26) . ' ' . $hook['handlers'] . ' 个处理器  ' . implode(', ', $hook['owners']) . PHP_EOL;
+            }
+        }
+        if ($commands === []) {
+            echo '  命令：没有插件提供' . PHP_EOL;
+        } else {
+            echo '  命令：' . PHP_EOL;
+            foreach ($commands as $cmd => $meta) {
+                echo '    ' . str_pad($cmd, 26) . ' ' . $meta['desc'] . '  [' . $meta['plugin'] . ']' . PHP_EOL;
+            }
+        }
+        echo PHP_EOL . '  执行：php bin/hyper ext <命令名> [json参数]' . PHP_EOL . PHP_EOL;
+        return;
+    }
+
+    if (!isset($commands[$name])) {
+        fwrite(STDERR, "没有这个扩展命令：{$name}" . PHP_EOL);
+        fwrite(STDERR, '可用：' . implode(', ', array_keys($commands)) . PHP_EOL);
+        exit(1);
+    }
+    $input = [];
+    $raw = (string)($args['args'][1] ?? '');
+    if ($raw !== '') {
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            fwrite(STDERR, '参数必须是 JSON 对象，例如 {"limit":5}' . PHP_EOL);
+            exit(1);
+        }
+        $input = $decoded;
+    }
+    try {
+        $result = ($commands[$name]['handler'])($input);
+        echo is_string($result) ? $result . PHP_EOL : (string)json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . PHP_EOL;
+    } catch (\Throwable $e) {
+        fwrite(STDERR, '执行失败：' . $e->getMessage() . PHP_EOL);
+        exit(1);
+    }
+}
+
 function commandPasswd(array $ctx): void
 {
     $list = $ctx['args'];

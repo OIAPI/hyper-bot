@@ -11,7 +11,7 @@ import type {
   LogTail, LogDates, MessageRecord,
   RuntimeData, HealthData, DiskData, RouteItem,
   BotAccount, BotAccountList, OAuthProviders,
-  ScheduleData, ScheduleJob, PermissionsData,
+  ScheduleData, ScheduleJob, PermissionsData, ExtWidget,
   UpdateInfo, UpdateCheckResult, UpdateResult,
   ExtMenuItem, ExtPageData,
 } from '@/types/api'
@@ -98,6 +98,8 @@ export const extApi = {
   page: (plugin: string) => http.get<ExtPageData>('/ext/pages/' + encodeURIComponent(plugin)),
   call: (plugin: string, path: string, method = 'GET', params: Record<string, unknown> = {}) =>
     http.post<unknown>('/ext/' + encodeURIComponent(plugin) + '/call', { path, method, params }),
+  /** 注入到已有页面的小块 */
+  widgets: (slot: string) => http.get<{ slot: string; items: ExtWidget[] }>('/ext/widgets', { query: { slot } }),
 }
 
 /** 概览 */

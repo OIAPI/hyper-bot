@@ -660,7 +660,7 @@ php bin/hyper ext rss.items '{"limit":5}'
 | 方式 | 说明 |
 |---|---|
 | 检查更新 | 当前目录是 git 仓库且配了远端时，`git fetch` 后对比 `HEAD..@{u}`，只报告不落盘 |
-| 从 Git 链接更新 | `git clone --depth 1` 到临时目录再覆盖，不碰现有 .git 历史，不产生合并冲突 |
+| 从 Git 链接更新 | `git clone --depth 1` 到临时目录再覆盖，不碰现有 .git 历史，不产生合并冲突；覆盖完把 HEAD / 分支 / 上游引用对齐到本次 clone 的提交（`UpdateService::alignHeadToClone`），否则面板会一直显示旧版本、并误报「有 N 个新提交」 |
 | 从压缩包更新 | 分片上传发布包 zip（≤64MB），自动识别外层目录 |
 | 从 URL 更新 | 服务器自己下载 zip（支持加速前缀），适合包大 / 手机上传慢 / 反代超时 |
 

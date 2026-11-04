@@ -386,7 +386,8 @@ onUnmounted(stopPoll)
           </div>
         </div>
         <div class="field-hint">
-          用的是 <code>git clone --depth 1</code> 到临时目录再覆盖，不碰现有 .git 历史，也不产生合并冲突。
+          用的是 <code>git clone --depth 1</code> 到临时目录再覆盖，不碰现有 .git 历史，也不产生合并冲突；
+          覆盖完会把 HEAD / 分支对齐到本次 clone 的提交，所以「当前提交」和「检查更新」不会停在旧版本。
         </div>
       </div>
 

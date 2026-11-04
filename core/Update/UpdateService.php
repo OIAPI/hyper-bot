@@ -94,6 +94,11 @@ final class UpdateService
     /**
      * 从 git 仓库更新。
      *
+     * 走「临时目录 clone --depth 1 → 覆盖文件」，刻意不碰现有 .git（不产生合并冲突、
+     * 不动历史）。但只覆盖文件的话，根目录 HEAD 会停在旧提交：面板「当前提交」是旧版本、
+     * 「检查更新」永远报有 N 个新提交。所以覆盖完必须把 HEAD/分支/上游引用对齐到本次
+     * clone 出来的那个提交（见 alignHeadToClone）。
+     *
      * @param string $url    仓库地址（可带代理前缀）
      * @param string $branch 分支，留空用远端默认
      * @param string $proxy  加速前缀，例如 https://gh-proxy.com/ （留空不用）
@@ -121,10 +126,11 @@ final class UpdateService
         if (self::git('--version') === null) {
             return ['ok' => false, 'msg' => '没有 git 命令，无法关联仓库'];
         }
-        $root = $root ?? dirname(__DIR__, 2);
+        $root = $root ?? self::root();
         $cloneUrl = $proxy !== '' && str_starts_with($url, 'http') ? rtrim($proxy, '/') . '/' . $url : $url;
 
-        if (is_dir($root . '/.git')) {
+        $validRepo = is_dir($root . '/.git') && is_file($root . '/.git/HEAD');
+        if ($validRepo) {
             // 已经是仓库就别动它的 origin：曾经有测试/误操作把线上仓库的远端改掉
             $head = trim(self::run('rev-parse --short HEAD', 30, $root)['out'] ?? '');
             if ($head !== '') {
@@ -134,6 +140,8 @@ final class UpdateService
                 ];
             }
         } else {
+            // .git 可能只是旧更新留下来的空目录（clone 里的 .git 被复制过去），
+            // 这种情况用 init 修一下，比直接报「不是仓库」更省事。
             $init = self::run('init -q', 60, $root);
             if ($init['code'] !== 0) {
                 return ['ok' => false, 'msg' => 'git init 失败：' . self::shortError($init)];
@@ -212,16 +220,36 @@ final class UpdateService
             self::rrmdir($tmp);
             return ['ok' => false, 'msg' => '克隆失败：' . self::shortError($result)];
         }
-        $applied = self::applyFromDir($tmp . '/src', 'git:' . $url);
-        self::rrmdir($tmp);
-        if ($applied['ok'] && $attach) {
-            // 顺手把这个目录变成仓库，否则「检查更新」永远显示不可用
-            $linked = self::attachRepo($url, $branch, $proxy);
-            $applied['attached'] = $linked['ok'];
-            $applied['msg'] .= $linked['ok']
-                ? '；' . $linked['msg']
-                : '；但没能关联成 git 仓库：' . $linked['msg'];
+        // 临时 clone 的 HEAD 就是这次真正要部署到的提交；记下分支名，后面把根目录对齐过去
+        $cloneBranch = trim((string)(self::run('rev-parse --abbrev-ref HEAD', 20, $tmp . '/src')['out'] ?? ''));
+        if ($cloneBranch === '' || $cloneBranch === 'HEAD') {
+            $cloneBranch = $branch !== '' ? $branch : 'main';
         }
+
+        $applied = self::applyFromDir($tmp . '/src', 'git:' . $url);
+
+        if (!empty($applied['ok'])) {
+            if (self::isRepo()) {
+                // 关键：clone 在临时目录、只覆盖了工作区文件，根目录 .git 的 HEAD 还停在旧提交。
+                // 不对齐的话，面板「当前提交」是旧版本、「检查更新」永远报「有 N 个新提交」。
+                $aligned = self::alignHeadToClone($tmp . '/src', $cloneBranch, $cloneUrl);
+                if ($aligned !== '') {
+                    $applied['git'] = $aligned;
+                    $applied['msg'] = (string)($applied['msg'] ?? '') . '；' . $aligned;
+                } else {
+                    $applied['warnings'][] = '文件已覆盖，但 git HEAD 没能自动对齐（从临时 clone 与远端取对象都失败）；'
+                        . '面板「当前提交」会停在旧值，可在服务器执行 git fetch --depth 1 && git reset --mixed FETCH_HEAD';
+                }
+            } elseif ($attach) {
+                // 顺手把这个目录变成仓库，否则「检查更新」永远显示不可用
+                $linked = self::attachRepo($url, $branch, $proxy);
+                $applied['attached'] = $linked['ok'];
+                $applied['msg'] .= $linked['ok']
+                    ? '；' . $linked['msg']
+                    : '；但没能关联成 git 仓库：' . $linked['msg'];
+            }
+        }
+        self::rrmdir($tmp);
         return $applied;
     }
 
@@ -265,7 +293,7 @@ final class UpdateService
             if ($aligned !== '') {
                 $applied['git'] = $aligned;
                 $applied['msg'] = (string)($applied['msg'] ?? '') . '；' . $aligned;
-            } elseif (is_dir(self::root() . '/.git')) {
+            } elseif (self::isRepo()) {
                 $applied['warnings'][] = '已更新文件，但 git HEAD 未能自动对齐（可能服务器离线/远端不可达）；面板「当前提交」会显示旧值';
             }
         }
@@ -279,7 +307,7 @@ final class UpdateService
     private static function alignGitHead(string $version): string
     {
         $root = self::root();
-        if (!is_dir($root . '/.git') || self::git('--version') === null) {
+        if (!self::isRepo() || self::git('--version') === null) {
             return '';
         }
         $tag = 'v' . ltrim($version, 'v');
@@ -298,6 +326,74 @@ final class UpdateService
             }
         }
         return '';
+    }
+
+    /**
+     * 把根目录的 git HEAD / 分支指针 / 上游引用对齐到「临时 clone 出来的那个提交」。
+     *
+     * git 更新是「临时目录 clone --depth 1 → 覆盖文件」，刻意不碰现有 .git；代价是
+     * HEAD 停在旧提交。这里只搬对象 + reset --mixed：工作区不动（Config.ini、runtime/、
+     * vendor/ 都不会被覆盖），也不做合并，所以同样不会产生冲突。
+     *
+     * 取对象两条路：优先从临时 clone 本地取（不再走网络），不行再按远端地址 fetch 一次。
+     *
+     * @param string $cloneDir    临时 clone 的仓库目录
+     * @param string $cloneBranch 临时 clone 所在分支
+     * @param string $cloneUrl    远端地址（可带代理前缀）
+     * @return string 成功时返回给人看的一句话，失败返回空串
+     */
+    private static function alignHeadToClone(string $cloneDir, string $cloneBranch, string $cloneUrl): string
+    {
+        if (self::git('--version') === null || !self::isRepo()) {
+            return '';
+        }
+        $ref = $cloneBranch !== '' ? $cloneBranch : 'HEAD';
+        $fetched = false;
+
+        // 1) 先从临时 clone 取对象：更新包刚下载成功，这一步不再依赖网络
+        if (is_dir($cloneDir . '/.git')) {
+            $local = self::run('fetch --depth 1 ' . escapeshellarg($cloneDir) . ' ' . escapeshellarg($ref), 120);
+            $fetched = $local['code'] === 0;
+        }
+        // 2) 回退：按远端地址再 fetch 一次（个别 git 构建不允许从本地路径取对象）
+        if (!$fetched) {
+            $remote = self::run('fetch --depth 1 ' . escapeshellarg($cloneUrl) . ' ' . escapeshellarg($ref), 180);
+            if ($remote['code'] !== 0) {
+                $remote = self::run('fetch --depth 1 ' . escapeshellarg($cloneUrl), 180);
+            }
+            $fetched = $remote['code'] === 0;
+        }
+        if (!$fetched) {
+            return '';
+        }
+        if (self::run('reset --mixed FETCH_HEAD', 60)['code'] !== 0) {
+            return '';
+        }
+
+        $sha = trim((string)(self::run('rev-parse HEAD', 20)['out'] ?? ''));
+        if ($sha === '') {
+            return '';
+        }
+        // origin 不存在时补一个（否则 check() 的 fetch 没地方拉）；fetch refspec 也补齐，
+        // 不然后面 @{u} 会报 upstream 没存成 remote-tracking branch。
+        $origin = trim((string)(self::run('config --get remote.origin.url', 20)['out'] ?? ''));
+        if ($origin === '') {
+            self::run('remote add origin ' . escapeshellarg($cloneUrl), 30);
+        }
+        self::run('config ' . escapeshellarg('remote.origin.fetch') . ' ' . escapeshellarg('+refs/heads/*:refs/remotes/origin/*'), 20);
+
+        // remote-tracking 引用 + 上游配置：check() 里的 HEAD..@{u} 依赖它，
+        // 少一个就会报「没有上游」，面板于是永远显示「已是最新」。
+        self::run('update-ref ' . escapeshellarg('refs/remotes/origin/' . $cloneBranch) . ' ' . escapeshellarg($sha), 20);
+        $current = trim((string)(self::run('rev-parse --abbrev-ref HEAD', 20)['out'] ?? ''));
+        if ($current === '' || $current === 'HEAD') {
+            $current = $cloneBranch;
+        }
+        self::run('config ' . escapeshellarg('branch.' . $current . '.remote') . ' origin', 20);
+        self::run('config ' . escapeshellarg('branch.' . $current . '.merge') . ' ' . escapeshellarg('refs/heads/' . $cloneBranch), 20);
+
+        $short = trim((string)(self::run('rev-parse --short HEAD', 20)['out'] ?? ''));
+        return $short !== '' ? 'git HEAD 已对齐到 ' . $short : '';
     }
 
     /** 解压后常常多一层目录，找真正含 composer.json 的那层 */
@@ -410,12 +506,23 @@ final class UpdateService
         if (in_array($rel, self::PROTECTED_FILES, true)) {
             return true;
         }
+        // ".git" 目录本身也要挡：只匹配 ".git/" 前缀时，clone 出来的 .git 目录会被
+        // 当成普通目录 mkdir 出来（空仓库），后面的 attach / 对齐全部失败。
+        if ($rel === '.git') {
+            return true;
+        }
         foreach (self::PROTECTED_DIRS as $dir) {
             if (str_starts_with($rel, $dir)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** 当前目录是不是一个可用的 git 仓库（.git 存在不等于有效：可能只剩空目录） */
+    private static function isRepo(): bool
+    {
+        return is_dir(self::root() . '/.git') && is_file(self::root() . '/.git/HEAD');
     }
 
     /** 跑一条 git 只读命令（失败返回 null） */

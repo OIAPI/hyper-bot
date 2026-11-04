@@ -224,7 +224,7 @@ group.config、member.manage、plugin.manage、system.manage；
 | 方式 | 说明 |
 |---|---|
 | 检查更新 | 目录是 git 仓库时 git fetch 比对远端，只报告 |
-| 从 Git 链接 | git clone --depth 1 到临时目录再覆盖；成功后自动把当前目录关联成仓库 |
+| 从 Git 链接 | git clone --depth 1 到临时目录再覆盖；成功后把当前目录关联成仓库，已是仓库则把 HEAD 对齐到新提交 |
 | 从压缩包 | 分片上传发布包 zip（不占 PHP 请求），自动剥外层目录 |
 | 从 URL | 服务器自己下载 zip，适合文件大/网络慢、反代容易 60s 超时的场景 |
 

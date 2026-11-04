@@ -413,6 +413,79 @@ final class UpdateService
         return null;
     }
 
+    /**
+     * 清理 public/webui/assets 里不再被当前构建引用的旧产物。
+     *
+     * 更新包只覆盖文件、不删文件（git 更新也是覆盖），而每次前端构建的文件名都带
+     * 新 hash，于是 assets/ 会一版一版地累积（LoginView-*.js 能堆出十几份）。
+     * 这里从 index.html 出发做一次引用遍历（入口里有 __vite__mapDeps 全量清单），
+     * 只保留这次构建真正用到的 JS/CSS/字体/图片。
+     *
+     * @return array{removed:int,bytes:int,kept:int,ok:bool,msg:string}
+     */
+    public static function pruneWebuiAssets(bool $dryRun = false): array
+    {
+        $root = self::root();
+        $assets = $root . '/public/webui/assets';
+        $index = $root . '/public/webui/index.html';
+        if (!is_dir($assets) || !is_file($index)) {
+            return ['removed' => 0, 'bytes' => 0, 'kept' => 0, 'ok' => false, 'msg' => '没有 public/webui 产物'];
+        }
+        $pattern = '#(?:assets/|\./)([A-Za-z0-9_][A-Za-z0-9_.\-]*\.(?:js|css|mjs|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|eot|otf))#i';
+        $keep = [];
+        $queue = [];
+        $scan = static function (string $text) use (&$keep, &$queue, $pattern): void {
+            if (preg_match_all($pattern, $text, $m)) {
+                foreach ($m[1] as $name) {
+                    if (!isset($keep[$name])) {
+                        $keep[$name] = true;
+                        $queue[] = $name;
+                    }
+                }
+            }
+        };
+        $scan((string)@file_get_contents($index));
+        while ($queue !== []) {
+            $name = array_pop($queue);
+            $file = $assets . '/' . $name;
+            if (is_file($file)) {
+                $scan((string)@file_get_contents($file));
+            }
+        }
+        // 解析不到任何引用就别删：宁可留垃圾也不能把线上资源删空
+        if ($keep === []) {
+            return ['removed' => 0, 'bytes' => 0, 'kept' => 0, 'ok' => false, 'msg' => 'index.html 没解析到资源，已跳过'];
+        }
+        $removed = 0;
+        $bytes = 0;
+        foreach (scandir($assets) ?: [] as $name) {
+            if ($name === '.' || $name === '..') {
+                continue;
+            }
+            $file = $assets . '/' . $name;
+            if (!is_file($file) || isset($keep[$name])) {
+                continue;
+            }
+            $bytes += (int)@filesize($file);
+            if ($dryRun || @unlink($file)) {
+                $removed++;
+            }
+        }
+        $kept = 0;
+        foreach (array_keys($keep) as $name) {
+            if (is_file($assets . '/' . $name)) {
+                $kept++;
+            }
+        }
+        return [
+            'removed' => $removed,
+            'bytes'   => $bytes,
+            'kept'    => $kept,
+            'ok'      => true,
+            'msg'     => ($dryRun ? '将清理 ' : '已清理 ') . $removed . ' 个旧前端资源',
+        ];
+    }
+
     /** 把 $src 的内容覆盖到项目根，返回执行结果 */
     public static function applyFromDir(string $src, string $source = 'dir'): array
     {
@@ -476,9 +549,16 @@ final class UpdateService
         if (in_array('public/webui/index.html', $files, true)) {
             $warnings[] = '前端已更新：浏览器请强制刷新（Ctrl+Shift+R），避免旧 index.html 引用已删除的 chunk';
         }
+        // 更新包只覆盖不删除：顺手清掉上一版前端留在 assets/ 里的孤儿 chunk。
+        // 即使这次没有任何文件变化（changed=0）也要清，否则旧垃圾会一直留在服务器上。
+        $pruned = self::pruneWebuiAssets();
+        if ($pruned['ok'] && $pruned['removed'] > 0) {
+            $warnings[] = $pruned['msg'] . '（' . round($pruned['bytes'] / 1048576, 2) . ' MB）';
+        }
+
         if ($changed === 0) {
             @rmdir($backup);
-            return ['ok' => true, 'changed' => 0, 'skipped' => $skipped, 'backup' => '', 'warnings' => [], 'version' => self::version(), 'msg' => '已经是最新，没有文件需要更新'];
+            return ['ok' => true, 'changed' => 0, 'skipped' => $skipped, 'backup' => '', 'warnings' => $warnings, 'version' => self::version(), 'msg' => '已经是最新，没有文件需要更新'];
         }
 
         $record = [

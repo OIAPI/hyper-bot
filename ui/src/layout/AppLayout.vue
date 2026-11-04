@@ -12,7 +12,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   Odometer, Connection, Download, Document, ChatDotRound, Grid, Box,
   Tickets, Setting, Cpu, Tools, User, Fold, Expand, Menu as MenuIcon, ArrowDown,
-  Postcard, Timer, Lock, Refresh, Operation, Link, Bell,
+  Postcard, Timer, Lock, Refresh, Link, Bell,
 } from '@element-plus/icons-vue'
 import {
   useThemeStore, THEME_PRESETS, FRAMEWORKS, type ThemeMode, type FrameworkId,
@@ -73,17 +73,56 @@ function viewRoot(): HTMLElement | null {
   const host = contentRef.value
   if (!host) return null
   for (const child of Array.from(host.children)) {
-    if (child instanceof HTMLElement && !child.classList.contains('route-loading') && !child.classList.contains('ui-progress')) {
+    if (
+      child instanceof HTMLElement
+      && !child.classList.contains('route-loading')
+      && !child.classList.contains('ui-progress')
+      && !child.classList.contains('layout-inline-bar')
+    ) {
       return child
     }
   }
   return null
 }
 
+/** 当前页面的标题（路由 meta.title 优先，其次页头 h1） */
+function pageTitle(): string {
+  const meta = (route.meta.title as string | undefined) ?? ''
+  if (meta !== '') return meta
+  const h1 = document.querySelector('.page-head h1')?.textContent ?? ''
+  return h1.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * 区块名称：优先用真实标题（卡片头 / 页面标题），没有标题的卡按内容类型命名
+ * （日志筛选 / 日志列表 / 运行概览），不再出现「区块 1」这种占位名。
+ */
 function blockLabel(el: HTMLElement, index: number): string {
-  const node = el.querySelector('h1,h2,h3,h4,.card-title,.title,.page-title,strong')
+  void index
+  // 1) 视图可以显式声明 data-layout-label
+  const explicit = el.dataset.layoutLabel ?? el.getAttribute('aria-label') ?? el.getAttribute('title') ?? ''
+  if (explicit.trim() !== '') return explicit.trim().slice(0, 16)
+
+  // 2) 卡片头 / 标题（Element / Ant / Naive / Arco 都认）
+  const node = el.querySelector(
+    '.card-title, .el-card__header .card-title, .ant-card-head-title, .n-card-header__main, '
+    + '.arco-card-header-title, h2, h3, h4, .page-title, .title, strong',
+  )
   const text = (node?.textContent ?? '').replace(/\s+/g, ' ').trim()
-  return (text || '区块 ' + (index + 1)).slice(0, 16)
+  if (text !== '') return text.slice(0, 16)
+
+  // 3) 无标题卡：按内容判断用途，名字仍然是「页面标题 + 用途」
+  const title = pageTitle()
+  if (el.querySelector('table, .el-table, .ant-table, .n-data-table, .arco-table')) {
+    return (title || '数据') + '列表'
+  }
+  if (el.querySelector('input, textarea, select, .el-select, .ant-select, .n-select, .arco-select')) {
+    return (title || '页面') + '筛选'
+  }
+  if (el.querySelector('.el-descriptions, .ant-descriptions, .arco-descriptions, .stat, .kpi-card, .el-progress')) {
+    return (title || '页面') + '概览'
+  }
+  return title !== '' ? title + '内容' : '页面内容'
 }
 
 /**
@@ -153,24 +192,38 @@ function applyPageLayout(): void {
     if (!el) continue
     const pos = order.indexOf(block.index)
     el.style.order = String(pos === -1 ? order.length : pos)
+    // 操作条是区块的兄弟节点：order 必须同步，否则拖走的是内容、操作条留在原地
+    const bar = el.previousElementSibling
+    if (bar instanceof HTMLElement && bar.classList.contains(EDIT_BAR_CLASS)) {
+      bar.style.order = el.style.order
+      bar.style.opacity = hidden.has(block.index) ? '0.45' : ''
+    }
     if (hidden.has(block.index)) {
-      // 记住原来的行内 display，恢复时原样写回：绝不无条件清空，
-      // 否则会把组件自己（v-show / 浮层）控制的 display 一起抹掉。
-      if (el.style.display !== 'none') {
-        el.dataset.layoutPrevDisplay = el.style.display
-        el.style.display = 'none'
+      if (pageEdit.value) {
+        // 编辑态不真正隐藏：只淡化并保留「显示」按钮，否则藏起来的块再也点不回来
+        if (el.dataset.layoutPrevDisplay !== undefined) {
+          el.style.display = el.dataset.layoutPrevDisplay
+          delete el.dataset.layoutPrevDisplay
+        }
+        el.classList.add('layout-block-off')
+      } else {
+        // 记住原来的行内 display，恢复时原样写回：绝不无条件清空，
+        // 否则会把组件自己（v-show / 浮层）控制的 display 一起抹掉。
+        el.classList.remove('layout-block-off')
+        if (el.style.display !== 'none') {
+          el.dataset.layoutPrevDisplay = el.style.display
+          el.style.display = 'none'
+        }
       }
-    } else if (el.dataset.layoutPrevDisplay !== undefined) {
-      el.style.display = el.dataset.layoutPrevDisplay
-      delete el.dataset.layoutPrevDisplay
+    } else {
+      el.classList.remove('layout-block-off')
+      if (el.dataset.layoutPrevDisplay !== undefined) {
+        el.style.display = el.dataset.layoutPrevDisplay
+        delete el.dataset.layoutPrevDisplay
+      }
     }
   }
 }
-
-const pageRows = computed(() => {
-  const order = currentPageOrder()
-  return [...pageBlocks.value].sort((a, b) => order.indexOf(a.index) - order.indexOf(b.index))
-})
 
 function refreshPageLayout(): void {
   if (route.path === '/') return
@@ -182,10 +235,149 @@ function refreshPageLayout(): void {
   }, 300)
 }
 
+const EDIT_BAR_CLASS = 'block-edit-bar'
+const TOGGLE_BAR_CLASS = 'layout-inline-bar'
+let layoutSyncTimer = 0
+
+function makeBarButton(text: string, title: string, onClick: () => void): HTMLButtonElement {
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'be-btn'
+  btn.textContent = text
+  if (title !== '') btn.title = title
+  btn.addEventListener('click', (event) => {
+    event.stopPropagation()
+    onClick()
+  })
+  return btn
+}
+
+/**
+ * 概览页同款：页面顶部一个「编辑布局 / 完成」按钮。
+ * 注入到页面根节点里（不是顶栏、不是弹窗），这样和概览页的 .layout-bar 位置一致。
+ */
+function ensureToggleBar(): void {
+  const host = contentRef.value
+  const root = viewRoot()
+  if (!host) return
+  if (!root || route.path === '/' || !pageBlocks.value.length) {
+    host.querySelectorAll<HTMLElement>('.' + TOGGLE_BAR_CLASS).forEach((bar) => bar.remove())
+    return
+  }
+  let bar = root.querySelector<HTMLElement>(':scope > .' + TOGGLE_BAR_CLASS)
+  if (!bar) {
+    bar = document.createElement('div')
+    bar.className = TOGGLE_BAR_CLASS
+    bar.dataset.layoutSkip = '1'
+    bar.style.order = '-1'
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'layout-inline-btn'
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation()
+      togglePageEdit()
+    })
+    bar.appendChild(btn)
+    // 有页头就放在页头下面（标题之上太突兀），没有就从最前面开始
+    const head = root.querySelector<HTMLElement>(':scope > .page-head')
+    if (head) root.insertBefore(bar, head.nextSibling)
+    else root.insertBefore(bar, root.firstChild)
+  }
+  const label = pageEdit.value ? '完成' : '编辑布局'
+  const btn = bar.querySelector('button')
+  if (btn && btn.textContent !== label) btn.textContent = label
+}
+
+function removeToggleBar(): void {
+  contentRef.value?.querySelectorAll<HTMLElement>('.' + TOGGLE_BAR_CLASS).forEach((bar) => bar.remove())
+}
+
+/** 编辑态：在每个区块上方插一条与概览页 LayoutBlock 一致的操作条 */
+function refreshEditBars(): void {
+  const host = contentRef.value
+  const root = viewRoot()
+  if (!pageEdit.value || !host || !root) return
+  const alive = new Set<number>()
+  for (const block of pageBlocks.value) {
+    const el = root.querySelector<HTMLElement>('[data-auto-block="' + block.index + '"]')
+    if (!el || !el.parentElement) continue
+    alive.add(block.index)
+    let bar = el.previousElementSibling as HTMLElement | null
+    if (!bar || !bar.classList.contains(EDIT_BAR_CLASS) || bar.dataset.for !== String(block.index)) {
+      if (bar && bar.classList.contains(EDIT_BAR_CLASS)) bar.remove()
+      bar = document.createElement('div')
+      bar.className = EDIT_BAR_CLASS
+      bar.dataset.layoutSkip = '1'
+      bar.dataset.for = String(block.index)
+      el.parentElement.insertBefore(bar, el)
+    }
+    bar.textContent = ''
+    if (narrow.value) {
+      bar.appendChild(makeBarButton('↑', '上移', () => shiftPageBlock(block.index, -1)))
+      bar.appendChild(makeBarButton('↓', '下移', () => shiftPageBlock(block.index, 1)))
+    } else {
+      const grip = document.createElement('span')
+      grip.className = 'be-grip'
+      grip.textContent = '⋮⋮'
+      grip.title = '拖动排序'
+      grip.addEventListener('pointerdown', (event) => startBarDrag(block.index, event))
+      bar.appendChild(grip)
+    }
+    const name = document.createElement('span')
+    name.className = 'be-name'
+    name.textContent = block.label
+    bar.appendChild(name)
+    const spacer = document.createElement('span')
+    spacer.className = 'be-spacer'
+    bar.appendChild(spacer)
+    bar.appendChild(makeBarButton(
+      pageHidden.value.includes(block.index) ? '显示' : '隐藏',
+      '',
+      () => togglePageHidden(block.index),
+    ))
+  }
+  host.querySelectorAll<HTMLElement>('.' + EDIT_BAR_CLASS).forEach((bar) => {
+    if (!alive.has(Number(bar.dataset.for ?? -1))) bar.remove()
+  })
+  // 操作条建好后同步 order / 淡化状态
+  applyPageLayout()
+}
+
+function removeEditBars(): void {
+  contentRef.value?.querySelectorAll<HTMLElement>('.' + EDIT_BAR_CLASS).forEach((bar) => bar.remove())
+  contentRef.value?.querySelectorAll<HTMLElement>('.layout-block-off').forEach((el) => el.classList.remove('layout-block-off'))
+}
+
+/** 从区块上方的拖动柄开始拖（条是区块的兄弟节点，不能复用区块内的 pointerdown 判定） */
+function startBarDrag(index: number, event: PointerEvent): void {
+  event.preventDefault()
+  event.stopPropagation()
+  pageDragFrom = index
+  pageDragging = true
+  window.addEventListener('pointermove', onPagePointerMove)
+  window.addEventListener('pointerup', stopPageDrag, { once: true })
+  window.addEventListener('pointercancel', stopPageDrag, { once: true })
+}
+
+function syncPageLayoutUi(): void {
+  ensureToggleBar()
+  if (pageEdit.value) refreshEditBars()
+}
+
+function startLayoutSync(): void {
+  window.clearInterval(layoutSyncTimer)
+  layoutSyncTimer = window.setInterval(syncPageLayoutUi, 700)
+  syncPageLayoutUi()
+}
+
 function togglePageEdit(): void {
   if (route.path === '/') return
   pageEdit.value = !pageEdit.value
-  if (pageEdit.value) collectPageBlocks()
+  collectPageBlocks()
+  applyPageLayout()
+  if (pageEdit.value) refreshEditBars()
+  else removeEditBars()
+  ensureToggleBar()
 }
 
 function shiftPageBlock(index: number, delta: number): void {
@@ -206,13 +398,6 @@ function togglePageHidden(index: number): void {
   else hidden.add(index)
   pageHidden.value = [...hidden]
   applyPageLayout()
-  savePagePrefs()
-}
-
-function resetPageLayout(): void {
-  pageOrder.value = []
-  pageHidden.value = []
-  collectPageBlocks()
   savePagePrefs()
 }
 
@@ -268,7 +453,11 @@ function cleanOrphanOverlays(): void {
 watch(
   () => route.path,
   () => {
-    pageEdit.value = false
+    if (pageEdit.value) {
+      pageEdit.value = false
+    }
+    removeEditBars()
+    removeToggleBar()
     refreshPageLayout()
     window.setTimeout(cleanOrphanOverlays, 160)
   },
@@ -725,6 +914,7 @@ function onPluginsChanged(): void {
 }
 
 onMounted(async () => {
+  startLayoutSync()
   syncNarrow()
   mq.addEventListener('change', syncNarrow)
   await auth.loadMe()
@@ -738,6 +928,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.clearInterval(layoutSyncTimer)
   if (timer) window.clearInterval(timer)
   mq.removeEventListener('change', syncNarrow)
   window.removeEventListener('hyper:plugins-changed', onPluginsChanged)
@@ -893,17 +1084,6 @@ async function doLogout(): Promise<void> {
           运行 {{ uptime }}
         </UiTag>
 
-        <button
-          v-if="route.path !== '/'"
-          class="icon-btn"
-          type="button"
-          :title="pageEdit ? '完成页面布局' : '页面布局'"
-          aria-label="页面布局"
-          @click="togglePageEdit"
-        >
-          <Operation />
-        </button>
-
         <UiPopover v-model="themePanel" placement="bottom-end" :width="panelWidth" trigger="click">
           <button class="icon-btn" type="button" title="外观与主题">
             <span class="accent-chip" :style="{ background: accentNow }" />
@@ -1033,25 +1213,6 @@ async function doLogout(): Promise<void> {
         </RouterView>
       </div>
     </main>
-
-    <div v-if="pageEdit" class="page-layout-panel">
-      <div class="plp-head">
-        <span class="plp-title">页面布局</span>
-        <span class="plp-hint">拖动区块，或用 ↑↓</span>
-        <button class="plp-btn" type="button" @click="resetPageLayout">恢复默认</button>
-        <button class="plp-btn primary" type="button" @click="pageEdit = false">完成</button>
-      </div>
-      <div class="plp-list">
-        <div v-for="block in pageRows" :key="block.index" class="plp-row">
-          <button class="plp-move" type="button" @click="shiftPageBlock(block.index, -1)">↑</button>
-          <button class="plp-move" type="button" @click="shiftPageBlock(block.index, 1)">↓</button>
-          <span class="plp-label">{{ block.label }}</span>
-          <button class="plp-btn" type="button" @click="togglePageHidden(block.index)">
-            {{ pageHidden.includes(block.index) ? "显示" : "隐藏" }}
-          </button>
-        </div>
-      </div>
-    </div>
 
     <AppToast />
 
@@ -1574,4 +1735,54 @@ async function doLogout(): Promise<void> {
   .user-chip-name { display: none; }
   .uptime { display: none; }
 }
+</style>
+
+<style>
+/* ---------- 页面布局：内联编辑（与概览页同一套交互） ---------- */
+.layout-inline-bar {
+  display: flex;
+  justify-content: flex-end;
+}
+.layout-inline-btn {
+  height: 24px;
+  padding: 0 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.layout-inline-btn:hover { color: var(--accent); border-color: var(--accent); }
+.block-edit-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  /* 页面根节点是 gap:14 的 flex 列：负 margin 让操作条与区块之间保持 6px，和概览页一致 */
+  margin-bottom: -8px;
+  padding: 4px 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-faint);
+  font-size: 11.5px;
+  user-select: none;
+}
+.be-grip { cursor: grab; letter-spacing: -2px; touch-action: none; user-select: none; }
+.be-grip:active { cursor: grabbing; }
+.be-name { color: var(--text-dim); }
+.be-spacer { flex: 1; }
+.be-btn {
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.be-btn:hover { color: var(--text); border-color: var(--border); }
+.layout-block-off { opacity: 0.45; }
 </style>

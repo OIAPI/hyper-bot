@@ -10,6 +10,7 @@ use Core\Http\Response;
 use Core\Http\Router;
 use Webui\Controller\AccountsController;
 use Webui\Controller\AuthController;
+use Webui\Controller\ExtController;
 use Webui\Controller\GroupsController;
 use Webui\Controller\LogsController;
 use Webui\Controller\OAuthController;
@@ -62,6 +63,7 @@ final class Routes {
             $oauth    = new OAuthController($auth);
             $schedule = new ScheduleController();
             $permissions = new PermissionsController();
+            $ext      = new ExtController();
             $update = new UpdateController();
 
             // ---- 公开（无需登录） ----
@@ -73,7 +75,7 @@ final class Routes {
             $r->get('/auth/oauth/{provider}/callback', [$oauth, 'callback'], 'auth.oauth.callback');
 
             // ---- 需要登录 ----
-            $r->group('', function (Router $r) use ($authCtl, $overview, $groups, $plugins, $protocols, $logs, $settings, $system, $runtime, $subscription, $users, $accounts, $oauth, $schedule, $permissions, $update): void {
+            $r->group('', function (Router $r) use ($authCtl, $overview, $groups, $plugins, $protocols, $logs, $settings, $system, $runtime, $subscription, $users, $accounts, $oauth, $schedule, $permissions, $update, $ext): void {
                 // 账号
                 $r->post('/auth/logout', [$authCtl, 'logout'], 'auth.logout');
                 $r->get('/auth/me', [$authCtl, 'me'], 'auth.me');
@@ -148,6 +150,11 @@ final class Routes {
                 $r->post('/update/attach', [$update, 'attach'], 'update.attach');
                 $r->post('/update/git', [$update, 'fromGit'], 'update.git');
                 $r->post('/update/zip', [$update, 'fromZip'], 'update.zip');
+
+                // 插件后台页面（schema 驱动，前端通用渲染）
+                $r->get('/ext/pages', [$ext, 'pages'], 'ext.pages');
+                $r->get('/ext/pages/{plugin}', [$ext, 'pageSchema'], 'ext.page');
+                $r->post('/ext/{plugin}/call', [$ext, 'call'], 'ext.call');
 
                 // QQ 成员权限（机器人使用权限，不是后台登录权限）
                 $r->get('/permissions', [$permissions, 'index'], 'permissions.index');

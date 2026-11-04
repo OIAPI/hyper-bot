@@ -566,3 +566,54 @@ export interface UpdateResult {
   version?: string
   msg: string
 }
+/** 插件后台（schema 驱动） */
+export interface ExtMenuItem {
+  plugin: string
+  title: string
+  icon: string
+  path: string
+}
+
+export interface ExtColumn {
+  key: string
+  title: string
+  width?: number
+  minWidth?: number
+}
+
+export interface ExtField {
+  key: string
+  label: string
+  type?: string
+  placeholder?: string
+  options?: Array<{ label: string; value: string }>
+}
+
+export interface ExtAction {
+  label: string
+  endpoint: string
+  method?: string
+  params?: Record<string, string>
+  prompt?: string
+  confirm?: string
+}
+
+export interface ExtBlock {
+  type: 'text' | 'table' | 'form' | 'actions'
+  title?: string
+  text?: string
+  endpoint?: string
+  method?: string
+  rowKey?: string
+  columns?: ExtColumn[]
+  fields?: ExtField[]
+  submitLabel?: string
+  actions?: ExtAction[]
+}
+
+export interface ExtPageData {
+  plugin: string
+  name: string
+  title: string
+  blocks: ExtBlock[]
+}

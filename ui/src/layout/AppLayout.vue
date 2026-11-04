@@ -20,7 +20,7 @@ import {
 import { useUiRuntime, loadFramework } from '@/ui/provider'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
-import { overviewApi, authApi } from '@/api'
+import { overviewApi, authApi, extApi } from '@/api'
 import { formatUptime } from '@/utils/format'
 import AppToast from '@/components/AppToast.vue'
 
@@ -71,6 +71,17 @@ const NAV_ICONS: Record<string, Component> = {
   account: User,
 }
 
+// 插件注入的后台菜单（后端 schema 驱动，前端不用为每个插件改代码）
+const extMenus = ref<Array<{ plugin: string; title: string; icon: string; path: string }>>([])
+async function loadExtMenus(): Promise<void> {
+  try {
+    const res = await extApi.pages()
+    extMenus.value = res.items ?? []
+  } catch {
+    extMenus.value = []
+  }
+}
+
 const navGroups = computed(() => {
   const groups = new Map<string, Array<{ path: string; title: string; name: string }>>()
   for (const r of router.getRoutes()) {
@@ -80,6 +91,9 @@ const navGroups = computed(() => {
     const list = groups.get(meta.group) ?? []
     list.push({ path, title: meta.title, name: String(r.name) })
     groups.set(meta.group, list)
+  }
+  if (extMenus.value.length) {
+    groups.set('插件', extMenus.value.map((m) => ({ path: m.path, title: m.title, name: 'ext:' + m.plugin + ':' + m.path })))
   }
   return [...groups.entries()].map(([name, items]) => ({ name, items }))
 })
@@ -131,6 +145,7 @@ onMounted(async () => {
   syncNarrow()
   mq.addEventListener('change', syncNarrow)
   await auth.loadMe()
+  void loadExtMenus()
   void refreshStatus()
   timer = window.setInterval(refreshStatus, 30_000)
 })

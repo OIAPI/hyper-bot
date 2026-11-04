@@ -530,6 +530,44 @@ WebUI 与聊天共用一个落盘器 `Webui\PluginInstaller`：
   读取时映射成 `owner/admin/admin/member`，不会被丢掉
 - 不在列表里的 QQ 按群角色判定（群主 / 管理员），改完立即生效，不需要重启。
 
+## 插件：不止是机器人插件
+
+v3 起插件有三种形态，写在同一个 `app/Plugins/*.php` 里，**不需要改前端、不需要重新构建**：
+
+| 形态 | 插件要写的静态方法 | 效果 |
+|---|---|---|
+| 机器人插件 | v1 的 `#[Rule]` / `#[Notice]` / `#[Request]` | 收发消息、处理事件（照旧） |
+| 后台功能插件 | `adminMenu()` + `adminPage()` + `extRoutes()` | 侧边栏多一个入口，页面由 schema 描述，前端通用渲染 |
+| 外部事件插件 | `onExtension(string $topic, array $payload)` | 收到 GitHub WebHook / RSS 新条目时被调用 |
+
+页面 schema 只支持四种块，够表达「列表 + 表单 + 按钮 + 说明」：
+
+```php
+public static function adminPage(): array {
+    return ['title' => 'GitHub 订阅', 'blocks' => [
+        ['type' => 'text',    'text' => '说明文字'],
+        ['type' => 'table',   'endpoint' => '/hooks', 'columns' => [['key' => 'id', 'title' => 'ID']]],
+        ['type' => 'form',    'endpoint' => '/hooks', 'method' => 'POST', 'fields' => [['key' => 'secret', 'label' => 'Secret', 'type' => 'password']]],
+        ['type' => 'actions', 'actions' => [['label' => '立即抓取', 'endpoint' => '/poll', 'method' => 'POST']]],
+    ]];
+}
+public static function extRoutes(): array {
+    return ['GET /hooks' => fn(array $in) => ['items' => []]];
+}
+```
+
+前端按 `/webui/api/ext/{plugin}/call` 统一转发，GET 只读、其它方法要求 `settings.write`。
+
+内置两个示例插件：
+
+- **GitHub 订阅**（`app/Plugins/Github.php`）：在 GitHub 仓库 Settings → Webhooks 里填
+  `https://你的域名/webhook/github/<订阅ID>`，Content type 选 `application/json`，Secret 与面板里填一致。
+  支持 push / issues / pull_request / release / star；填了群号就把摘要推到群里。
+- **RSS 订阅**（`app/Plugins/Rss.php`）：支持 RSS 2.0 与 Atom，按 `last_poll` 轮询（默认 15 分钟，与定时任务同一套心跳），
+  抓到的条目按链接去重；填了群号就推标题与链接。
+
+数据文件：`runtime/webhooks.json`、`runtime/webhook-deliveries.json`、`runtime/rss.json`、`runtime/rss-items.json`。
+
 ## 程序更新
 
 面板「系统 → 程序更新」，三种方式：

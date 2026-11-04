@@ -112,12 +112,23 @@ class Logger
         });
     }
 
+    private static function isCliSapi(): bool
+    {
+        if (getenv('HYPER_LOG_CONSOLE') === '1') {
+            return true;
+        }
+        return in_array(PHP_SAPI, ['cli', 'phpdbg'], true);
+    }
+
     private static function log(string $level, string $msg, ?int $timeout): void
     {
         $timestamp = date('[Y-m-d H:i:s') . '.' . substr((string)microtime(), 2, 3) . ']';
         $line = $timestamp . ' [' . str_pad(strtoupper($level), 8) . '] ' . $msg . PHP_EOL;
 
-        if (self::$consoleEnabled) {
+        // 终端输出只给 CLI：php -S / php-fpm 下 stdout 属于响应体，
+        // 先 echo 会把 header 刷出去，http_response_code 再也改不动，
+        // 表现为「接口明明返回 401，HTTP 状态却是 200 + text/html」。
+        if (self::$consoleEnabled && self::isCliSapi()) {
             self::consoleOutput($level, $line, $timeout);
         }
         if (!self::$fileEnabled) {

@@ -48,7 +48,14 @@ final class Runner
                 Scheduler::run($entry);
             }
 
-            // 2) cron 任务
+            // 2) RSS 订阅源（各自按 last_poll 到期，最多 5 个/次）
+            try {
+                \Core\Rss\Poller::pollDue();
+            } catch (\Throwable $e) {
+                Logger::debug('[rss] 轮询异常：' . $e->getMessage());
+            }
+
+            // 3) cron 任务
             foreach (JobStore::all() as $job) {
                 if (empty($job['enabled'])) {
                     continue;

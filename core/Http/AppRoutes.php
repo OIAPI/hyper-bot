@@ -42,6 +42,12 @@ final class AppRoutes
             $router->post('/api/protocol/milky/webhook', static fn(Request $req): Response => self::milkyWebhook($req), 'protocol.milky.webhook');
             $router->post('/api/protocol/qqbot/webhook', static fn(Request $req): Response => self::qqbotWebhook($req), 'protocol.qqbot.webhook');
         }
+        // ---- 外部 WebHook（GitHub 等）----
+        // 无状态、靠 secret 签名校验，所以不受 acceptEvents 影响：
+        // 即使 webui-only 架构也能收 GitHub 通知。
+        $router->post('/webhook/github/{id}', static fn(Request $req, array $params): Response
+            => \Core\Webhook\GithubWebhook::handle($req, (string)($params['id'] ?? '')), 'webhook.github');
+
         $router->get('/api/protocol/status', static fn(Request $req): Response => self::protocolStatus($req), 'protocol.status');
         $router->get('/api/health', static fn(Request $req): Response => self::health($req), 'api.health');
     }

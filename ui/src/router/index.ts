@@ -101,6 +101,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '系统', icon: 'system', group: '系统' },
       },
       {
+        path: 'ext/:plugin',
+        name: 'ext-page',
+        component: () => import('@/views/ExtView.vue'),
+        // 没有 title：这条不进侧边栏，插件菜单由 /webui/api/ext/pages 动态注入
+        meta: { group: '插件' },
+      },
+      {
         path: 'update',
         name: 'update',
         component: () => import('@/views/UpdateView.vue'),

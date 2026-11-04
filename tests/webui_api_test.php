@@ -252,6 +252,18 @@ $ok('角色表随列表返回', ($oList['json']['data']['roles'] ?? []) === ['ow
 
 $upd = $call('GET', '/webui/api/update', [], $ownerToken);
 $ok('更新页信息带版本与 git 状态', ($upd['json']['data']['version'] ?? '') !== '' && isset($upd['json']['data']['git']));
+$extPages = $call('GET', '/webui/api/ext/pages', [], $ownerToken);
+$titles = array_column($extPages['json']['data']['items'] ?? [], 'title');
+$ok('插件后台菜单含 GitHub/RSS', in_array('GitHub 订阅', $titles, true) && in_array('RSS 订阅', $titles, true), implode(',', $titles));
+$extPage = $call('GET', '/webui/api/ext/pages/github', [], $ownerToken);
+$blocks = $extPage['json']['data']['blocks'] ?? [];
+$ok('插件页面 schema 有 blocks', count($blocks) >= 3);
+$extCall = $call('POST', '/webui/api/ext/github/call', ['path' => '/hooks', 'method' => 'GET'], $ownerToken);
+$ok('插件接口可调用', $extCall['status'] === 200 && is_array($extCall['json']['data']['items'] ?? null));
+$vExt = $call('POST', '/webui/api/ext/github/call', ['path' => '/hooks', 'method' => 'POST', 'params' => []], $viewerToken);
+$ok('viewer 调插件写接口 → 403', $vExt['status'] === 403);
+$ghHook = $call('POST', '/webhook/github/nope', [], '');
+$ok('未知 GitHub 订阅 → 404', $ghHook['status'] === 404);
 $vUpd = $call('POST', '/webui/api/update/check', [], $viewerToken);
 $ok('viewer 检查更新 → 403', $vUpd['status'] === 403);
 $badAttach = $call('POST', '/webui/api/update/attach', ['url' => 'not-a-url'], $ownerToken);

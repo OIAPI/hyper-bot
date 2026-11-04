@@ -1,15 +1,21 @@
 <script setup lang="ts">
 /**
- * 程序更新：git 仓库 / 压缩包。
+ * 程序更新：git 仓库 / 压缩包 / 直链。
  *
  * 只覆盖程序文件：runtime/、vendor/、.git/、Config.ini 永远不会被动，
  * 被覆盖的旧文件先备份到 runtime/update/backup-<时间>/。
+ *
+ * v3.2 起「接收包」和「应用包」分开：
+ *  - 压缩包按 512 KB 分片上传（低于 nginx 默认 1m 请求体上限），
+ *    合并后立即返回 job，解压/覆盖在后台命令行进程里跑；
+ *  - 页面只轮询 /update/job，所以反代不会再因为解压几十秒
+ *    先超时断连（readv() failed 104 / 403）。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { updateApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
-import type { UpdateCheckResult, UpdateInfo, UpdateResult } from '@/types/api'
+import type { UpdateCheckResult, UpdateInfo, UpdateJob } from '@/types/api'
 
 const auth = useAuthStore()
 const toast = useToastStore()
@@ -18,7 +24,7 @@ const info = ref<UpdateInfo | null>(null)
 const loading = ref(false)
 const isOwner = computed(() => auth.isOwner || auth.role === 'owner')
 
-const mode = ref<'git' | 'zip' | 'builtin'>('builtin')
+const mode = ref<'builtin' | 'git' | 'zip' | 'url'>('builtin')
 
 const branch = ref('')
 const repoUrl = ref('')
@@ -52,11 +58,22 @@ async function doAttach(): Promise<void> {
 
 const checking = ref(false)
 const checkResult = ref<UpdateCheckResult | null>(null)
-const running = ref(false)
-const result = ref<UpdateResult | null>(null)
 const error = ref('')
 const file = ref<File | null>(null)
 const confirming = ref(false)
+
+/** 从链接更新 */
+const zipUrl = ref('')
+const zipUrlProxy = ref('')
+
+/** 上传 / 任务状态 */
+const job = ref<UpdateJob | null>(null)
+const uploading = ref(false)
+const uploadPct = ref(0)
+const uploadNote = ref('')
+const busy = computed(() => uploading.value || job.value?.status === 'running' || job.value?.status === 'queued')
+
+let pollTimer = 0
 
 watch(info, (v) => {
   if (!v) return
@@ -92,6 +109,8 @@ function pickFile(e: Event): void {
   const target = e.target as HTMLInputElement
   file.value = target.files && target.files[0] ? target.files[0] : null
   error.value = ''
+  uploadPct.value = 0
+  uploadNote.value = ''
 }
 
 function askRun(): void {
@@ -104,30 +123,123 @@ function askRun(): void {
     error.value = '请选择压缩包'
     return
   }
+  if (mode.value === 'url' && !zipUrl.value.trim()) {
+    error.value = '请填写压缩包链接'
+    return
+  }
+  if (busy.value) {
+    error.value = '已经有一个更新任务在跑，等它结束再试'
+    return
+  }
   confirming.value = true
+}
+
+function humanSize(bytes: number): string {
+  if (!bytes) return '0 B'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / 1024 / 1024).toFixed(2) + ' MB'
+}
+
+/** 轮询后台任务：直到 done / failed，或者页面卸载 */
+function watchJob(initial?: UpdateJob | null): void {
+  job.value = initial ?? null
+  stopPoll()
+  const tick = async (): Promise<void> => {
+    try {
+      const res = await updateApi.job()
+      // 任务文件可能在应用更新后被清掉：别在这里解引用 null 或无限轮询
+      if (!res.job) {
+        stopPoll()
+        return
+      }
+      job.value = res.job
+      const status = res.job.status
+      if (status === 'done' || status === 'failed' || status === 'stale') {
+        stopPoll()
+        if (status === 'done') {
+          toast.ok('更新完成' + (res.job.result?.version ? '：v' + res.job.result.version : ''))
+          await load()
+        } else {
+          toast.error('更新失败：' + (res.job.msg || '看日志'))
+        }
+        return
+      }
+      pollTimer = window.setTimeout(() => void tick(), 1500)
+    } catch {
+      // 后台进程应用更新时可能短暂重启：继续重试，别把任务判死
+      pollTimer = window.setTimeout(() => void tick(), 2500)
+    }
+  }
+  void tick()
+}
+
+function stopPoll(): void {
+  if (pollTimer) window.clearTimeout(pollTimer)
+  pollTimer = 0
+}
+
+/**
+ * 分片上传：init 拿 chunk_size → 顺序发每一片 → finish 合并 + 起任务。
+ * 顺序发送很重要：php -S 是单线程，并发只会互相排队还更难报错。
+ */
+async function uploadZip(picked: File): Promise<UpdateJob | null> {
+  uploading.value = true
+  uploadPct.value = 0
+  error.value = ''
+  uploadNote.value = '正在初始化…'
+  try {
+    const init = await updateApi.chunkInit({ filename: picked.name, size: picked.size })
+    const size = init.chunk_size
+    const total = init.total
+    for (let i = 0; i < total; i += 1) {
+      const start = i * size
+      const blob = picked.slice(start, Math.min(start + size, picked.size))
+      await updateApi.chunkUpload(init.upload, i, blob)
+      uploadPct.value = Math.round(((i + 1) / total) * 100)
+      uploadNote.value =
+        '上传中 ' + (i + 1) + '/' + total + ' 片 · ' +
+        humanSize(Math.min(start + size, picked.size)) + ' / ' + humanSize(picked.size)
+    }
+    uploadNote.value = '正在合并并启动后台更新…'
+    const res = await updateApi.chunkFinish(init.upload)
+    uploadNote.value = '已交给后台任务，页面可以继续用'
+    return res.job
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '上传失败'
+    return null
+  } finally {
+    uploading.value = false
+  }
 }
 
 async function run(): Promise<void> {
   confirming.value = false
-  running.value = true
   error.value = ''
-  result.value = null
   try {
     if (mode.value === 'zip' && file.value) {
-      result.value = await updateApi.fromZip(file.value)
-    } else {
-      result.value = await updateApi.fromGit({
-        url: repoUrl.value.trim(),
-        branch: branch.value.trim(),
-        proxy: proxy.value,
-      })
+      const started = await uploadZip(file.value)
+      if (started) watchJob(started)
+      return
     }
-    toast.ok(result.value.msg)
+    if (mode.value === 'url') {
+      uploadNote.value = '服务器正在下载…'
+      const res = await updateApi.fromUrl({ url: zipUrl.value.trim(), proxy: zipUrlProxy.value })
+      watchJob(res.job)
+      return
+    }
+    // git：服务端仍然同步拉取（仓库很小），完了直接刷新信息
+    const res = await updateApi.fromGit({
+      url: repoUrl.value.trim(),
+      branch: branch.value.trim(),
+      proxy: proxy.value,
+    })
+    toast.ok(res.msg)
     await load()
   } catch (e) {
     error.value = e instanceof Error ? e.message : '更新失败'
   } finally {
-    running.value = false
+    uploadNote.value = ''
   }
 }
 
@@ -139,7 +251,31 @@ const gitText = computed(() => {
   return g.commit + (g.subject ? ' · ' + g.subject : '')
 })
 
-onMounted(load)
+const jobLabel: Record<string, string> = {
+  idle: '空闲',
+  queued: '排队中',
+  running: '更新中',
+  done: '已完成',
+  failed: '失败',
+  stale: '卡住了',
+}
+
+onMounted(async () => {
+  await load()
+  // 刷新页面 / 换设备进来时，可能上一轮任务还在跑：接管它
+  try {
+    const res = await updateApi.job()
+    if (res.job && (res.job.status === 'running' || res.job.status === 'queued')) {
+      watchJob(res.job)
+    } else if (res.job && res.job.status !== 'idle') {
+      job.value = res.job
+    }
+  } catch {
+    // 老版本后端没有 /update/job：忽略
+  }
+})
+
+onUnmounted(stopPoll)
 </script>
 
 <template>
@@ -182,11 +318,15 @@ onMounted(load)
         </button>
         <button type="button" class="mode" :class="{ on: mode === 'git' }" @click="mode = 'git'">
           <span class="mode-name">从 Git 链接更新</span>
-          <span class="mode-hint">支持 gh-proxy.com 等加速前缀</span>
+          <span class="mode-hint">服务端 clone --depth 1 再覆盖</span>
         </button>
         <button type="button" class="mode" :class="{ on: mode === 'zip' }" @click="mode = 'zip'">
           <span class="mode-name">从压缩包更新</span>
-          <span class="mode-hint">发布包 zip，自动剥掉外层目录</span>
+          <span class="mode-hint">分片上传，后台解压（推荐）</span>
+        </button>
+        <button type="button" class="mode" :class="{ on: mode === 'url' }" @click="mode = 'url'">
+          <span class="mode-name">从直链更新</span>
+          <span class="mode-hint">服务器自己下载，不经过浏览器</span>
         </button>
       </div>
 
@@ -250,6 +390,27 @@ onMounted(load)
         </div>
       </div>
 
+      <div v-else-if="mode === 'url'" class="pane">
+        <div class="grid">
+          <label class="field span-2">
+            <span class="field-label">压缩包直链（zip）</span>
+            <UiInput v-model="zipUrl" placeholder="https://github.com/OIAPI/hyper-bot/archive/HEAD.zip" />
+          </label>
+          <label class="field">
+            <span class="field-label">加速前缀</span>
+            <UiSelect
+              :model-value="zipUrlProxy"
+              :options="proxySelectOptions"
+              @update:model-value="(v: string | number) => (zipUrlProxy = String(v))"
+            />
+          </label>
+        </div>
+        <div class="field-hint">
+          服务器直接下载，浏览器只发一个很小的请求。仓库主页地址会自动换成
+          <code>/archive/HEAD.zip</code>；发布包直链也可以。
+        </div>
+      </div>
+
       <div v-else class="pane">
         <div class="grid">
           <label class="field span-2">
@@ -258,37 +419,67 @@ onMounted(load)
           </label>
         </div>
         <div class="field-hint">
-          包内需要有 <code>composer.json</code>；多一层目录（如 <code>hyper-bot-v2.3.0/</code>）会自动识别。
+          按 512 KB 分片上传，超过反代默认 1 MB 请求体上限也不会 413；
+          解压在后台进程里跑，页面不会因为等待而超时报 403/104。
+        </div>
+        <div v-if="uploading || uploadPct > 0" class="progress-box">
+          <div class="progress-bar"><span :style="{ width: uploadPct + '%' }" /></div>
+          <div class="tiny">{{ uploadPct }}% · {{ uploadNote }}</div>
         </div>
       </div>
 
       <div v-if="error" class="form-error">{{ error }}</div>
 
       <div class="row">
-        <UiButton v-if="mode !== 'builtin'" size="small" type="primary" :disabled="!isOwner" :loading="running" @click="askRun">
-          {{ running ? '更新中…' : '开始更新' }}
+        <UiButton
+          v-if="mode !== 'builtin'"
+          size="small"
+          type="primary"
+          :disabled="!isOwner || busy"
+          :loading="uploading"
+          @click="askRun"
+        >
+          {{ uploading ? '上传中…' : busy ? '更新进行中…' : '开始更新' }}
         </UiButton>
       </div>
     </UiCard>
 
-    <UiCard v-if="result">
-      <template #header><span class="card-title">更新结果</span></template>
-      <div class="result">
-        <div>{{ result.msg }}</div>
-        <div class="tiny">
-          版本 {{ result.version || '—' }} · 变更 {{ result.changed }} 个文件 · 跳过 {{ result.skipped ?? 0 }} 个受保护路径
+    <!-- 后台任务：状态 + 最近日志 -->
+    <UiCard v-if="job && job.status !== 'idle'">
+      <template #header>
+        <div class="job-head">
+          <span class="card-title">更新任务</span>
+          <UiTag :type="job.status === 'done' ? 'ok' : job.status === 'failed' || job.status === 'stale' ? 'danger' : 'warn'" size="small" round>
+            {{ jobLabel[job.status] ?? job.status }}
+          </UiTag>
         </div>
-        <div v-if="result.backup" class="tiny mono">备份：{{ result.backup }}</div>
-        <ul v-if="result.warnings?.length" class="warns">
-          <li v-for="w in result.warnings" :key="w">{{ w }}</li>
+      </template>
+      <div class="result">
+        <div>{{ job.msg || '等待后台进程…' }}</div>
+        <div class="tiny">
+          {{ job.source === 'url' ? '直链下载' : job.source === 'zip' ? '压缩包' : job.source }}
+          <template v-if="job.file"> · {{ job.file }}</template>
+          <template v-if="job.size"> · {{ humanSize(job.size) }}</template>
+          <template v-if="job.age"> · 已跑 {{ job.age }} 秒</template>
+        </div>
+        <div v-if="job.result" class="tiny">
+          版本 {{ job.result.version || '—' }} · 变更 {{ job.result.changed }} 个文件 · 跳过 {{ job.result.skipped ?? 0 }} 个受保护路径
+        </div>
+        <div v-if="job.result?.backup" class="tiny mono">备份：{{ job.result.backup }}</div>
+        <ul v-if="job.result?.warnings?.length" class="warns">
+          <li v-for="w in job.result.warnings" :key="w">{{ w }}</li>
         </ul>
+        <div v-if="job.log?.length" class="job-log">
+          <div v-for="(line, i) in job.log" :key="i" class="log-line">{{ line }}</div>
+        </div>
       </div>
     </UiCard>
 
     <UiDialog v-model="confirming" title="确认更新" width="460px">
       <div class="confirm">
         <p>即将覆盖当前程序文件，<b>runtime/、vendor/、Config.ini 会保留</b>，被覆盖的旧文件会先备份。</p>
-        <p>更新过程中请勿关闭页面；完成后如有依赖变化，需要执行 <code>php bin/hyper install --force</code>。</p>
+        <p v-if="mode === 'zip'">{{ file?.name }} · {{ humanSize(file?.size ?? 0) }}，分片上传后在后台解压。</p>
+        <p>更新在后台进行，页面可以关掉；回来后进度还在。完成后如有依赖变化，需要执行 <code>php bin/hyper install --force</code>。</p>
       </div>
       <template #footer>
         <UiButton size="small" @click="confirming = false">取消</UiButton>
@@ -312,7 +503,8 @@ onMounted(load)
 .mono { font-family: var(--font-mono); }
 .stat-label { margin-top: 2px; font-size: 11px; color: var(--text-faint); }
 
-.modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.modes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+@media (max-width: 860px) { .modes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .mode { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; text-align: left; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
 .mode.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .mode-name { font-size: 12.5px; color: var(--text); }
@@ -324,11 +516,12 @@ onMounted(load)
 .field.span-2 { grid-column: span 2; }
 .field-label { font-size: 11.5px; color: var(--text-dim); }
 .field-hint { font-size: 11.5px; color: var(--text-faint); line-height: 1.7; }
-.row { display: flex; gap: 8px; }
+.row { display: flex; gap: 8px; margin-top: 4px; }
 .file-input { font-size: 12px; }
 .attach-box { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border-soft); display: flex; flex-direction: column; gap: 8px; }
 .check-result { font-size: 12px; color: var(--text-dim); display: flex; flex-direction: column; gap: 4px; }
 .tiny { font-size: 11px; color: var(--text-faint); }
+.job-head { display: flex; align-items: center; gap: 8px; }
 .result { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
 .warns { margin: 6px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--warning, #b8860b); line-height: 1.8; }
 .confirm p { margin: 0 0 8px; font-size: 12.5px; line-height: 1.8; color: var(--text-dim); }
@@ -339,4 +532,13 @@ onMounted(load)
   background: color-mix(in srgb, var(--danger, #d33) 8%, transparent);
   font-size: 12px; line-height: 1.6; user-select: text;
 }
+.progress-box { display: flex; flex-direction: column; gap: 5px; }
+.progress-bar { height: 6px; border-radius: 999px; background: var(--border-soft); overflow: hidden; }
+.progress-bar span { display: block; height: 100%; background: var(--accent); transition: width 0.25s ease; }
+.job-log {
+  margin-top: 8px; max-height: 220px; overflow: auto; padding: 9px 11px;
+  border-radius: var(--radius-sm); background: var(--bg-inset, rgba(127, 127, 127, 0.08));
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.7; color: var(--text-dim);
+}
+.log-line { white-space: pre-wrap; word-break: break-word; }
 </style>

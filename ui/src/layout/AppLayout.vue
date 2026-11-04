@@ -22,6 +22,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { overviewApi, authApi, extApi } from '@/api'
 import { formatUptime } from '@/utils/format'
+import { ensurePluginHost, pluginRoutes } from '@/ext/host'
 import AppToast from '@/components/AppToast.vue'
 
 const route = useRoute()
@@ -82,18 +83,34 @@ async function loadExtMenus(): Promise<void> {
   }
 }
 
+interface NavEntry { path: string; title: string; name: string; icon?: string }
+
 const navGroups = computed(() => {
-  const groups = new Map<string, Array<{ path: string; title: string; name: string }>>()
+  const groups = new Map<string, NavEntry[]>()
   for (const r of router.getRoutes()) {
     const meta = r.meta as { title?: string; icon?: string; group?: string }
     if (!meta.title || !meta.group || !r.name) continue
     const path = r.path === '' ? '/' : r.path.startsWith('/') ? r.path : '/' + r.path
     const list = groups.get(meta.group) ?? []
-    list.push({ path, title: meta.title, name: String(r.name) })
+    list.push({ path, title: meta.title, name: String(r.name), icon: meta.icon })
     groups.set(meta.group, list)
   }
+  // 插件页面：router.addRoute 不会让 getRoutes() 的 computed 重新求值，
+  // 所以另存一份响应式列表（host.ts 的 pluginRoutes）合并进来。
+  for (const pr of pluginRoutes) {
+    const list = groups.get(pr.group) ?? []
+    if (!list.some((x) => x.path === pr.path)) {
+      list.push({ path: pr.path, title: pr.title, name: pr.name, icon: pr.icon })
+    }
+    groups.set(pr.group, list)
+  }
   if (extMenus.value.length) {
-    groups.set('插件', extMenus.value.map((m) => ({ path: m.path, title: m.title, name: 'ext:' + m.plugin + ':' + m.path })))
+    const merged = groups.get('插件') ?? []
+    for (const m of extMenus.value) {
+      if (merged.some((x) => x.path === m.path)) continue
+      merged.push({ path: m.path, title: m.title, name: 'ext:' + m.plugin + ':' + m.path, icon: m.icon })
+    }
+    groups.set('插件', merged)
   }
   return [...groups.entries()].map(([name, items]) => ({ name, items }))
 })
@@ -146,6 +163,8 @@ onMounted(async () => {
   mq.addEventListener('change', syncNarrow)
   await auth.loadMe()
   void loadExtMenus()
+  // 插件自带脚本：注册注入块与页面（失败不影响面板本身）
+  void ensurePluginHost()
   void refreshStatus()
   timer = window.setInterval(refreshStatus, 30_000)
 })
@@ -219,7 +238,7 @@ async function doLogout(): Promise<void> {
             :title="menuCollapsed ? item.title : undefined"
             @click="mobileNav = false"
           >
-            <span class="nav-ico"><component :is="NAV_ICONS[item.name] ?? Grid" /></span>
+            <span class="nav-ico"><component :is="NAV_ICONS[item.icon ?? item.name] ?? Grid" /></span>
             <span v-if="!menuCollapsed" class="nav-label">{{ item.title }}</span>
           </RouterLink>
         </div>

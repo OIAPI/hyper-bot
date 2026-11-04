@@ -12,8 +12,8 @@ import type {
   RuntimeData, HealthData, DiskData, RouteItem,
   BotAccount, BotAccountList, OAuthProviders,
   ScheduleData, ScheduleJob, PermissionsData, ExtWidget,
-  UpdateInfo, UpdateCheckResult, UpdateResult,
-  ExtMenuItem, ExtPageData,
+  UpdateInfo, UpdateCheckResult, UpdateResult, UpdateJob, UpdateStartResult, ChunkInitResult,
+  ExtMenuItem, ExtPageData, ExtScriptItem,
 } from '@/types/api'
 
 /** 鉴权 */
@@ -85,11 +85,28 @@ export const updateApi = {
     http.post<{ commit: string; branch: string; msg: string }>('/update/attach', payload),
   fromGit: (payload: { url: string; branch?: string; proxy?: string }) =>
     http.post<UpdateResult>('/update/git', payload),
+  /** 整包直传：只适合小包，大包走分片（nginx 默认 1m 请求体会 413） */
   fromZip: (file: File) =>
-    http.postRaw<UpdateResult>('/update/zip', file, {
+    http.postRaw<UpdateStartResult>('/update/zip', file, {
       query: { filename: file.name },
       contentType: 'application/zip',
     }),
+  /** 异步更新的任务状态；前端轮询它拿进度与日志 */
+  job: () => http.get<{ job: UpdateJob }>('/update/job'),
+  /** 服务器自己下载（绕开浏览器上传与反代超时） */
+  fromUrl: (payload: { url: string; proxy?: string }) =>
+    http.post<UpdateStartResult>('/update/zip/url', payload, { timeoutMs: 120000 }),
+  /** 分片上传：初始化 → 逐片 raw POST → 合并并启动后台更新 */
+  chunkInit: (payload: { filename: string; size: number }) =>
+    http.post<ChunkInitResult>('/update/chunk/init', payload),
+  chunkUpload: (upload: string, index: number, blob: Blob) =>
+    http.postRaw<{ upload: string; index: number; bytes: number }>(
+      '/update/chunk',
+      blob,
+      { query: { upload, index }, contentType: 'application/octet-stream', timeoutMs: 60000 },
+    ),
+  chunkFinish: (upload: string) =>
+    http.post<UpdateStartResult>('/update/chunk/finish', { upload }, { timeoutMs: 120000 }),
 }
 
 /** 插件后台（schema 驱动，插件自己提供菜单、页面与接口） */
@@ -100,6 +117,12 @@ export const extApi = {
     http.post<unknown>('/ext/' + encodeURIComponent(plugin) + '/call', { path, method, params }),
   /** 注入到已有页面的小块 */
   widgets: (slot: string) => http.get<{ slot: string; items: ExtWidget[] }>('/ext/widgets', { query: { slot } }),
+  /**
+   * 插件自带的前端资源（ES module / CSS）。
+   * 公开静态地址由 /webui/plugin-assets/<插件>/<文件> 提供，
+   * 浏览器动态 import 时不带 Authorization，所以不能走鉴权接口。
+   */
+  scripts: () => http.get<{ items: ExtScriptItem[] }>('/ext/scripts'),
 }
 
 /** 概览 */

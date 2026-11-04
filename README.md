@@ -211,6 +211,9 @@ group.config、member.manage、plugin.manage、system.manage；
 - 面板能看到每个插件的钩子数量、触发条件、处理方法与所需权限
 - 全局启停写在 runtime/plugins-state.json，停用的插件不注册钩子（不是删文件）
 - 插件可以声明订阅类型（类注释 @subscribe / @subscribeGroup）
+- v3.1 起还能挂进程钩子、请求中间件、注入块与命令；v3.2 起可以带自己的前端 ES module，
+  注册组件/侧边栏页面（app/Plugins/assets/<插件>/，面板「插件」里能看到）
+- 面板能看到每个插件的钩子数量、触发条件、处理方法与所需权限；细节见 docs/README-webui.md
 
 ---
 
@@ -222,7 +225,12 @@ group.config、member.manage、plugin.manage、system.manage；
 |---|---|
 | 检查更新 | 目录是 git 仓库时 git fetch 比对远端，只报告 |
 | 从 Git 链接 | git clone --depth 1 到临时目录再覆盖；成功后自动把当前目录关联成仓库 |
-| 从压缩包 | 上传发布包 zip，自动剥外层目录 |
+| 从压缩包 | 分片上传发布包 zip（不占 PHP 请求），自动剥外层目录 |
+| 从 URL | 服务器自己下载 zip，适合文件大/网络慢、反代容易 60s 超时的场景 |
+
+更新操作（Git / 压缩包 / URL）只会先**接收或下载**压缩包，解压与覆盖在后台任务里跑：
+面板每 1.5 秒轮询 /webui/api/update/job 显示进度与日志，反代不会再报
+readv() failed / 403。分片大小 512 KB，断点数据在 runtime/update/chunks/，失败会清理。
 
 永不覆盖：runtime/、vendor/、.git/、node_modules/、Config.ini、.env。
 旧文件先备份到 runtime/update/backup-<时间>/。
@@ -254,7 +262,7 @@ docs/         README-webui.md（面板细节）
 protocol/     OneBot / Milky / QQ 官方机器人适配
 public/       入口 index.php 与 webui 静态产物
 runtime/      运行时数据（日志、缓存、账号、任务、会话、更新备份）
-tests/        18 个自检脚本，php tests/xxx_test.php
+tests/        19 个自检脚本，php tests/xxx_test.php
 ui/           面板源码（Vue 3 + Vite）
 utils/        日志、HTTP、Markdown 等工具
 webui/        面板后端：路由、控制器、账号与权限
@@ -296,6 +304,28 @@ QQ 权限列表是空的
 「面板存储 N 条 / 机器人 Redis 是否可用」的原因。常见是没装 php-redis 扩展、
 Redis.auth 不一致，或 select 的库号不对。
 
+上传更新包报 413 / 403，反代日志有 104、111
+413 是 nginx 直接拒了请求体（默认 client_max_body_size 1m），PHP 根本没收到，
+所以不会超时、是「秒回」。2.4.1 的整包上传必须先调大反代限制：
+
+    client_max_body_size 64m;
+    proxy_request_buffering off;
+    proxy_read_timeout 300s;
+
+PHP 的 upload_max_filesize / post_max_size 也要 ≥ 包大小。
+104（upstream 提前断开）通常是解压太久或 PHP 进程被杀，111（连接被拒）是
+nginx 连不上 php-fpm。3.2 起改成 512KB 分片上传 + 后台解压，整包大小不再受
+client_max_body_size 限制；分片仍被 413 时可调小 Config.ini 的 update_chunk。
+
+Swoole 架构还要看 package_max_length
+Swoole 用自己的 HTTP 解析器，PHP 的 upload_max_filesize / post_max_size 完全不生效。
+2.4.1 没配这个值，沿用 Swoole 默认 2MB：3MB 的包会被直接断连，反代看到 104/502，
+而那条 413 来自 nginx 的 client_max_body_size——是两层不同的限制。
+3.2 起可在 Config.ini 的 [http] package_max_length 调（默认 8MB），改完必须重启
+php bin/hyper serve（reload 不会重新设置 server options）；2.4.1 则要自己往
+controller/Server/HttpServer.php 的 'swoole' 数组加
+'package_max_length' => 64 * 1024 * 1024，再重启。
+
 更新后页面白屏
 前端产物换了文件名，强刷一次浏览器（Ctrl+Shift+R），或给 index.html 关掉缓存。
 
@@ -313,7 +343,7 @@ npm run dev          # 本地开发（需要后端在跑）
 # 测试（不需要 swoole / Redis）
 php tests/accounts_test.php
 php tests/subscription_test.php
-# ……共 18 个，见 tests/
+# ……共 19 个，见 tests/
 ~~~
 
 提交前建议跑一遍：

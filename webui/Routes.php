@@ -47,6 +47,10 @@ final class Routes {
         }
         self::$registered[$id] = true;
 
+        // 插件前端资源（公开）：动态 import() 不会带 Authorization 头，只能走同源 URL。
+        // 只提供 app/Plugins/assets 下启用插件的白名单后缀，见 ExtController::asset。
+        $router->get('/webui/plugin-assets/{plugin}/{file}', [ExtController::class, 'asset'], 'plugin.asset');
+
         $router->group('/webui/api', function (Router $r) use ($auth): void {
             $authCtl = new AuthController($auth);
             $overview = new OverviewController();
@@ -150,6 +154,11 @@ final class Routes {
                 $r->post('/update/attach', [$update, 'attach'], 'update.attach');
                 $r->post('/update/git', [$update, 'fromGit'], 'update.git');
                 $r->post('/update/zip', [$update, 'fromZip'], 'update.zip');
+                $r->post('/update/zip/url', [$update, 'fromUrl'], 'update.zip.url');
+                $r->post('/update/chunk/init', [$update, 'chunkInit'], 'update.chunk.init');
+                $r->post('/update/chunk', [$update, 'chunk'], 'update.chunk');
+                $r->post('/update/chunk/finish', [$update, 'chunkFinish'], 'update.chunk.finish');
+                $r->get('/update/job', [$update, 'job'], 'update.job');
 
                 // 插件后台页面（schema 驱动，前端通用渲染）
                 $r->get('/ext/pages', [$ext, 'pages'], 'ext.pages');
@@ -188,6 +197,8 @@ final class Routes {
                 $r->get('/system/disk', [$system, 'disk'], 'system.disk');
                 $r->get('/system/routes', [$system, 'routes'], 'system.routes');
                 $r->post('/system/cache', [$system, 'cacheClear'], 'system.cache');
+                // 插件前端注入：脚本清单（登录后取）
+                $r->get('/ext/scripts', [$ext, 'scripts'], 'ext.scripts');
             }, ['webui.auth']);
         });
     }
@@ -250,6 +261,10 @@ final class Routes {
         $kernel->addResponseFilter(
             static fn(Request $req, Response $res): Response => \Core\Extension\Hooks::filter('http.response', $res, $req)
         );
+        // ThinkPHP 风格请求中间件：包在路由外层，能拦 404 / 做维护模式 / 限流
+        foreach (\Core\Extension\ExtensionPoint::requestMiddlewares($app->registry) as $middleware) {
+            $kernel->addMiddleware($middleware);
+        }
         foreach (\Core\Extension\ExtensionPoint::middlewares($app->registry) as $filter) {
             $kernel->addResponseFilter($filter);
         }

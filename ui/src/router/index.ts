@@ -14,6 +14,8 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/',
+    // 命名是为了让插件用 router.addRoute('shell', ...) 挂页面
+    name: 'shell',
     component: () => import('@/layout/AppLayout.vue'),
     children: [
       {

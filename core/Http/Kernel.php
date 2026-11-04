@@ -51,39 +51,29 @@ final class Kernel {
         return $response;
     }
 
+    /** @var array<int, callable> 插件注册的请求中间件（进来就执行） */
+    private array $middlewares = [];
+
+    /**
+     * 插件可以挂 ThinkPHP 风格的请求中间件：fn(Request $req, callable $next): Response。
+     *
+     * 和 addResponseFilter 的区别：这个在路由匹配之前执行，拿到的是 Request，
+     * 可以鉴权、限流、做维护模式、改写请求，也可以短路直接返回 Response。
+     */
+    public function addMiddleware(callable $middleware): void {
+        $this->middlewares[] = $middleware;
+    }
+
     public function handle(Request $request): Response {
         $started = microtime(true);
         try {
-            $match = $this->router->match($request->method, $request->path);
-            if ($match === null) {
-                if ($this->fallback !== null) {
-                    $result = ($this->fallback)($request);
-                    return $this->applyFilters($request, $result instanceof Response ? $result : Response::json($result));
-                }
-                $allowed = $this->router->allowedMethods($request->path);
-                if ($allowed !== []) {
-                    return Response::fail('method not allowed', -405, 405)->withHeader('Allow', implode(', ', $allowed));
-                }
-                return Response::fail("route not found: {$request->path}", -404, 404);
+            // 插件中间件包在最外层：它们能看到 404，也能决定根本不进路由
+            $runner = fn(Request $req): Response => $this->resolve($req);
+            foreach (array_reverse($this->middlewares) as $middleware) {
+                $next = $runner;
+                $runner = fn(Request $req): Response => $middleware($req, $next);
             }
-
-            $chain = array_map(function (string $alias) {
-                $handler = $this->router->middlewareHandler($alias);
-                if ($handler === null) {
-                    throw new \RuntimeException("middleware not registered: {$alias}");
-                }
-                return $handler;
-            }, $match['middlewares']);
-
-            $core = fn(Request $req): Response => $this->dispatch($match['handler'], $req, $match['params']);
-
-            $pipeline = array_reduce(
-                array_reverse($chain),
-                fn(callable $next, callable $middleware) => fn(Request $req): Response => $middleware($req, $next),
-                $core
-            );
-
-            return $this->applyFilters($request, $pipeline($request));
+            return $this->applyFilters($request, $runner($request));
         } catch (\Throwable $e) {
             $this->logger?->error('http kernel exception', [
                 'path'  => $request->path,
@@ -101,6 +91,38 @@ final class Kernel {
                 'ms'     => round((microtime(true) - $started) * 1000, 2),
             ]);
         }
+    }
+
+    /** 路由匹配 → 内置中间件链 → 控制器 */
+    private function resolve(Request $request): Response {
+        $match = $this->router->match($request->method, $request->path);
+        if ($match === null) {
+            if ($this->fallback !== null) {
+                $result = ($this->fallback)($request);
+                return $result instanceof Response ? $result : Response::json($result);
+            }
+            $allowed = $this->router->allowedMethods($request->path);
+            if ($allowed !== []) {
+                return Response::fail('method not allowed', -405, 405)->withHeader('Allow', implode(', ', $allowed));
+            }
+            return Response::fail("route not found: {$request->path}", -404, 404);
+        }
+
+        $chain = array_map(function (string $alias) {
+            $handler = $this->router->middlewareHandler($alias);
+            if ($handler === null) {
+                throw new \RuntimeException("middleware not registered: {$alias}");
+            }
+            return $handler;
+        }, $match['middlewares']);
+
+        $core = fn(Request $req): Response => $this->dispatch($match['handler'], $req, $match['params']);
+
+        return array_reduce(
+            array_reverse($chain),
+            fn(callable $next, callable $middleware) => fn(Request $req): Response => $middleware($req, $next),
+            $core
+        )($request);
     }
 
     private function dispatch(mixed $handler, Request $request, array $params): Response {

@@ -63,6 +63,9 @@ switch ($command) {
     case 'redis':
         commandRedis($args);
         break;
+    case 'update:apply':
+        commandUpdateApply($args);
+        break;
     case 'status':
         commandStatus($args);
         break;
@@ -915,6 +918,22 @@ function commandInstall(array $args, array $options): void
     }
     echo '  有未通过的项，按上面提示处理后重跑。' . PHP_EOL . PHP_EOL;
     exit(1);
+}
+
+/** 后台应用更新包（由 UpdateService::startJob 拉起，不要在终端手动跑长任务） */
+function commandUpdateApply(array $ctx): void
+{
+    $file = (string)($ctx['args'][0] ?? '');
+    if ($file === '' || !is_file($file)) {
+        fwrite(STDERR, "找不到要应用的压缩包：{$file}" . PHP_EOL);
+        exit(1);
+    }
+    $code = \Core\Update\UpdateService::runJob(
+        $file,
+        (string)option($ctx, 'id', ''),
+        (string)option($ctx, 'source', 'zip')
+    );
+    exit($code);
 }
 
 /** 找 composer：$COMPOSER_BINARY > 项目内 composer.phar > PATH */

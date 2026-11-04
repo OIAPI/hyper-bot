@@ -53,6 +53,11 @@ class HttpServer {
 			'port' => Env::get('http.port', 9501),
 			'swoole' => [
 				'enable_coroutine' => true,
+				// Swoole 用自己的 HTTP 解析器，PHP 的 upload_max_filesize / post_max_size
+				// 在这里完全不生效；它只认 package_max_length（默认 2MB），
+				// 超过就直接断开连接（反代侧看到的是 104/502，不是 413）。
+				// 面板更新走 512KB 分片，不依赖这个值；插件导入、v3.2 前的整包更新才需要调大。
+				'package_max_length' => max(2 * 1024 * 1024, Env::int('http.package_max_length', 8 * 1024 * 1024)),
 				'reload_async' => true,
 				'max_wait_time' => 5,
 				'pid_file' => __runtime__ . '/http.pid',

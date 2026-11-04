@@ -568,7 +568,7 @@ public static function extRoutes(): array {
 
 数据文件：`runtime/webhooks.json`、`runtime/webhook-deliveries.json`、`runtime/rss.json`、`runtime/rss-items.json`。
 
-### 插件还能注入进程与页面（v3.1）
+### 插件还能注入进程、请求与页面（v3.1 / v3.2）
 
 除了「挂一个后台页面」，插件可以挂到框架的执行链上，全部可选、都有默认实现：
 
@@ -576,21 +576,71 @@ public static function extRoutes(): array {
 |---|---|
 | `boot()` | 进程启动时调一次：注册服务、准备资源 |
 | `hooks()` | 注册钩子：`['http.response' => fn($res) => $res, ...]`，值也可写 `['handler'=>…, 'priority'=>5]` |
-| `middleware()` | 响应过滤器：`fn(Request $r, Response $res): Response`，拿到结果后再改 |
+| `middleware()` | **响应过滤器**：`fn(Request $r, Response $res): Response`，拿到结果后再改 |
+| `requestMiddleware()` | **请求中间件**（ThinkPHP 风格）：`fn(Request $r, callable $next): Response`，可鉴权、限流、短路、改写请求 |
 | `adminWidgets()` | 注入到已有页面：`[{slot:'overview', title:'…', blocks:[…]}]`，不占侧边栏 |
+| `adminScripts()` | 插件自带前端 ES module：`['panel.js']` 或 `['js'=>[…],'css'=>[…]]`，放到 `app/Plugins/assets/<插件>/` |
 | `commands()` | 命令行命令：`['rss.poll' => ['desc'=>'…','handler'=>fn(array $args)]]` |
+
+两者的差别：`requestMiddleware()` 在**路由匹配之前**执行，能看到未处理的 Request，
+也能直接返回 Response 不进路由；`middleware()` 只能修改已经生成的响应。
 
 框架内置的钩子：
 
-| 钩子 | 时机 | 参数 |
+| 钩子 | 时机 | 参数 / 返回值 |
 |---|---|---|
-| `http.response` | 响应生成后、发出前 | `(Response $res, Request $req)` |
+| `http.response` | 响应生成后、发出前 | `(Response $res, Request $req)`，返回 Response |
 | `event.before_dispatch` | 事件进入插件分发前 | `(array $event, ?Adapter $adapter)` |
-| `event.after_dispatch` | 分发完成后（动作，无返回值） | `(array $event, array $result)` |
-| `onebot.call` | 调协议端 API 前 | `(array $params, string $action)` |
+| `event.after_dispatch` | 分发完成后（动作） | `(array $event, array $result)` |
+| `message.received` | 收到消息 / 事件、写日志之后、插件分发之前 | `(array $event, ?Adapter $adapter)`，返回 `null`/`false` 丢弃该事件；返回数组则替换事件 |
+| `message.filtered` | 事件被上一步丢弃后（动作） | `(array $event, ?Adapter $adapter)` |
+| `message.before_send` | 调协议端发消息之前 | `(array $params, string $action)`，返回 `null`/`false` 拦截，返回数组则替换参数 |
+| `message.sent` | 消息发送成功后（动作） | `(string $action, array $params, mixed $result)` |
+| `onebot.call` | 调协议端 API 前 | `(array $params, string $action)`，返回数组则替换参数 |
 
-内置的 `app/Plugins/Demo.php` 把这四样都演示了一遍：给所有响应加 `X-Plugins: demo` 头、
-在「概览」页注入一张「插件钩子」表、提供 `plugins.diag` 命令。
+被 `message.received` 丢弃的事件不会再进订阅过滤与插件分发，但已经写进消息日志——
+「收到了但决定不处理」和「根本没收到」在日志里是能区分开的。
+被 `message.before_send` 拦截的发送会返回失败回执（`status: failed`、`message: 插件拦截了这条消息`），
+调用方不会以为发出去了。
+
+内置的 `app/Plugins/Demo.php` 把这些都演示了一遍：给所有响应加 `X-Plugins: demo`、
+加 `X-Kernel-Middleware: demo` 请求中间件头、在「概览」页注入「插件钩子」表与前端组件、
+提供 `plugins.diag` 命令、演示 `[demo:drop]`（丢消息）与 `[demo:block]`（拦发送）。
+
+#### 插件自带前端（v3.2）
+
+插件不需要改 `ui/` 源码，放一个 ES module 就能注册组件和页面：
+
+```
+app/Plugins/assets/Demo/panel.js
+```
+
+```js
+export function setup(ctx) {
+  ctx.registerWidget('overview', { title: '插件前端注入', component: Widget })
+  ctx.registerRoute({ path: '/demo-panel', title: '插件演示', icon: 'plugins', group: '插件', component: Page })
+}
+```
+
+`setup(ctx)` 里的 `ctx`：
+
+| 字段 | 说明 |
+|---|---|
+| `plugin` / `name` | 插件全类名（`App\Plugins\Demo`）与短名 |
+| `h` / `ref` / `computed` / `reactive` / `watch` / `nextTick` / `onMounted` / `onUnmounted` / `defineComponent` | Vue 运行时，等同于在 `ui/src` 里写组件 |
+| `ui` | 全部 `Ui*` 组件（UiCard / UiButton / UiTag / UiTable …），自动跟随当前 UI 框架 |
+| `extApi` | 调自己的后端：`await ctx.extApi.call(ctx.plugin, '/hooks', 'GET')` |
+| `router` / `toast` | 跳转与提示 |
+| `registerWidget(slot, {title, component})` | 注入到已有页面插槽（如 `overview`） |
+| `registerRoute({path,title,component,icon?,group?})` | 在侧边栏加页面，path 是相对根路径 |
+| `log(...)` | 输出到浏览器控制台，带插件名前缀 |
+
+- 静态资源走同源公开 URL `/webui/plugin-assets/<插件>/<文件>`：
+  浏览器 `import()` 不带 Authorization 头，所以它必须公开；但只允许**启用中**插件目录下的
+  js/css/json/svg/图片/字体，其余后缀 403，`..` 与跨目录 realpath 一律 404。
+- 清单接口 `GET /webui/api/ext/scripts` 返回 `{items:[{plugin,file,type,url,name,title}]}`；
+  前端启动时加载并执行 `setup(ctx)`，单个插件失败只影响它自己（`pluginFailures` 可查）。
+- 改完插件脚本不用重新构建前端：控制台执行 `window.hyperReloadPlugins()` 重新加载。
 
 命令行：
 
@@ -605,13 +655,38 @@ php bin/hyper ext rss.items '{"limit":5}'
 
 ## 程序更新
 
-面板「系统 → 程序更新」，三种方式：
+面板「系统 → 程序更新」，四种方式：
 
 | 方式 | 说明 |
 |---|---|
 | 检查更新 | 当前目录是 git 仓库且配了远端时，`git fetch` 后对比 `HEAD..@{u}`，只报告不落盘 |
 | 从 Git 链接更新 | `git clone --depth 1` 到临时目录再覆盖，不碰现有 .git 历史，不产生合并冲突 |
-| 从压缩包更新 | 上传发布包 zip（≤64MB），自动识别外层目录 |
+| 从压缩包更新 | 分片上传发布包 zip（≤64MB），自动识别外层目录 |
+| 从 URL 更新 | 服务器自己下载 zip（支持加速前缀），适合包大 / 手机上传慢 / 反代超时 |
+
+**为什么改成异步**：以前上传是在一个 PHP 请求里同步解压覆盖。ARM 机器上几十秒很正常，
+而 nginx 默认 `proxy_read_timeout 60s` 会先断开，日志里就是
+`readv() failed (104: Connection reset by peer) while reading upstream`，
+浏览器随后看到一个 403；`php -S` 单线程时还会连带卡住其它请求。
+
+现在只做「接收」：分片上传（512 KB/片，`/update/chunk/init` → `/update/chunk` → `/update/chunk/finish`）
+或服务器下载（`/update/from-url`）拿到 zip 后，`UpdateService::startJob()` 写
+`runtime/update/job.json` 并交给后台进程解压覆盖；面板每 1.5 秒轮询 `GET /update/job`
+显示状态（queued/running/done/failed/stale）与日志，页面关掉也不会中断。
+分片落在 `runtime/update/chunks/<upload>/`，合并成功或校验失败都会清理。
+
+排障：**413 是反代拒绝，不是 PHP 报错**（nginx 默认 `client_max_body_size 1m`），
+表现是「点上传立刻 413」，同时 nginx error.log 里有 104（上游提前断开）/111（连不上上游）。
+调大 `client_max_body_size` 与 PHP 的 `upload_max_filesize` / `post_max_size`；
+分片仍被挡就把 `[webui] update_chunk` 调到 65536。104/111 同时出现时先确认
+php-fpm 在跑、nginx 的 fastcgi_pass/proxy_pass 指向的端口或套接字正确。
+v3.2 之前（如 2.4.1）是整包 POST，只能靠调反代；v3.2 起整包大小不再影响上传。
+
+Swoole 架构是**另一层限制**：Swoole 自己解析 HTTP，PHP 的 `upload_max_filesize` /
+`post_max_size` 不生效，只看 `package_max_length`（Swoole 默认 2MB），超限直接断连，
+反代日志表现为 104/502（不是 413）。3.2 起在 `Config.ini [http] package_max_length`
+配置（默认 8MB，启动时读取），改完要重启 `php bin/hyper serve`；2.4.1 需要改
+`controller/Server/HttpServer.php` 里 `'swoole'` 数组并重启。
 
 **关于 git 仓库绑定**：用压缩包部署的目录默认不是仓库，此时「检查更新」不可用。
 在「检查更新」页填一次仓库地址、点「关联现有目录」，它会做 `git init` +

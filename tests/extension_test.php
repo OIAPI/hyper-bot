@@ -170,8 +170,29 @@ $diag = \Core\Extension\ExtensionPoint::diag($registry);
 check('自检返回钩子列表', is_array($diag['hooks']) && $diag['hooks'] !== []);
 check('自检统计注入块数量', ($diag['widgets'] ?? 0) >= 3);
 
-// 中间件列表（当前没插件实现，应为数组）
-check('中间件列表是数组', is_array(\Core\Extension\ExtensionPoint::middlewares($registry)));
+// 请求中间件（v3.2）：Demo 插件挂了一个「加耗时头」的中间件
+$mws = \Core\Extension\ExtensionPoint::requestMiddlewares($registry);
+check('中间件列表是数组', is_array($mws));
+check('Demo 提供请求中间件', count($mws) >= 1);
+if ($mws !== []) {
+    $req = new \Core\Http\Request('GET', '/ping', [], [], [], '');
+    $res = $mws[0]($req, static fn() => \Core\Http\Response::json(['pong' => true]));
+    check('中间件能包装响应', $res instanceof \Core\Http\Response && ($res->headers['X-Kernel-Middleware'] ?? '') === 'demo');
+}
+
+// 插件前端资源（v3.2）：Demo 的 panel.js 应出现在脚本清单里，且 URL 指向公开静态路由
+$scripts = \Core\Extension\ExtensionPoint::scripts($registry);
+$panel = null;
+foreach ($scripts as $item) {
+    if (($item['plugin'] ?? '') === 'App\\Plugins\\Demo' && ($item['file'] ?? '') === 'panel.js') {
+        $panel = $item;
+        break;
+    }
+}
+check('发现 Demo 的 panel.js', $panel !== null);
+check('脚本 URL 指向 plugin-assets', $panel !== null && str_contains((string)($panel['url'] ?? ''), '/webui/plugin-assets/Demo/panel.js'));
+check('脚本类型识别为 js', $panel !== null && ($panel['type'] ?? '') === 'js');
+check('插件脚本文件真实存在', is_file(__root__ . '/app/Plugins/assets/Demo/panel.js'));
 
 echo PHP_EOL . ($fail === 0 ? "\033[32m全部通过\033[0m 通过 {$ok}，失败 0" : "失败 {$fail} 项") . PHP_EOL;
 exit($fail === 0 ? 0 : 1);

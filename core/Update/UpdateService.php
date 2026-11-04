@@ -416,4 +416,239 @@ final class UpdateService
         }
         @rmdir($dir);
     }
+
+    // ------------------------------------------------------------------
+    // 异步更新任务（v3.2）
+    //
+    // 为什么必须异步：更新一个 3MB 的发布包要解压上万个文件、再逐个覆盖，
+    // 在 ARM 手机上能跑几十秒。同步做的话反代（nginx proxy_read_timeout 默认 60s）
+    // 会先断掉连接，浏览器只看到 502/403；php -S 又是单线程，解压期间整个面板的
+    // 其它请求都会卡住。所以「接收包」和「应用包」拆开：请求只负责把包放好，
+    // 真正的解压替换交给后台进程（php bin/hyper update:apply），前端轮询任务状态。
+    // ------------------------------------------------------------------
+
+    public static function jobFile(): string
+    {
+        return self::path('job.json');
+    }
+
+    /** 当前/上一次更新任务（附带日志尾部，前端直接渲染） */
+    public static function job(): ?array
+    {
+        $file = self::jobFile();
+        if (!is_file($file)) {
+            return null;
+        }
+        $job = json_decode((string)@file_get_contents($file), true);
+        if (!is_array($job)) {
+            return null;
+        }
+        $job['age'] = time() - (int)($job['updated_at'] ?? 0);
+        $running = in_array($job['status'] ?? '', ['queued', 'running'], true);
+        // 进程被杀（手机省电、OOM）时状态会永远停在 running，超过 15 分钟就标 stale
+        $job['stale'] = $running && $job['age'] > 900;
+        if ($job['stale']) {
+            $job['status'] = 'stale';
+        }
+        $log = (string)($job['log_file'] ?? '');
+        $lines = [];
+        if ($log !== '' && is_file($log)) {
+            $lines = @file($log, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+        }
+        $job['log'] = array_slice($lines, -40);
+        return $job;
+    }
+
+    /** 往任务日志追加一行：面板的「日志」区域直接读这个文件 */
+    private static function jobLog(array $job, string $line): void
+    {
+        $file = (string)($job['log_file'] ?? '');
+        if ($file === '') {
+            return;
+        }
+        // 用「任务开始后第几秒」而不是本地时间：CLI 与 php-fpm 的时区未必一致，
+        // 两者混着写会让人误判先后顺序。
+        $elapsed = max(0, time() - (int)($job['started_at'] ?? time()));
+        @file_put_contents($file, '[+' . $elapsed . 's] ' . $line . PHP_EOL, FILE_APPEND);
+    }
+
+    private static function writeJob(array $job): void
+    {
+        $job['updated_at'] = time();
+        @file_put_contents(
+            self::jobFile(),
+            json_encode($job, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)
+        );
+    }
+
+    public static function jobRunning(): bool
+    {
+        $job = self::job();
+        return $job !== null && in_array($job['status'] ?? '', ['queued', 'running'], true);
+    }
+
+    /**
+     * 后台开一个更新任务，立即返回。
+     * @return array{ok:bool,msg:string,job:?array}
+     */
+    public static function startJob(string $zipFile, string $source = 'zip'): array
+    {
+        if (self::jobRunning()) {
+            return ['ok' => false, 'msg' => '已经有一个更新任务在跑，等它结束再试', 'job' => self::job()];
+        }
+        if (!is_file($zipFile)) {
+            return ['ok' => false, 'msg' => '压缩包不存在（上传可能没落盘）', 'job' => null];
+        }
+        $size = (int)@filesize($zipFile);
+        if ($size <= 0) {
+            return ['ok' => false, 'msg' => '压缩包是空的', 'job' => null];
+        }
+        $id = date('YmdHis') . '-' . bin2hex(random_bytes(3));
+        $log = self::path('job-' . $id . '.log');
+        @file_put_contents($log, '[update] ' . date('Y-m-d H:i:s') . " 收到 " . $source . "：" . basename($zipFile) . PHP_EOL);
+        $job = [
+            'id'         => $id,
+            'status'     => 'queued',
+            'source'     => $source,
+            'file'       => basename($zipFile),
+            'size'       => $size,
+            'started_at' => time(),
+            'updated_at' => time(),
+            'ended_at'   => null,
+            'msg'        => '已排队，后台开始解压',
+            'result'     => null,
+            'log_file'   => $log,
+        ];
+        self::writeJob($job);
+
+        // 后台执行：用 shell 把它放到后台并立刻返回，父进程（PHP-FPM/php -S）不等它
+        $cmd = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(self::root() . '/bin/hyper')
+            . ' update:apply ' . escapeshellarg($zipFile)
+            . ' --id=' . escapeshellarg($id)
+            . ' --source=' . escapeshellarg($source);
+        @exec('cd ' . escapeshellarg(self::root()) . ' && ' . $cmd . ' >>' . escapeshellarg($log) . ' 2>&1 &');
+
+        return ['ok' => true, 'msg' => '更新已在后台开始，页面会自动刷新状态', 'job' => self::job()];
+    }
+
+    /** CLI 入口：真正执行更新（bin/hyper update:apply） */
+    public static function runJob(string $zipFile, string $id = '', string $source = 'zip'): int
+    {
+        $job = null;
+        $current = self::job();
+        if ($current !== null && ($id === '' || ($current['id'] ?? '') === $id)) {
+            $job = $current;
+        }
+        if ($job === null) {
+            $job = [
+                'id'       => $id !== '' ? $id : date('YmdHis'),
+                'source'   => $source,
+                'file'     => basename($zipFile),
+                'size'     => is_file($zipFile) ? (int)@filesize($zipFile) : 0,
+                'log_file' => self::path('job-' . ($id !== '' ? $id : date('YmdHis')) . '.log'),
+            ];
+        }
+        $job['status'] = 'running';
+        $job['msg'] = '正在解压并覆盖文件…';
+        $job['ended_at'] = null;
+        self::writeJob($job);
+        self::jobLog($job, '开始解压 ' . basename($zipFile) . '（' . self::humanSize((int)@filesize($zipFile)) . '）');
+
+        $result = self::fromZip($zipFile);
+
+        $job['status'] = !empty($result['ok']) ? 'done' : 'failed';
+        $job['msg'] = (string)($result['msg'] ?? '');
+        $job['result'] = $result;
+        $job['ended_at'] = time();
+        self::writeJob($job);
+        self::jobLog($job, (!empty($result['ok']) ? '完成' : '失败') . '：' . (string)($result['msg'] ?? '')
+            . '（更新 ' . (int)($result['changed'] ?? 0) . ' 个，跳过 ' . (int)($result['skipped'] ?? 0) . ' 个'
+            . (!empty($result['backup']) ? '，备份 ' . basename((string)$result['backup']) : '') . '）');
+        foreach ((array)($result['warnings'] ?? []) as $warning) {
+            self::jobLog($job, '警告：' . (string)$warning);
+        }
+
+        // 包已经应用完，原文件没用了（备份在 runtime/update/backup-*）
+        @unlink($zipFile);
+
+        return !empty($result['ok']) ? 0 : 1;
+    }
+
+    /**
+     * 从链接下载 zip（「服务器自己下载」的更新方式）。
+     * 走服务器出口而不是浏览器上传，可以绕开反代对请求体大小的限制。
+     * @return array{ok:bool,msg:string,file?:string}
+     */
+    public static function downloadZip(string $url, string $proxy = ''): array
+    {
+        $url = trim($url);
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            return ['ok' => false, 'msg' => '请填写 http(s) 链接'];
+        }
+        // GitHub 仓库页 → 归档包地址，省得用户自己找 zip
+        if (preg_match('#^https://github\.com/([^/]+)/([^/?#]+)/?$#i', $url, $m)) {
+            $url = 'https://github.com/' . $m[1] . '/' . $m[2] . '/archive/HEAD.zip';
+        }
+        $target = $proxy !== '' ? rtrim($proxy, '/') . '/' . ltrim($url, '/') : $url;
+        $file = self::path('download-' . date('YmdHis') . '.zip');
+        $ok = false;
+        $err = '';
+
+        if (function_exists('curl_init')) {
+            $fp = @fopen($file, 'wb');
+            if ($fp === false) {
+                return ['ok' => false, 'msg' => 'runtime/update 不可写'];
+            }
+            $ch = curl_init($target);
+            curl_setopt_array($ch, [
+                CURLOPT_FILE           => $fp,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS      => 5,
+                CURLOPT_CONNECTTIMEOUT => 20,
+                CURLOPT_TIMEOUT        => 300,
+                CURLOPT_USERAGENT      => 'hyper-bot-updater',
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_SSL_VERIFYHOST => 0,
+            ]);
+            $ok = curl_exec($ch);
+            $err = (string)curl_error($ch);
+            curl_close($ch);
+            fclose($fp);
+        } else {
+            $ctx = stream_context_create(['http' => [
+                'timeout'         => 300,
+                'follow_location' => 1,
+                'user_agent'      => 'hyper-bot-updater',
+            ]]);
+            $data = @file_get_contents($target, false, $ctx);
+            if ($data !== false && $data !== '') {
+                $ok = (bool)@file_put_contents($file, $data);
+            } else {
+                $err = '下载失败（file_get_contents 返回空）';
+            }
+        }
+
+        if (!$ok) {
+            @unlink($file);
+            return ['ok' => false, 'msg' => '下载失败：' . ($err !== '' ? $err : '网络错误或链接不可达')];
+        }
+        $head = (string)@file_get_contents($file, false, null, 0, 2);
+        if ($head !== 'PK') {
+            $snippet = mb_substr((string)@file_get_contents($file, false, null, 0, 200), 0, 120);
+            @unlink($file);
+            return ['ok' => false, 'msg' => '下载到的不是 zip（可能被代理返回了网页）：' . $snippet];
+        }
+        return ['ok' => true, 'msg' => '已下载 ' . self::humanSize((int)@filesize($file)), 'file' => $file];
+    }
+
+    private static function humanSize(int $bytes): string
+    {
+        if ($bytes >= 1048576) {
+            return round($bytes / 1048576, 1) . ' MB';
+        }
+        if ($bytes >= 1024) {
+            return round($bytes / 1024, 1) . ' KB';
+        }
+        return $bytes . ' B';
+    }
 }

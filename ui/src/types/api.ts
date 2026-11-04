@@ -626,3 +626,48 @@ export interface ExtPageData {
   title: string
   blocks: ExtBlock[]
 }
+
+/** 插件自带的前端资源（v3.2：组件注入） */
+export interface ExtScriptItem {
+  plugin: string
+  file: string
+  type: 'js' | 'css'
+  url: string
+  name: string
+  title: string
+}
+
+/** 后台更新任务状态（v3.2：异步更新） */
+export interface UpdateJob {
+  id: string
+  status: 'idle' | 'queued' | 'running' | 'done' | 'failed' | 'stale'
+  source: string
+  file: string
+  size: number
+  started_at: number
+  updated_at: number
+  ended_at: number
+  msg: string
+  result: UpdateResult | null
+  age: number
+  stale: boolean
+  log_file?: string
+  log?: string[]
+}
+
+export interface UpdateAttachResult {
+  commit: string
+  branch: string
+  msg: string
+}
+
+export interface UpdateStartResult {
+  job: UpdateJob
+  msg?: string
+}
+
+export interface ChunkInitResult {
+  upload: string
+  chunk_size: number
+  total: number
+}

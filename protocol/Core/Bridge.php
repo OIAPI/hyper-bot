@@ -20,12 +20,33 @@ class Bridge {
 
 	public static function call(string $action, array $params = [], string $method = 'POST'): object {
 		$params = self::enrich($action, $params);
+		$outbound = self::isSendAction($action);
+
+		// 插件钩子（v3.2）：发消息前最后一关。
+		// 返回数组 = 可以改参数（改文案、换消息段、加 auto_escape）；
+		// 返回 null / false = 这条消息不发（插件做风控、去重、审核拦截）。
+		if ($outbound) {
+			$filtered = \Core\Extension\Hooks::filter('message.before_send', $params, $action);
+			if ($filtered === null || $filtered === false) {
+				Logger::info("[协议桥] 插件拦截了 {$action}");
+				return (object)[
+					'status'  => 'failed',
+					'retcode' => -1,
+					'data'    => null,
+					'message' => '插件拦截了这条消息',
+				];
+			}
+			if (is_array($filtered)) {
+				$params = $filtered;
+			}
+		}
+
 		// v2：适配器来自 Core\Bot\Context（事件上下文），
 		// 替代 v1 的 Protocol\Core\Context（后者只是 Cache::set('adapter') 的包装）。
 		$adapter = BotContext::adapter();
 		if ($adapter !== null && $adapter->handles($action)) {
 			try {
-				return self::shape($adapter->call($action, $params, $method));
+				return self::finish($action, $params, $outbound, self::shape($adapter->call($action, $params, $method)));
 			} catch (\Throwable $e) {
 				Logger::error("[协议桥] 适配器 {$adapter->name()} 调用 {$action} 失败：{$e->getMessage()} | {$e->getFile()}:{$e->getLine()}");
 			}
@@ -33,11 +54,29 @@ class Bridge {
 
 		$fallback = self::fallback();
 		try {
-			return self::shape($fallback->call($action, $params, $method));
+			return self::finish($action, $params, $outbound, self::shape($fallback->call($action, $params, $method)));
 		} catch (\Throwable $e) {
 			Logger::error("[协议桥] 默认后端（{$fallback->name()}）调用 {$action} 失败：{$e->getMessage()}");
 			return (object)['status' => 'failed', 'retcode' => -1, 'data' => null, 'message' => $e->getMessage()];
 		}
+	}
+
+	/** 哪些动作算「发消息」（决定是否走 message.* 钩子） */
+	public static function isSendAction(string $action): bool {
+		return str_starts_with($action, 'send_')
+			|| in_array($action, ['send_msg', 'send_group_msg', 'send_private_msg'], true);
+	}
+
+	/** 发送成功后触发 message.sent（只观察，改不了已发出的消息） */
+	private static function finish(string $action, array $params, bool $outbound, object $result): object {
+		if ($outbound && (string)($result->status ?? '') === 'ok' && (int)($result->retcode ?? 0) === 0) {
+			try {
+				\Core\Extension\Hooks::do('message.sent', $action, $params, $result);
+			} catch (\Throwable $e) {
+				Logger::warning("[协议桥] message.sent 钩子异常：{$e->getMessage()}");
+			}
+		}
+		return $result;
 	}
 
 	/**

@@ -36,6 +36,79 @@ final class ExtController extends Base
         ]);
     }
 
+    /** 插件自带的前端脚本清单：前端按顺序 import，再调用模块导出的 setup(ctx) */
+    public function scripts(Request $request): Response
+    {
+        $items = [];
+        foreach (ExtensionPoint::scripts($this->registry()) as $item) {
+            $plugin = $this->registry()->plugin($item['plugin']) ?? [];
+            $items[] = $item + [
+                'name'  => (string)($plugin['name'] ?? ExtensionPoint::shortClass($item['plugin'])),
+                'title' => (string)($plugin['displayName'] ?? ''),
+            ];
+        }
+        return $this->ok(['items' => $items]);
+    }
+
+    /**
+     * 插件静态资源：app/Plugins/assets/<插件>/<文件>。
+     *
+     * 为什么是公开的：前端用动态 import() 加载 ES module，浏览器不会带
+     * Authorization 头，只能走同源公开 URL。这里只放行启用插件目录下的
+     * 白名单后缀，且 realpath 必须落在该目录内 —— 不是通用的文件服务器。
+     */
+    public function asset(Request $request, array $params): Response
+    {
+        $plugin = (string)($params['plugin'] ?? '');
+        $file = (string)($params['file'] ?? '');
+        if ($plugin === '' || $file === '' || str_contains($file, '/') || str_contains($file, '\\')) {
+            return Response::text('not found', 404);
+        }
+        $allowed = [
+            'js'   => 'text/javascript; charset=utf-8',
+            'mjs'  => 'text/javascript; charset=utf-8',
+            'css'  => 'text/css; charset=utf-8',
+            'json' => 'application/json; charset=utf-8',
+            'map'  => 'application/json; charset=utf-8',
+            'svg'  => 'image/svg+xml',
+            'png'  => 'image/png',
+            'jpg'  => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'webp' => 'image/webp',
+            'gif'  => 'image/gif',
+            'woff2' => 'font/woff2',
+            'woff' => 'font/woff',
+        ];
+        $ext = strtolower((string)pathinfo($file, PATHINFO_EXTENSION));
+        if (!isset($allowed[$ext])) {
+            return Response::text('forbidden file type', 403);
+        }
+        // 只允许启用插件：避免为停用插件继续提供可执行脚本
+        $class = null;
+        foreach ($this->registry()->plugins() as $candidate) {
+            if (strcasecmp(ExtensionPoint::shortClass((string)($candidate['class'] ?? '')), $plugin) === 0) {
+                if (!empty($candidate['enabled'])) {
+                    $class = (string)$candidate['class'];
+                }
+                break;
+            }
+        }
+        if ($class === null) {
+            return Response::text('plugin not found', 404);
+        }
+        $root = defined('__root__') ? __root__ : dirname(__DIR__, 3);
+        $baseDir = realpath($root . '/app/Plugins/assets/' . ExtensionPoint::shortClass($class));
+        $real = $baseDir === false ? false : realpath($baseDir . '/' . $file);
+        if ($real === false || !str_starts_with($real, $baseDir . DIRECTORY_SEPARATOR) || !is_file($real)) {
+            return Response::text('not found', 404);
+        }
+        return new Response(200, [
+            'Content-Type'           => $allowed[$ext],
+            'Cache-Control'          => 'public, max-age=300',
+            'X-Content-Type-Options' => 'nosniff',
+        ], (string)@file_get_contents($real));
+    }
+
     /** 扩展点自检：钩子、注入块、命令、中间件都有哪些 */
     public function diag(Request $request): Response
     {

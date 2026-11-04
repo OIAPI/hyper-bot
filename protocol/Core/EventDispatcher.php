@@ -58,6 +58,33 @@ class EventDispatcher
             $event['account'] = (string)($current['id'] ?? '');
         }
 
+        // 插件钩子（v3.2）：收到的消息先过一遍「过滤」。
+        // 返回数组继续（内容可以改），返回 null / false 表示这条事件到此为止。
+        // 被丢弃的事件不落库、不分发，但仍然回 200 —— 否则协议端会一直重投。
+        $filtered = \Core\Extension\Hooks::filter('message.received', $event, $adapter);
+        if ($filtered === null || $filtered === false) {
+            Logger::info('[事件分发] 插件丢弃了一条 ' . ($postType ?: 'unknown') . ' 事件');
+            try {
+                \Core\Extension\Hooks::do('message.filtered', $event, $adapter);
+            } catch (\Throwable $e) {
+                Logger::warning('[事件分发] message.filtered 钩子异常：' . $e->getMessage());
+            }
+            if ($pushed) {
+                AccountContext::reset();
+            }
+            if ($responder !== null) {
+                try {
+                    $responder(self::accepted());
+                } catch (\Throwable $e) {
+                    Logger::error('[事件分发] 响应回调异常：' . $e->getMessage());
+                }
+            }
+            return self::accepted();
+        }
+        if (is_array($filtered)) {
+            $event = $filtered;
+        }
+
         // 审计落库：在订阅过滤之前写，保证「被丢弃的事件」也能在 WebUI 里查到，
         // 这是排查「为什么我的插件没触发」最直接的证据。
         try {

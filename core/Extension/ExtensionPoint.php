@@ -31,6 +31,10 @@ final class ExtensionPoint
     public const WIDGETS = 'adminWidgets';
     /** commands(): [name => ['desc' => '', 'handler' => fn(array $args)] ] */
     public const COMMANDS = 'commands';
+    /** requestMiddleware(): [ fn(Request $r, callable $next): Response, ... ] —— 进来就拦截 */
+    public const REQUEST_MIDDLEWARE = 'requestMiddleware';
+    /** adminScripts(): ['app.js', 'style.css'] —— 前端 ES module 注入 */
+    public const SCRIPTS = 'adminScripts';
 
     /** 已执行过 boot 的插件类 */
     private static array $booted = [];
@@ -217,6 +221,93 @@ final class ExtensionPoint
     }
 
     /**
+     * 插件提供的「请求中间件」：ThinkPHP 风格，fn(Request $req, callable $next): Response。
+     *
+     * 和 middleware() 的区别：
+     *   middleware()         拿到的是已经生成的 Response，只能改结果（响应过滤器）；
+     *   requestMiddleware()  拿到的是进来的 Request，可以鉴权、限流、短路、改请求，
+     *                        也可以调用 $next($req) 再包一层结果 —— 这才是中间件。
+     * @return array<int, callable>
+     */
+    public static function requestMiddlewares(Registry $registry): array
+    {
+        $out = [];
+        foreach ($registry->plugins() as $plugin) {
+            $class = (string)($plugin['class'] ?? '');
+            if ($class === '' || empty($plugin['enabled']) || !self::has($class, self::REQUEST_MIDDLEWARE)) {
+                continue;
+            }
+            try {
+                foreach ((array)$class::requestMiddleware() as $fn) {
+                    if (is_callable($fn)) {
+                        $out[] = $fn;
+                    }
+                }
+            } catch (\Throwable $e) {
+                \Utils\Logger::warning('[extension] 读取 requestMiddleware 失败 | ' . $class . ' | ' . $e->getMessage());
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * 插件自带的前端脚本（ES module / CSS），由 /webui/plugin-assets/<插件>/<文件> 提供。
+     * 返回 [{plugin, file, type, url}]，前端按顺序 import，调用模块导出的 setup(ctx)。
+     * @return array<int, array{plugin:string, file:string, type:string, url:string}>
+     */
+    public static function scripts(Registry $registry): array
+    {
+        $out = [];
+        foreach ($registry->plugins() as $plugin) {
+            $class = (string)($plugin['class'] ?? '');
+            if ($class === '' || empty($plugin['enabled']) || !self::has($class, self::SCRIPTS)) {
+                continue;
+            }
+            try {
+                $items = (array)$class::adminScripts();
+            } catch (\Throwable) {
+                continue;
+            }
+            // 允许 ['js' => [...], 'css' => [...]] 与 ['app.js', 'style.css'] 两种写法
+            $files = [];
+            if (isset($items['js']) || isset($items['css'])) {
+                foreach ((array)($items['js'] ?? []) as $file) {
+                    $files[] = [(string)$file, 'js'];
+                }
+                foreach ((array)($items['css'] ?? []) as $file) {
+                    $files[] = [(string)$file, 'css'];
+                }
+            } else {
+                foreach ($items as $file) {
+                    $file = (string)$file;
+                    $files[] = [$file, str_ends_with(strtolower($file), '.css') ? 'css' : 'js'];
+                }
+            }
+            $short = self::shortClass($class);
+            foreach ($files as [$file, $type]) {
+                $file = ltrim(str_replace('..', '', $file), '/');
+                if ($file === '') {
+                    continue;
+                }
+                $out[] = [
+                    'plugin' => $class,
+                    'file'   => $file,
+                    'type'   => $type,
+                    'url'    => '/webui/plugin-assets/' . rawurlencode($short) . '/' . implode('/', array_map('rawurlencode', explode('/', $file))),
+                ];
+            }
+        }
+        return $out;
+    }
+
+    /** 插件短名（app/Plugins/assets 下的目录名） */
+    public static function shortClass(string $class): string
+    {
+        $pos = strrpos($class, '\\');
+        return $pos === false ? $class : substr($class, $pos + 1);
+    }
+
+    /**
      * 注入到已有页面的小块（按 slot 取）。
      * @return array<int, array{plugin:string, slot:string, title:string, blocks:array}>
      */
@@ -302,6 +393,8 @@ final class ExtensionPoint
             'menus'       => count(self::adminMenus($registry)),
             'hooks'       => Hooks::summary(),
             'middlewares' => count(self::middlewares($registry)),
+            'request_middlewares' => count(self::requestMiddlewares($registry)),
+            'scripts'     => count(self::scripts($registry)),
             'widgets'     => count(self::widgets($registry)),
             'commands'    => array_keys(self::commands($registry)),
         ];

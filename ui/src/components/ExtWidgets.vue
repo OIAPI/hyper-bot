@@ -5,11 +5,12 @@
  * 与 /ext/:plugin 整页的区别是「不占侧边栏入口」——
  * 插件想补一小块（最近投递、最新 RSS）就不必再开一个页面。
  */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { extApi } from '@/api'
 import { useToastStore } from '@/stores/toast'
 import type { ExtBlock, ExtWidget } from '@/types/api'
 import type { UiColumn } from '@/ui/types'
+import { ensurePluginHost, pluginWidgets } from '@/ext/host'
 
 const props = withDefaults(defineProps<{ slot?: string }>(), { slot: 'overview' })
 
@@ -60,12 +61,30 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load)
+/** 插件自带组件注册到当前 slot 的块（v3.2 组件注入） */
+const injected = computed(() => pluginWidgets[props.slot] ?? [])
+
+onMounted(() => {
+  void load()
+  // 插件脚本可能晚于页面挂载：ensurePluginHost 内部去重，注册完会自动渲染
+  void ensurePluginHost()
+})
 watch(() => props.slot, load)
 </script>
 
 <template>
-  <div v-if="items.length" class="ext-widgets">
+  <div v-if="items.length || injected.length" class="ext-widgets">
+    <!-- 插件自带组件：在插件 JS 里 registerWidget('overview', {...}) 注册 -->
+    <UiCard v-for="entry in injected" :key="entry.key">
+      <template #header>
+        <div class="widget-head">
+          <span class="card-title">{{ entry.title }}</span>
+          <span class="widget-from">{{ entry.pluginName }}</span>
+        </div>
+      </template>
+      <component :is="entry.component" />
+    </UiCard>
+
     <UiCard v-for="(widget, i) in items" :key="widget.plugin + i">
       <template #header>
         <div class="widget-head">

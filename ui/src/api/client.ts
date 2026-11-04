@@ -121,6 +121,24 @@ async function request<T>(method: Method, path: string, opts: RequestOptions = {
     throw new ApiError('登录已过期，请重新登录', -401, 401)
   }
 
+  // 413 不是我们的业务错误：反代（nginx 默认 client_max_body_size 1m）直接拒了请求体，
+  // PHP 根本没收到，日志里往往还伴随 104/111。这里给出可执行的提示，别让用户猜。
+  if (res.status === 413) {
+    throw new ApiError(
+      '上传被服务器拒绝（413）：反代限制了请求体大小。请把 nginx 的 client_max_body_size 调到 64m 以上，' +
+        '或改用「从 URL 更新」（服务器自己下载，不经过浏览器上传）',
+      -413,
+      413,
+    )
+  }
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    throw new ApiError(
+      '上游服务不可用（' + res.status + '）：反代连不上 PHP。检查 php-fpm 是否在跑、端口/套接字是否与 nginx 一致',
+      -1,
+      res.status,
+    )
+  }
+
   const text = await res.text()
   let payload: ApiEnvelope<T> | null = null
   if (text) {

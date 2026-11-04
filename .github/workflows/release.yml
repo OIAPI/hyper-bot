@@ -55,34 +55,35 @@ jobs:
           npm run build
           ls -la ../public/webui | head -5
 
-      - name: Commit built assets
+      - name: Commit built assets & push tag
         if: steps.rel.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/webui
           if git diff --cached --quiet; then
-            echo "webUI 产物无变化"
-            exit 0
+            echo "webUI 产物无变化，只补 tag"
+          else
+            git commit -m "chore(webui): 重新构建前端产物 ($TAG) [skip ci]"
           fi
-          git commit -m "chore(webui): 重新构建前端产物 (${{ steps.ver.outputs.tag }}) [skip ci]"
-          for i in 1 2 3; do
+          # 分支和 tag 必须放进同一次 push：先推分支、紧接着单独推 tag，会撞上
+          # GitHub 多副本的同步延迟，报 "missing necessary objects"（v3.2.12 就是
+          # 这么失败的）。这里每轮先 rebase 再重建 tag，失败 5 次才放弃。
+          for i in 1 2 3 4 5; do
             git fetch origin main --quiet
             git rebase origin/main || { git rebase --abort; exit 1; }
-            if git push origin HEAD:main; then
-              echo "产物已推送"
+            git tag -f -a "$TAG" -m "release $TAG"
+            if git push origin HEAD:main "refs/tags/$TAG"; then
+              echo "分支与 tag 已推送（$TAG）"
               exit 0
             fi
+            echo "推送失败（第 $i 次），5 秒后重试…"
             sleep 5
           done
-          echo "产物推送失败（远端在此期间有更新）" >&2
+          echo "产物/tag 推送失败（远端在此期间有更新）" >&2
           exit 1
-
-      - name: Create tag
-        if: steps.rel.outputs.exists == 'false'
-        run: |
-          git tag -f -a "${{ steps.ver.outputs.tag }}" -m "release ${{ steps.ver.outputs.tag }}"
-          git push -f origin "${{ steps.ver.outputs.tag }}"
 
       - name: Setup PHP
         if: steps.rel.outputs.exists == 'false'

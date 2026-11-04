@@ -211,14 +211,28 @@ function stopPageDrag(): void {
   window.removeEventListener('pointermove', onPagePointerMove)
 }
 
+/** Element Plus 的 ElDialog 在路由/框架切换时偶尔把 .el-overlay 留在 body 上，只清理没有可见 dialog 的孤儿遮罩 */
+function cleanOrphanOverlays(): void {
+  document.querySelectorAll<HTMLElement>('.el-overlay').forEach((overlay) => {
+    const dialog = overlay.querySelector<HTMLElement>('.el-dialog')
+    const visible = dialog !== null && dialog.offsetParent !== null
+    if (!visible) overlay.remove()
+  })
+}
+
 watch(
   () => route.path,
   () => {
     pageEdit.value = false
     refreshPageLayout()
+    window.setTimeout(cleanOrphanOverlays, 160)
   },
 )
 const theme = useThemeStore()
+watch(
+  () => theme.framework,
+  () => window.setTimeout(cleanOrphanOverlays, 400),
+)
 const auth = useAuthStore()
 const toast = useToastStore()
 

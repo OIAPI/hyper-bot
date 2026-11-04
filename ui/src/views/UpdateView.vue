@@ -243,6 +243,12 @@ async function run(): Promise<void> {
   }
 }
 
+/** 2026-11-05T05:20:27+08:00 → 2026-11-05 05:20 */
+function shortTime(value: string): string {
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(value || '')
+  return m ? m[1] + ' ' + m[2] : (value || '')
+}
+
 const gitText = computed(() => {
   const g = info.value?.git
   if (!g) return '—'
@@ -281,14 +287,19 @@ onUnmounted(stopPoll)
 <template>
   <div class="page">
     <header class="page-head">
-      <div>
+      <div class="head-text">
         <h1>程序更新</h1>
         <p class="sub">
           只覆盖程序文件：<b>runtime/、vendor/、.git/、Config.ini 不会被改动</b>；
           被覆盖的旧文件先备份到 <code>runtime/update/backup-&lt;时间&gt;/</code>
         </p>
       </div>
-      <UiButton size="small" :loading="loading" @click="load">刷新</UiButton>
+      <div class="head-right">
+        <UiTag class="ver-tag" type="accent" round :title="'当前版本 v' + (info?.version || '—')">
+          v{{ info?.version || '—' }}
+        </UiTag>
+        <UiButton size="small" :loading="loading" @click="load">刷新</UiButton>
+      </div>
     </header>
 
     <UiAlert v-if="!isOwner" type="warning" :closable="false">
@@ -296,16 +307,25 @@ onUnmounted(stopPoll)
     </UiAlert>
 
     <div class="stat-row">
-      <div class="stat"><div class="stat-value">v{{ info?.version || '—' }}</div><div class="stat-label">当前版本</div></div>
-      <div class="stat wide"><div class="stat-value small mono">{{ gitText }}</div><div class="stat-label">git 状态（{{ info?.git.branch || '无分支' }}）</div></div>
-      <div class="stat wide">
-        <div class="stat-value small">
-          <template v-if="info?.last">
-            {{ info.last.changed }} 个文件 · {{ info.last.version }} · {{ info.last.at }}
-          </template>
-          <template v-else>还没有更新记录</template>
+      <div class="stat">
+        <div class="stat-head">
+          <span class="stat-label">git 状态</span>
+          <UiTag v-if="info?.git.repo" size="small" type="plain">{{ info.git.branch || '无分支' }}</UiTag>
+          <UiTag v-else size="small" type="plain">未关联仓库</UiTag>
         </div>
-        <div class="stat-label">上次更新</div>
+        <div class="stat-line mono" :title="gitText">{{ info?.git.commit || '—' }}</div>
+        <div v-if="info?.git.subject" class="stat-sub" :title="info.git.subject">{{ info.git.subject }}</div>
+        <div v-else-if="info && !info.git.repo" class="stat-sub">在「检查更新」里可以把它关联成 git 仓库</div>
+      </div>
+
+      <div class="stat">
+        <div class="stat-head">
+          <span class="stat-label">上次更新</span>
+          <UiTag v-if="info?.last" size="small" type="plain">{{ info.last.changed }} 个文件</UiTag>
+          <UiTag v-else size="small" type="plain">暂无记录</UiTag>
+        </div>
+        <div class="stat-line">{{ info?.last ? 'v' + info.last.version : '还没有更新记录' }}</div>
+        <div v-if="info?.last" class="stat-sub">{{ shortTime(info.last.at) }} · {{ info.last.source }}</div>
       </div>
     </div>
 
@@ -491,18 +511,41 @@ onUnmounted(stopPoll)
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 14px; }
-.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.page { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.head-text { min-width: 0; flex: 1 1 auto; }
+.head-right { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
+.ver-tag { font-family: var(--font-mono); font-weight: 600; letter-spacing: 0.01em; }
 .page-head h1 { margin: 0; font-size: 19px; }
-.sub { margin: 4px 0 0; font-size: 12px; color: var(--text-faint); line-height: 1.7; }
+.sub { margin: 4px 0 0; font-size: 12px; color: var(--text-faint); line-height: 1.7; overflow-wrap: anywhere; }
 .sub code, .field-hint code { font-family: var(--font-mono); font-size: 11.5px; }
 
-.stat-row { display: grid; grid-template-columns: 1fr 2fr 2fr; gap: 10px; }
-.stat { padding: 12px 14px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-card); }
-.stat-value { font-size: 20px; font-weight: 600; }
-.stat-value.small { font-size: 12px; font-weight: 500; }
+/* 两张卡：git 状态 / 上次更新。长 commit 标题不再把页面顶出屏幕 */
+.stat-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.stat {
+  min-width: 0; padding: 12px 14px; border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm); background: var(--bg-card);
+}
+.stat-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stat-label { font-size: 11.5px; color: var(--text-dim); }
+.stat-line { margin-top: 6px; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.stat-line.mono { font-size: 12px; font-weight: 500; }
+.stat-sub {
+  margin-top: 3px; font-size: 11.5px; color: var(--text-faint); line-height: 1.6;
+  overflow-wrap: anywhere; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .mono { font-family: var(--font-mono); }
-.stat-label { margin-top: 2px; font-size: 11px; color: var(--text-faint); }
+
+@media (max-width: 720px) {
+  .stat-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 窄屏上两列表单会撑破容器，压成一列 */
+@media (max-width: 640px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .field.span-2 { grid-column: span 1; }
+}
 
 .modes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
 @media (max-width: 860px) { .modes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -520,10 +563,10 @@ onUnmounted(stopPoll)
 .row { display: flex; gap: 8px; margin-top: 4px; }
 .file-input { font-size: 12px; }
 .attach-box { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border-soft); display: flex; flex-direction: column; gap: 8px; }
-.check-result { font-size: 12px; color: var(--text-dim); display: flex; flex-direction: column; gap: 4px; }
-.tiny { font-size: 11px; color: var(--text-faint); }
+.check-result { font-size: 12px; color: var(--text-dim); display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
+.tiny { font-size: 11px; color: var(--text-faint); overflow-wrap: anywhere; }
 .job-head { display: flex; align-items: center; gap: 8px; }
-.result { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.result { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; overflow-wrap: anywhere; }
 .warns { margin: 6px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--warning, #b8860b); line-height: 1.8; }
 .confirm p { margin: 0 0 8px; font-size: 12.5px; line-height: 1.8; color: var(--text-dim); }
 .confirm code { font-family: var(--font-mono); font-size: 11.5px; }

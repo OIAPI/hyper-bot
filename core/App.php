@@ -72,6 +72,7 @@ final class App {
             $this->subscription,
             $this->logger,
             fn(\Core\Bot\Event $event): bool => $this->groupEnabled($event),
+            fn(\Core\Bot\Event $event, string $class): bool => $this->groupPluginEnabled($event, $class),
             fn(\Core\Bot\Event $event): int => $this->userPermission($event),
         );
 
@@ -150,6 +151,22 @@ final class App {
         }
         $info = is_string($raw) ? json_decode($raw, true) : $raw;
         return is_array($info) && (int)($info['status'] ?? 0) === 1;
+    }
+
+    /** 群级插件开关（Dispatcher 用）：worker[class] === false 表示本群关闭，缺省启用 */
+    private function groupPluginEnabled(\Core\Bot\Event $event, string $class): bool
+    {
+        $group = $event->groupId();
+        if ($group === '') {
+            return true;
+        }
+        $raw = $this->store->get("{$group}.info");
+        $info = is_string($raw) ? json_decode($raw, true) : $raw;
+        if (!is_array($info)) {
+            return true;
+        }
+        $worker = is_array($info['worker'] ?? null) ? $info['worker'] : [];
+        return ($worker[$class] ?? true) !== false;
     }
 
     /** 用户权限（Dispatcher 用）：super 列表 > 角色 > 存储里的覆盖值 */

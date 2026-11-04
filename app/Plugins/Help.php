@@ -70,21 +70,18 @@ class help extends BaseApp {
 	public function model() {
 		$message = $this->api->message;
 		$info = $this->getGroupInfo($this->group); //获取群信息
-		$fn = function($app) {
-			if(!$app) return false;
-			$app = explode("\\", $app);
-			return end($app);
-		};
+		// v3：清单以注册表（文件扫描）为准，worker 只存「本群关掉了哪些」；
+		// 这样插件 reload/新装后列表立刻是新的，不会像 v1 那样卡在 Redis 的旧键上。
+		$plugins = \Core\App::boot()->container->get(Registry::class)->plugins();
+		$worker = (array)($info->worker ?? []);
 		$text = [];
-		$worker = ($info->worker);
 		$l = 1;
-		foreach($worker as $k => $v) {
-			$k = $fn($k);
-			if($v === true) {
-				array_push($text, ($l) . ". `{$k}`");
-			} else {
-				array_push($text, ($l) . ". `{$k} [已关闭]`");
-			}
+		foreach($plugins as $plugin) {
+			$class = (string)($plugin['class'] ?? '');
+			if($class === '') continue;
+			$short = basename(str_replace('\\', '/', $class));
+			$on = ($worker[$class] ?? true) !== false;
+			$text[] = $l . '. `' . $short . ($on ? '' : ' [已关闭]') . '`';
 			$l++;
 		}
 		// print_r($text);

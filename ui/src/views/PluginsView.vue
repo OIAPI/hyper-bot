@@ -45,6 +45,12 @@ async function load(): Promise<void> {
   try {
     const res = await pluginApi.list()
     items.value = res.items ?? []
+    // 详情弹窗可能开着：把 current 换成刷新后的对象，否则里面的钩子列表还是旧的
+    const opened = current.value
+    if (opened) {
+      const fresh = items.value.find((item) => item.class === opened.class)
+      if (fresh) current.value = fresh
+    }
   } catch (e) {
     toast.fromError(e, '加载插件失败')
   } finally {
@@ -54,11 +60,17 @@ async function load(): Promise<void> {
 
 onMounted(load)
 
+/** 通知外壳刷新插件菜单/前端模块（侧边栏「插件」组、注入块） */
+function notifyPluginsChanged(): void {
+  window.dispatchEvent(new Event('hyper:plugins-changed'))
+}
+
 async function reload(): Promise<void> {
   reloading.value = true
   try {
     await pluginApi.reload()
     toast.ok('插件已重新加载')
+    notifyPluginsChanged()
     await load()
   } catch (e) {
     toast.fromError(e, '重载失败')
@@ -73,6 +85,7 @@ async function toggle(p: Plugin, enabled: boolean): Promise<void> {
   try {
     const res = await pluginApi.setEnabled(p.class, Boolean(enabled))
     items.value = res.items ?? items.value
+    notifyPluginsChanged()
     toast.ok(Boolean(enabled) ? '已启用 ' + p.name : '已停用 ' + p.name)
   } catch (e) {
     toast.fromError(e, '切换失败')
@@ -180,6 +193,7 @@ async function submit(): Promise<void> {
     } else {
       toast.warn(`已解包到 ${res.name}，但注册表没扫到插件类`)
     }
+    notifyPluginsChanged()
     await load()
   } catch (e) {
     toast.fromError(e, mode.value === 'zip' ? '导入失败' : '拉取仓库失败')

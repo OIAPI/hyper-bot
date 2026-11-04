@@ -8,7 +8,7 @@
  * 视图只用 UiXxx（框架无关层）：表格走 UiTable 的 #cell-<key> 插槽，
  * 移除确认用 UiPopconfirm，图标用纯 SVG 图标（与界面框架无关）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Search, Plus } from '@element-plus/icons-vue'
 import { groupApi, pluginApi } from '@/api'
 import { useToastStore } from '@/stores/toast'
@@ -86,7 +86,19 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  window.addEventListener('hyper:plugins-changed', onPluginsChanged)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('hyper:plugins-changed', onPluginsChanged)
+})
+
+/** 插件重载/启停后，群页里的插件开关列表也要跟着换新的 */
+function onPluginsChanged(): void {
+  void load()
+}
 
 function applyUpdate(g: Group): void {
   const i = items.value.findIndex((x) => x.group_id === g.group_id)

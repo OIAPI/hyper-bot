@@ -16,6 +16,8 @@ final class PluginState
     private const FILE = '/runtime/plugins-state.json';
 
     private static ?array $cache = null;
+    /** 文件 mtime：常驻的 Swoole worker 里也能感知到别的进程改了开关 */
+    private static int $mtime = -1;
 
     public static function path(): string
     {
@@ -26,10 +28,12 @@ final class PluginState
     /** @return list<string> 已关闭的插件类名 */
     public static function disabled(): array
     {
-        if (self::$cache !== null) {
+        $file = self::path();
+        $mtime = is_file($file) ? (int)@filemtime($file) : 0;
+        if (self::$cache !== null && $mtime === self::$mtime) {
             return self::$cache;
         }
-        $file = self::path();
+        self::$mtime = $mtime;
         if (!is_file($file)) {
             return self::$cache = [];
         }
@@ -65,6 +69,7 @@ final class PluginState
         ));
         if ($ok) {
             self::$cache = $list;
+            self::$mtime = (int)@filemtime(self::path());
         }
         return $ok;
     }
@@ -73,5 +78,6 @@ final class PluginState
     public static function flush(): void
     {
         self::$cache = null;
+        self::$mtime = -1;
     }
 }

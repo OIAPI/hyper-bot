@@ -57,8 +57,10 @@ final class Dispatcher
         private readonly Registry $registry,
         private readonly Subscription $subscription,
         private readonly Logger $logger,
-        /** 群配置：判断群是否开启、插件是否启用 */
+        /** 群配置：判断群是否开启 */
         private readonly ?\Closure $groupConfig = null,
+        /** 群级插件开关：fn(Event $event, string $class): bool，worker 里 false 表示本群关闭 */
+        private readonly ?\Closure $groupPluginConfig = null,
         /** 用户权限查询 */
         private readonly ?\Closure $userPermission = null,
         /** 执行器（默认同步执行；Swoole 下由 Runtime 换成协程执行） */
@@ -105,6 +107,16 @@ final class Dispatcher
             $groupEnabled = $this->groupEnabled($event);
 
             foreach ($rules as $rule) {
+                if ($this->groupPluginConfig !== null && $event->groupId() !== '') {
+                    $class = (string)($rule['class'] ?? '');
+                    if ($class !== '' && !($this->groupPluginConfig)($event, $class)) {
+                        $this->logger->debug('hook skipped: group plugin off', [
+                            'plugin' => $class,
+                            'group'  => $event->groupId(),
+                        ]);
+                        continue;
+                    }
+                }
                 if (!$this->allowed($rule, $event, $permission, $groupEnabled)) {
                     continue;
                 }

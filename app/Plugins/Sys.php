@@ -63,22 +63,27 @@ class sys extends BaseApp {
 		$message = $this->api->message;
 		$keys = $keys[1];
 		$result = [];
-		$App = Utils::object_keys($info->worker);
+		// v3：序号对应注册表（文件扫描）里的插件顺序，worker 只存开关状态
+		$plugins = \Core\App::boot()->container->get(\Core\Bot\Registry::class)->plugins();
+		$classes = array_map(static fn(array $p): string => (string)($p['class'] ?? ''), $plugins);
+		$worker = (array)($info->worker ?? []);
 		foreach(explode(',', $keys) as $key) {
 			$str = "";
 			$key = $key - 1;
-			if(isset($App[$key]) && $app = $App[$key]) {
-				if($info->worker->$app === false) {
-					$str = "{$app} 没有被开启";
+			if(isset($classes[$key]) && $app = $classes[$key]) {
+				$short = basename(str_replace('\\', '/', $app));
+				if(($worker[$app] ?? true) === false) {
+					$str = "{$short} 没有被开启";
 				} else {
-					$str = "{$app} 已关闭";
-					$info->worker->$app = false;
+					$str = "{$short} 已关闭";
+					$worker[$app] = false;
 				}
 			} else {
 				$str = "{$key} 不存在";
 			}
 			array_push($result, $str);
 		}
+		$info->worker = $worker;
 		$this->updateGroupInfo($this->group, $info); //更新数据
 		return $message->sendMsg(group: $this->group, message: join("\n", $result));
 	}
@@ -89,22 +94,27 @@ class sys extends BaseApp {
 		$message = $this->api->message;
 		$keys = $keys[1];
 		$result = [];
-		$App = Utils::object_keys($info->worker);
+		// v3：序号对应注册表（文件扫描）里的插件顺序，worker 只存开关状态
+		$plugins = \Core\App::boot()->container->get(\Core\Bot\Registry::class)->plugins();
+		$classes = array_map(static fn(array $p): string => (string)($p['class'] ?? ''), $plugins);
+		$worker = (array)($info->worker ?? []);
 		foreach(explode(',', $keys) as $key) {
 			$str = "";
 			$key = $key - 1;
-			if(isset($App[$key]) && $app = $App[$key]) {
-				if($info->worker->$app === true) {
-					$str = "{$app} 没有被关闭";
+			if(isset($classes[$key]) && $app = $classes[$key]) {
+				$short = basename(str_replace('\\', '/', $app));
+				if(($worker[$app] ?? true) === true) {
+					$str = "{$short} 没有被关闭";
 				} else {
-					$str = "{$app} 已开启";
-					$info->worker->$app = true;
+					$str = "{$short} 已开启";
+					$worker[$app] = true;
 				}
 			} else {
 				$str = "{$key} 不存在";
 			}
 			array_push($result, $str);
 		}
+		$info->worker = $worker;
 		$this->updateGroupInfo($this->group, $info); //更新数据
 		return $message->sendMsg(group: $this->group, message: join("\n", $result));
 	}

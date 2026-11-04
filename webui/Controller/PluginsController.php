@@ -37,8 +37,16 @@ final class PluginsController extends Base {
         if ($deny = $this->guard($request, 'plugin.reload')) {
             return $deny;
         }
+        // reload 要同时丢掉两类缓存，否则列表可能还是旧的：
+        //   1) PluginState 的进程内 disabled 缓存（多 worker 时尤其明显）；
+        //   2) v1 遗留的 Redis 注册表键 bot:registry:v2（老版本写过，留着会盖住新扫描结果）。
+        \Core\Bot\PluginState::flush();
+        $this->store->del('bot:registry:v2');
         \Core\App::boot()->container->get(Registry::class)->invalidate();
         $items = $this->metrics->plugins()['items'];
+
+        // 群级开关不再需要往 Redis worker 表里补键：
+        // Help/Sys 已改为以注册表（文件扫描）列表为准，worker 只保存「本群关掉了哪些」。
         return $this->ok(['items' => $items, 'total' => count($items)], '已重新扫描');
     }
 

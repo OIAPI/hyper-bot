@@ -211,6 +211,12 @@ export function ensurePluginHost(force = false): Promise<void> {
     booting = null
     loaded.clear()
     for (const key of Object.keys(failures)) delete failures[key]
+    // 插件重载后旧的注入块/页面必须先清掉，否则会重复注册、菜单也不刷新
+    for (const slot of Object.keys(widgetMap)) delete widgetMap[slot]
+    for (const entry of [...routeList]) {
+      if (router.hasRoute(entry.name)) router.removeRoute(entry.name)
+    }
+    routeList.splice(0, routeList.length)
   }
   if (booting) return booting
   booting = (async () => {
@@ -233,7 +239,9 @@ export function ensurePluginHost(force = false): Promise<void> {
       if (item.type !== 'js' || loaded.has(plugin)) continue
       loaded.add(plugin)
       try {
-        const mod = await import(/* @vite-ignore */ item.url)
+        // force 时加时间戳，绕开浏览器对同一个 module URL 的缓存
+        const url = force ? item.url + (item.url.includes('?') ? '&' : '?') + 'v=' + Date.now() : item.url
+        const mod = await import(/* @vite-ignore */ url)
         const setup = moduleSetup(mod)
         if (!setup) {
           failures[plugin] = '模块没有导出 setup(ctx)'

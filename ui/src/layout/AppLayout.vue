@@ -656,6 +656,12 @@ function syncNarrow(): void {
   narrow.value = mq.matches
 }
 
+/** 插件面板里重载/启停/导入后，通知外壳刷新插件菜单与前端模块 */
+function onPluginsChanged(): void {
+  void loadExtMenus()
+  void ensurePluginHost(true)
+}
+
 onMounted(async () => {
   syncNarrow()
   mq.addEventListener('change', syncNarrow)
@@ -663,6 +669,7 @@ onMounted(async () => {
   void loadExtMenus()
   // 插件自带脚本：注册注入块与页面（失败不影响面板本身）
   void ensurePluginHost()
+  window.addEventListener('hyper:plugins-changed', onPluginsChanged)
   void refreshStatus()
   refreshPageLayout()
   timer = window.setInterval(refreshStatus, 30_000)
@@ -671,6 +678,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (timer) window.clearInterval(timer)
   mq.removeEventListener('change', syncNarrow)
+  window.removeEventListener('hyper:plugins-changed', onPluginsChanged)
 })
 
 /**

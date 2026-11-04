@@ -36,12 +36,35 @@ final class Registry
     /** @var array<string,string> 类名 => 显示名 */
     private array $labels = [];
     private bool $loaded = false;
+    /** 上一次扫描时的源目录指纹（目录 mtime + 全局开关文件 mtime） */
+    private string $signature = '';
 
     public function __construct(
         private readonly Logger $logger,
         /** 额外扫描目录：命名空间前缀 => 绝对路径 */
         private array $sources = [],
+        /** 需要监视「有没有新插件」的根目录（app/Plugins、外部插件根），默认取 sources */
+        private array $watchRoots = [],
     ) {}
+
+    /**
+     * 源目录指纹：目录 mtime + plugins-state.json 的 mtime。
+     *
+     * 常驻 worker（Swoole）里注册表是启动时扫一次，之后再也不变：
+     * 新装插件、删插件、面板里全局启停，都要重扫才看得到。
+     * 这里用「目录 mtime 变了就自动重扫」代替「必须重启 worker」：
+     * 每来一条事件只多几次 stat，代价可以忽略。
+     */
+    private function signature(): string
+    {
+        $parts = [];
+        foreach (array_merge(array_values($this->sources), $this->watchRoots) as $dir) {
+            $parts[] = is_dir($dir) ? (string)(@filemtime($dir) ?: 0) : '0';
+        }
+        $state = PluginState::path();
+        $parts[] = is_file($state) ? (string)(@filemtime($state) ?: 0) : '0';
+        return implode('|', $parts);
+    }
 
     /** 默认扫描源：内置 app/Plugins（外部插件由 Core\App::buildPluginSources 提供） */
     public static function defaultSources(string $root): array
@@ -55,9 +78,11 @@ final class Registry
      */
     public function load(bool $force = false): self
     {
-        if ($this->loaded && !$force) {
+        $signature = $this->signature();
+        if ($this->loaded && !$force && $signature === $this->signature) {
             return $this;
         }
+        $this->signature = $signature;
         $this->hooks = [];
         $this->plugins = [];
         $this->labels = [];

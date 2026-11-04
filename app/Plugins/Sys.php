@@ -19,25 +19,48 @@ use Controller\Attr\Rule;
 class sys extends BaseApp {
 	#[Rule('/^reload|restart$/i', permission: 'super', name: 'reload/restart    可重启 worker 进程')]
 	public function reload() {
+		// 计时用 microtime：v1 的 cache::get('request_time') 在 v2 已经没人写，
+		// 取到 null 会让「耗时」变成 unix 时间戳（1793817313.15 秒就是这么来的）。
+		$start = microtime(true);
 		$http = cache::$http;
 		$message = $this->api->message;
-		// Cache::$http 只在 Swoole 的 HttpServer 里赋值。PHP 内置服务器是每请求加载，
-		// 没有可 reload 的常驻进程；以前这里直接 $http->reload()，会抛
-		// "Call to a member function reload() on null" 并被分发器吞掉。
-		if (!is_object($http) || !method_exists($http, 'reload')) {
-			Logger::debug('reload 跳过：当前架构没有常驻 worker');
-			return $message->sendMsg(group: $this->group, message: '当前是 PHP 内置服务器架构：没有常驻 worker，插件/配置改动在下一个请求就会生效，无需 reload；要重启进程请重启 php bin/hyper serve。');
+
+		// 和面板的「重新加载」做同一件事：清全局开关缓存 + 让注册表重扫。
+		// 以前群里 reload 只调 $http->reload()，不重扫，所以新装的插件要等
+		// 后台点一次「重新加载」才看得到。
+		$registry = null;
+		try {
+			$registry = \Core\App::boot()->container->get(\Core\Bot\Registry::class);
+			\Core\Bot\PluginState::flush();
+			$registry->invalidate();
+			$registry->load(true);
+		} catch (\Throwable $e) {
+			Logger::debug('reload 重扫注册表失败：' . $e->getMessage());
 		}
-		$message->sendMsg(group: $this->group, message: 'please wait...');
-		Logger::debug('正在重启…');
-		if($http->reload()) {
+
+		$count = 0;
+		if ($registry !== null) {
+			try {
+				$count = count($registry->plugins());
+			} catch (\Throwable) {
+				$count = 0;
+			}
+		}
+
+		// Cache::$http 只在 Swoole 的 HttpServer 里赋值。PHP 内置服务器没有常驻
+		// worker（每请求重新加载），重扫这一步已经足够。
+		$restarted = false;
+		if (is_object($http) && method_exists($http, 'reload')) {
+			$restarted = (bool)$http->reload();
+		}
+		$elapsed = round(microtime(true) - $start, 3);
+
+		if ($restarted) {
 			Logger::Warning('重启成功！');
 			$this->initGroupInfoIfNeed();
-			return $message->sendMsg(group: $this->group, message: '重载成功，耗时：' . round((utils::time() - cache::get('request_time')) / 1000, 2) . '秒');
-		} else {
-			Logger::error('重载失败');
-			return $message->sendMsg(group: $this->group, message: '重载失败，请检查控制台输出。');
+			return $message->sendMsg(group: $this->group, message: '重载成功：已重扫 ' . $count . ' 个插件，耗时 ' . $elapsed . ' 秒；worker 正在重启，稍后新插件/开关即生效。');
 		}
+		return $message->sendMsg(group: $this->group, message: '已重扫插件：当前 ' . $count . ' 个，耗时 ' . $elapsed . ' 秒。本架构没有常驻 worker，改动在下一条消息生效。');
 	}
 	#[Rule('/^打开麦克风交流$/', name: '打开麦克风交流', permission: 4)]
 	public function openTheGroup() {

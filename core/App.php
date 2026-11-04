@@ -63,7 +63,7 @@ final class App {
         // 运行架构：能力检测优先于用户选择，不可用时明确降级而不是静默半残。
         $this->runtime = \Core\Runtime::fromConfig();
         $this->subscription = \Core\Bot\Subscription::fromConfig();
-        $this->registry = new \Core\Bot\Registry($this->logger, $this->buildPluginSources());
+        $this->registry = new \Core\Bot\Registry($this->logger, $this->buildPluginSources(), $this->buildPluginRoots());
         // 插件用 @subscribe 声明的事件类型并入可订阅目录（面板上就能勾到）
         $this->registry->load();
         \Core\Bot\SubscriptionCatalog::absorb($this->registry->plugins());
@@ -135,6 +135,21 @@ final class App {
             }
         }
         return $sources;
+    }
+
+    /**
+     * 注册表需要监视的根目录：新插件落在这里时目录 mtime 会变，
+     * Registry 据此自动重扫（不然 Swoole worker 里新插件永远看不见）。
+     */
+    private function buildPluginRoots(): array
+    {
+        $root = defined('__root__') ? __root__ : dirname(__DIR__);
+        $roots = [$root . '/app/Plugins'];
+        $external = \Core\Config::string('github.localPath', $root . '/runtime/github');
+        if ($external !== '' && is_dir($external)) {
+            $roots[] = rtrim($external, '/');
+        }
+        return $roots;
     }
 
     /** 群是否开启（Dispatcher 用） */

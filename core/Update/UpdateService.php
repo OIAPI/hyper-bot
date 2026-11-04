@@ -257,7 +257,47 @@ final class UpdateService
         }
         $applied = self::applyFromDir($src, 'zip:' . basename($zipFile));
         self::rrmdir($tmp);
+
+        // zip/URL 更新只覆盖文件，不会动 .git；这里顺手把 HEAD 对齐到本次版本，
+        // 否则面板「当前提交」和「检查更新」会一直停在旧提交上。
+        if (!empty($applied['ok'])) {
+            $aligned = self::alignGitHead((string)($applied['version'] ?? self::version()));
+            if ($aligned !== '') {
+                $applied['git'] = $aligned;
+                $applied['msg'] = (string)($applied['msg'] ?? '') . '；' . $aligned;
+            } elseif (is_dir(self::root() . '/.git')) {
+                $applied['warnings'][] = '已更新文件，但 git HEAD 未能自动对齐（可能服务器离线/远端不可达）；面板「当前提交」会显示旧值';
+            }
+        }
         return $applied;
+    }
+
+    /**
+     * 把 git HEAD 对齐到某个版本：优先 fetch 该版本的 tag，再退回 main 分支。
+     * 只做 reset --mixed，不碰工作区文件（Config.ini、runtime/ 不会被覆盖）。
+     */
+    private static function alignGitHead(string $version): string
+    {
+        $root = self::root();
+        if (!is_dir($root . '/.git') || self::git('--version') === null) {
+            return '';
+        }
+        $tag = 'v' . ltrim($version, 'v');
+        foreach ([$tag, 'main'] as $ref) {
+            $fetch = self::run('fetch --depth 1 origin ' . escapeshellarg($ref), 120);
+            if ($fetch['code'] !== 0) {
+                continue;
+            }
+            $reset = self::run('reset --mixed FETCH_HEAD', 60);
+            if ($reset['code'] !== 0) {
+                continue;
+            }
+            $head = trim((string)(self::run('rev-parse --short HEAD', 30)['out'] ?? ''));
+            if ($head !== '') {
+                return 'git HEAD 已对齐到 ' . $head;
+            }
+        }
+        return '';
     }
 
     /** 解压后常常多一层目录，找真正含 composer.json 的那层 */

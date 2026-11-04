@@ -81,7 +81,10 @@ class help extends BaseApp {
 			if($class === '') continue;
 			$short = basename(str_replace('\\', '/', $class));
 			$on = ($worker[$class] ?? true) !== false;
-			$text[] = $l . '. `' . $short . ($on ? '' : ' [已关闭]') . '`';
+			// 全局停用优先显示：群里再「开启」也不会生效，必须去面板的插件管理打开
+			$globalOn = \Core\Bot\PluginState::isEnabled($class);
+			$mark = $globalOn ? ($on ? '' : ' [已关闭]') : ' [全局停用]';
+			$text[] = $l . '. `' . $short . $mark . '`';
 			$l++;
 		}
 		// print_r($text);

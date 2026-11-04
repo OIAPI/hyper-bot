@@ -120,10 +120,17 @@ async function toggleStatus(g: Group): Promise<void> {
 }
 
 async function togglePlugin(g: Group, p: Plugin): Promise<void> {
+  // 全局停用的插件在群里改开关没有意义（钩子根本没注册）
+  if (p.enabled === false) {
+    toast.warn('该插件已在「插件管理」里全局停用，先在那里打开')
+    return
+  }
+  const next = !pluginOn(g, p)
   pluginBusy.value = p.class
   try {
-    const updated = await groupApi.togglePlugin(g.group_id, p.class)
+    const updated = await groupApi.togglePlugin(g.group_id, p.class, next)
     applyUpdate(updated)
+    toast.ok(next ? '已在本群开启 ' + p.name : '已在本群关闭 ' + p.name)
   } catch (e) {
     toast.fromError(e, '切换插件失败')
   } finally {
@@ -131,9 +138,9 @@ async function togglePlugin(g: Group, p: Plugin): Promise<void> {
   }
 }
 
-/** 没显式关掉就是开着的 */
+/** 有效状态 = 全局启用 && 本群没关（和 Dispatcher 的判定保持一致） */
 function pluginOn(g: Group, p: Plugin): boolean {
-  return g.worker[p.class] !== false
+  return p.enabled !== false && g.worker[p.class] !== false
 }
 
 async function submitAdd(): Promise<void> {
@@ -260,11 +267,15 @@ async function confirmRemove(): Promise<void> {
           <div v-for="p in plugins" :key="p.class" class="plugin-row">
             <div class="plugin-text">
               <div class="plugin-name">{{ p.name }}</div>
-              <div class="plugin-desc">{{ p.description || '（无描述）' }}</div>
+              <div class="plugin-desc">
+                {{ p.description || '（无描述）' }}
+                <span v-if="p.enabled === false" class="plugin-off">· 全局已停用</span>
+              </div>
             </div>
             <UiSwitch
               :model-value="pluginOn(manage, p)"
               :loading="pluginBusy === p.class"
+              :disabled="p.enabled === false"
               @update:model-value="togglePlugin(manage, p)"
             />
           </div>
@@ -321,6 +332,7 @@ p.sub { margin: 3px 0 0; font-size: 12.5px; color: var(--text-faint); }
   .page-head > .row { width: 100%; justify-content: flex-start; }
   .search { flex: 1 1 100%; width: 100%; }
 }
+.plugin-off { color: var(--warn, #b58900); font-size: 11.5px; }
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .tiny { font-size: 11.5px; }
 .dim { color: var(--text-faint); }

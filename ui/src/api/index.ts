@@ -196,8 +196,9 @@ export const groupApi = {
   /** 让协议端 get_group_list 拉一次，把群名回填到面板 */
   sync: () => http.post<{ synced: number; total: number }>('/groups/sync'),
   toggleStatus: (id: string) => http.post<Group>('/groups/' + id + '/status'),
-  togglePlugin: (id: string, plugin: string) =>
-    http.post<Group>('/groups/' + id + '/plugins/' + plugin),
+  /** 群级插件开关：必须显式带 enabled，后端默认值是 false（不带等于「关闭」） */
+  togglePlugin: (id: string, plugin: string, enabled: boolean) =>
+    http.post<Group>('/groups/' + id + '/plugins/' + plugin, { enabled }),
   destroy: (id: string) => http.del<null>('/groups/' + id),
 }
 

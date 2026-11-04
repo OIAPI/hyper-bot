@@ -193,8 +193,12 @@ final class Metrics {
         $plugins = $this->plugins()['items'];
         $enabled = 0;
         foreach ($plugins as $plugin) {
-            $state = $worker[$plugin['class']] ?? null;
-            if ($state !== false) {
+            $class = (string)($plugin['class'] ?? '');
+            // 有效状态 = 全局启用 && 本群没关；只看 worker 会让全局停用的插件仍算「开」
+            if ($class === '' || !\Core\Bot\PluginState::isEnabled($class)) {
+                continue;
+            }
+            if (($worker[$class] ?? null) !== false) {
                 $enabled++;
             }
         }

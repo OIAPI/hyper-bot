@@ -21,6 +21,13 @@ class sys extends BaseApp {
 	public function reload() {
 		$http = cache::$http;
 		$message = $this->api->message;
+		// Cache::$http 只在 Swoole 的 HttpServer 里赋值。PHP 内置服务器是每请求加载，
+		// 没有可 reload 的常驻进程；以前这里直接 $http->reload()，会抛
+		// "Call to a member function reload() on null" 并被分发器吞掉。
+		if (!is_object($http) || !method_exists($http, 'reload')) {
+			Logger::debug('reload 跳过：当前架构没有常驻 worker');
+			return $message->sendMsg(group: $this->group, message: '当前是 PHP 内置服务器架构：没有常驻 worker，插件/配置改动在下一个请求就会生效，无需 reload；要重启进程请重启 php bin/hyper serve。');
+		}
 		$message->sendMsg(group: $this->group, message: 'please wait...');
 		Logger::debug('正在重启…');
 		if($http->reload()) {

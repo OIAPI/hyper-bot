@@ -509,6 +509,16 @@ export interface PermissionsData {
   levels: Record<string, string>
   model?: PermissionsModel
   stats: { total: number; by_role?: Record<string, number>; by_level?: Record<string, number> }
+  diagnose?: {
+    store_keys: number
+    redis_keys: number
+    redis_ok: boolean
+    redis_error: string
+    redis_target: string
+    /** 真正读到数据的库号，-1 表示没读到 */
+    redis_data_db?: number
+    store_driver: string
+  }
 }
 /** 程序更新 */
 export interface UpdateGitInfo {

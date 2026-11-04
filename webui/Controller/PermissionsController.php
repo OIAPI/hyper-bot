@@ -19,8 +19,10 @@ final class PermissionsController extends Base
             'items'  => MemberPermissions::all(),
             // levels 保留给前端下拉，roles/capabilities/matrix 是新的 RBAC 模型
             'levels' => MemberPermissions::LEVELS,
-            'model'  => MemberPermissions::model(),
-            'stats'  => MemberPermissions::stats(),
+            'model'    => MemberPermissions::model(),
+            'stats'    => MemberPermissions::stats(),
+            // 列表为空时，面板要能说清「是没配置，还是连不上机器人的 Redis」
+            'diagnose' => MemberPermissions::diagnose(),
         ]);
     }
 

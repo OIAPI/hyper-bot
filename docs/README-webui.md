@@ -540,6 +540,14 @@ WebUI 与聊天共用一个落盘器 `Webui\PluginInstaller`：
 | 从 Git 链接更新 | `git clone --depth 1` 到临时目录再覆盖，不碰现有 .git 历史，不产生合并冲突 |
 | 从压缩包更新 | 上传发布包 zip（≤64MB），自动识别外层目录 |
 
+**关于 git 仓库绑定**：用压缩包部署的目录默认不是仓库，此时「检查更新」不可用。
+在「检查更新」页填一次仓库地址、点「关联现有目录」，它会做 `git init` +
+`remote add` + `fetch --depth 1` + `reset --mixed`：
+只写 `.git`，**不覆盖任何工作区文件**（`runtime/`、`vendor/`、`Config.ini` 都不会动）。
+「从 Git 链接更新」成功后会顺手做这件事，所以第一次更新完，「检查更新」就能用了。
+
+也可直接调接口：`POST /webui/api/update/attach`，body `{"url":"https://…","branch":"main"}`。
+
 **永远不会被覆盖**：`runtime/`、`vendor/`、`.git/`、`node_modules/`、`Config.ini`、`.env`。
 被覆盖的旧文件先备份到 `runtime/update/backup-<时间>/`，更新记录写在 `runtime/update/last.json`，面板上能看到上次更新了多少文件、备份在哪。
 

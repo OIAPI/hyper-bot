@@ -98,13 +98,84 @@ final class UpdateService
      * @param string $branch 分支，留空用远端默认
      * @param string $proxy  加速前缀，例如 https://gh-proxy.com/ （留空不用）
      */
-    public static function fromGit(string $url, string $branch = '', string $proxy = ''): array
+    /**
+     * 把当前目录关联成 git 仓库（不覆盖文件）：init + remote + fetch + reset --mixed。
+     *
+     * 场景：用压缩包部署、或者之前用「git 链接更新」但目录还不是仓库，
+     * 关联之后「检查更新」才可用，后续也能直接 git pull。
+     *
+     * @param string|null $root 测试用；默认项目根目录
+     */
+    public static function attachRepo(string $url, string $branch = '', string $proxy = '', ?string $root = null): array
     {
         $url = trim($url);
         if ($url === '') {
             return ['ok' => false, 'msg' => '请填写仓库地址'];
         }
-        if (!preg_match('#^(https?://|git@)#i', $url)) {
+        if (!preg_match('#^(https?://|git@|/|file://)#i', $url)) {
+            return ['ok' => false, 'msg' => '仓库地址必须以 http(s)://、git@ 或 / 开头'];
+        }
+        if ($proxy !== '' && !preg_match('#^https?://#i', $proxy)) {
+            return ['ok' => false, 'msg' => '加速前缀必须是 http(s):// 开头'];
+        }
+        if (self::git('--version') === null) {
+            return ['ok' => false, 'msg' => '没有 git 命令，无法关联仓库'];
+        }
+        $root = $root ?? dirname(__DIR__, 2);
+        $cloneUrl = $proxy !== '' && str_starts_with($url, 'http') ? rtrim($proxy, '/') . '/' . $url : $url;
+
+        if (is_dir($root . '/.git')) {
+            // 已经是仓库就别动它的 origin：曾经有测试/误操作把线上仓库的远端改掉
+            $head = trim(self::run('rev-parse --short HEAD', 30, $root)['out'] ?? '');
+            if ($head !== '') {
+                return [
+                    'ok'  => false,
+                    'msg' => '当前目录已经是 git 仓库（HEAD ' . $head . '），无需关联；如需更换远端请用 git remote set-url origin <地址>',
+                ];
+            }
+        } else {
+            $init = self::run('init -q', 60, $root);
+            if ($init['code'] !== 0) {
+                return ['ok' => false, 'msg' => 'git init 失败：' . self::shortError($init)];
+            }
+        }
+        self::run('remote remove origin', 30, $root);
+        $add = self::run('remote add origin ' . escapeshellarg($url), 30, $root);
+        if ($add['code'] !== 0) {
+            self::run('remote set-url origin ' . escapeshellarg($url), 30, $root);
+        }
+        $fetch = self::run('fetch --depth 1 ' . escapeshellarg($cloneUrl) . ' ' . escapeshellarg($branch !== '' ? $branch : 'HEAD'), 180, $root);
+        if ($fetch['code'] !== 0) {
+            // 显式 ref 拿不到时退回默认分支
+            $fetch = self::run('fetch --depth 1 ' . escapeshellarg($cloneUrl), 180, $root);
+        }
+        if ($fetch['code'] !== 0) {
+            return ['ok' => false, 'msg' => '拉取失败：' . self::shortError($fetch)];
+        }
+        // --mixed：只把索引/HEAD 对齐到远端，不碰工作区文件（runtime/、vendor/ 都不会动）
+        $reset = self::run('reset --mixed FETCH_HEAD', 60, $root);
+        if ($reset['code'] !== 0) {
+            return ['ok' => false, 'msg' => '对齐失败：' . self::shortError($reset)];
+        }
+        self::run('branch -M ' . escapeshellarg($branch !== '' ? $branch : 'main'), 30, $root);
+        self::run('config user.name hyper-bot', 30, $root);
+        self::run('config user.email hyper-bot@localhost', 30, $root);
+        $head = trim(self::run('rev-parse --short HEAD', 30, $root)['out'] ?? '');
+        return [
+            'ok' => true,
+            'msg' => '已关联仓库 ' . $url . '（HEAD ' . $head . '），现在可以用「检查更新」',
+            'commit' => $head,
+            'branch' => $branch !== '' ? $branch : 'main',
+        ];
+    }
+
+    public static function fromGit(string $url, string $branch = '', string $proxy = '', bool $attach = true): array
+    {
+        $url = trim($url);
+        if ($url === '') {
+            return ['ok' => false, 'msg' => '请填写仓库地址'];
+        }
+        if (!preg_match('#^(https?://|git@|/|file://)#i', $url)) {
             return ['ok' => false, 'msg' => '仓库地址必须以 http(s):// 或 git@ 开头'];
         }
         if ($proxy !== '' && !preg_match('#^https?://#i', $proxy)) {
@@ -123,6 +194,14 @@ final class UpdateService
         }
         $applied = self::applyFromDir($tmp . '/src', 'git:' . $url);
         self::rrmdir($tmp);
+        if ($applied['ok'] && $attach) {
+            // 顺手把这个目录变成仓库，否则「检查更新」永远显示不可用
+            $linked = self::attachRepo($url, $branch, '');
+            $applied['attached'] = $linked['ok'];
+            $applied['msg'] .= $linked['ok']
+                ? '；' . $linked['msg']
+                : '；但没能关联成 git 仓库：' . $linked['msg'];
+        }
         return $applied;
     }
 
@@ -287,10 +366,10 @@ final class UpdateService
     }
 
     /** @return array{code:int, out:string, err:string} */
-    private static function run(string $args, int $timeout = 60): array
+    private static function run(string $args, int $timeout = 60, ?string $cwd = null): array
     {
         $cmd = 'git ' . $args . ' 2>&1';
-        $dir = self::root();
+        $dir = $cwd ?? self::root();
         if (function_exists('proc_open')) {
             $descriptor = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
             $proc = @proc_open($cmd, $descriptor, $pipes, $dir);
@@ -299,12 +378,18 @@ final class UpdateService
                 fclose($pipes[1]);
                 fclose($pipes[2]);
                 $code = proc_close($proc);
-                return ['code' => $code, 'out' => $out, 'err' => ''];
+                // 个别环境（如 Android 上的 PHP）proc_open 找不到 PATH 里的 git，退出码 127，
+                // 这时退回 exec 再试一次，两者都失败才算没有 git。
+                if ($code !== 127 || trim($out) !== '') {
+                    return ['code' => $code, 'out' => $out, 'err' => ''];
+                }
             }
         }
+        // exec 没有 cwd 参数，用 cd 前缀补上（proc_open 在个别环境不可用时走这里）
         $out = [];
         $code = 1;
-        @exec($cmd, $out, $code);
+        $execCmd = $cwd !== null ? 'cd ' . escapeshellarg($cwd) . ' && ' . $cmd : $cmd;
+        @exec($execCmd, $out, $code);
         return ['code' => $code, 'out' => implode("\n", $out), 'err' => ''];
     }
 

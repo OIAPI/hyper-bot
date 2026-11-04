@@ -5,7 +5,7 @@
  * 注意：这里的权限只影响机器人在群里的行为，和「账号设置」里能登录后台的账号
  * 完全是两套东西 —— 面板账号用用户名密码，这里用 QQ 号。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { permissionApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
@@ -33,6 +33,36 @@ const levels = computed(() => {
   return Object.entries(map).map(([value, label]) => ({ value, label: String(label) }))
 })
 
+/* ---------------- 搜索 / 筛选 / 分页 ---------------- */
+
+const keyword = ref('')
+const roleFilter = ref('')
+const page = ref(1)
+const pageSize = ref(20)
+
+const roleOptions = computed(() => [{ label: '全部角色', value: '' }, ...levels.value])
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  const role = roleFilter.value
+  return rows.value.filter((row) => {
+    if (role !== '' && row.role !== role) return false
+    if (kw === '') return true
+    return row.qq.toLowerCase().includes(kw)
+      || (row.label || '').toLowerCase().includes(kw)
+      || (row.role || '').toLowerCase().includes(kw)
+  })
+})
+const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value)))
+const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
+
+watch([keyword, roleFilter, pageSize], () => { page.value = 1 })
+watch(pageCount, (n) => { if (page.value > n) page.value = n })
+
+const emptyText = computed(() => {
+  if (rows.value.length === 0) return '还没有单独授权的成员'
+  return '没有匹配的成员，换个关键词试试'
+})
+
 const newQq = ref('')
 const newLevel = ref('admin')
 const matrix = computed(() => {
@@ -46,6 +76,18 @@ const matrix = computed(() => {
   }))
 })
 const capLabel = computed(() => ((data.value as any)?.model?.capabilities ?? {}) as Record<string, string>)
+const diag = computed(() => (data.value as any)?.diagnose ?? null)
+/** 列表为空时把「为什么空」说清楚：面板存储 / 机器人 Redis 各自的条数与错误 */
+const emptyHint = computed(() => {
+  const d = diag.value
+  if (!d) return ''
+  const parts: string[] = []
+  parts.push('面板存储（' + d.store_driver + '）里 ' + d.store_keys + ' 条')
+  parts.push('机器人 Redis ' + d.redis_target + '：' + (d.redis_ok
+    ? '已连接，' + d.redis_keys + ' 条'
+    : '不可用（' + (d.redis_error || '未知原因') + '）'))
+  return parts.join('；')
+})
 const adding = ref(false)
 const addError = ref('')
 
@@ -141,8 +183,32 @@ onMounted(load)
       <div v-if="addError" class="form-error">{{ addError }}</div>
     </UiCard>
 
+    <UiAlert v-if="data && rows.length === 0" type="warning" :closable="false">
+      还没有读到任何权限记录。{{ emptyHint }}
+      <br />
+      如果确认机器人 Redis 里有数据但仍为空，说明面板连的不是同一个库：检查 Config.ini 的
+      <code>[Redis] host / port / auth / select</code>，或装 php-redis 扩展。
+    </UiAlert>
+
     <UiCard :padding="'none'">
-      <UiTable :data="rows" :columns="columns" row-key="qq" :loading="loading" empty-text="还没有单独授权的成员">
+      <div class="toolbar">
+        <UiInput
+          v-model="keyword"
+          class="search"
+          placeholder="搜索 QQ 号或权限名称"
+          clearable
+        />
+        <UiSelect v-model="roleFilter" :options="roleOptions" class="role-filter" />
+        <span class="count">
+          {{ filtered.length }} / {{ rows.length }} 人
+        </span>
+        <UiSelect
+          v-model="pageSize"
+          :options="[{ label: '每页 10', value: 10 }, { label: '每页 20', value: 20 }, { label: '每页 50', value: 50 }, { label: '每页 100', value: 100 }]"
+          class="page-size"
+        />
+      </div>
+      <UiTable :data="paged" :columns="columns" row-key="qq" :loading="loading" :empty-text="emptyText">
         <template #cell-qq="{ row }">
           <span class="mono">{{ (row as any).qq }}</span>
         </template>
@@ -162,6 +228,13 @@ onMounted(load)
           <UiButton v-if="canWrite" size="small" text type="danger" @click="remove(row as any)">移除</UiButton>
         </template>
       </UiTable>
+      <div v-if="filtered.length > pageSize" class="pager">
+        <UiButton size="small" :disabled="page <= 1" @click="page = 1">首页</UiButton>
+        <UiButton size="small" :disabled="page <= 1" @click="page -= 1">上一页</UiButton>
+        <span class="page-text">第 {{ page }} / {{ pageCount }} 页</span>
+        <UiButton size="small" :disabled="page >= pageCount" @click="page += 1">下一页</UiButton>
+        <UiButton size="small" :disabled="page >= pageCount" @click="page = pageCount">末页</UiButton>
+      </div>
     </UiCard>
 
     <UiCard v-if="matrix.length">
@@ -197,6 +270,14 @@ onMounted(load)
 .stat-value.small { font-size: 12px; font-weight: 500; display: flex; flex-wrap: wrap; gap: 6px; }
 .stat-label { margin-top: 2px; font-size: 11px; color: var(--text-faint); }
 .chip { padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border-soft); }
+
+.toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--border-soft); }
+.search { flex: 1 1 220px; min-width: 160px; }
+.role-filter { width: 160px; }
+.page-size { width: 120px; }
+.count { font-size: 11.5px; color: var(--text-faint); }
+.pager { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; flex-wrap: wrap; border-top: 1px solid var(--border-soft); }
+.page-text { font-size: 12px; color: var(--text-dim); }
 
 .add-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .qq-input { flex: 1 1 180px; }

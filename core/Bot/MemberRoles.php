@@ -97,6 +97,25 @@ final class MemberRoles
         return 'member';
     }
 
+    /** 是否是本模型里定义过的角色（写入前校验用，不接受未知值） */
+    public static function exists(string $role): bool
+    {
+        return isset(self::ROLES[strtolower(trim($role))]);
+    }
+
+    /** 是否可以当作输入接受（新角色名 / v1 旧名 / 纯数字等级） */
+    public static function known(string $role): bool
+    {
+        $role = strtolower(trim($role));
+        return $role !== '' && (isset(self::ROLES[$role]) || isset(self::LEGACY[$role]) || ctype_digit($role));
+    }
+
+    /** 能力矩阵：角色 -> {label, level, capabilities}（面板展示用） */
+    public static function matrix(): array
+    {
+        return self::catalog();
+    }
+
     public static function level(string $role): int
     {
         return self::ROLES[self::normalize($role)]['level'] ?? 1;

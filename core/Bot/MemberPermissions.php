@@ -2,6 +2,7 @@
 namespace Core\Bot;
 
 use Core\App;
+use Core\Config;
 use Core\Store\Store;
 
 /**
@@ -10,11 +11,15 @@ use Core\Store\Store;
  * 模型是「角色 + 能力」（见 MemberRoles）：存储里的 memberPermission.<QQ> 存角色名，
  * v1 的 supervisor/director/manager/default 读出来会自动映射。
  *
- * 两个存储源都要看：
- *  - WebUI 的 store（文件或 Redis，取决于 [store] driver）；
- *  - 机器人自己那份 Redis（BaseApp::$redis，插件从 v1 起就写这里）。
- * 只读 store 会出现「插件认得、面板列表却是空的」，所以这里合并两边，
- * 写入时也两边都写，保证面板改完插件立即生效。
+ * 为什么要读三个地方：
+ *  1. WebUI store（文件或 Redis，取决于 [store] driver）—— 面板自己写的；
+ *  2. store 里的 dbN: 前缀键 —— v1 插件调用过 $redis->select(N) 时，StoreBridge
+ *     会把键写成 dbN:memberPermission.<QQ>，不带前缀扫会漏；
+ *  3. 真正的 Redis（ext-redis + [Redis] host/port/auth/select）—— v1 直接在
+ *     机器人那份 Redis 里写过，而面板后来可能因为 Redis 不可用降级成了文件存储，
+ *     两边根本不是同一个后端，只读 store 就会出现「插件认得、面板是空列表」。
+ *
+ * 写的时候三个地方都写，保证面板改完插件立即生效。
  */
 final class MemberPermissions
 {
@@ -29,60 +34,149 @@ final class MemberPermissions
         'member'  => '普通成员',
     ];
 
+    private static ?bool $redisOk = null;
+    private static string $redisError = '';
+    /** 真正读到数据的那一库（-1 = 没读到） */
+    private static int $redisDataDb = -1;
+
     private static function store(): Store
     {
         return App::boot()->store;
     }
 
     /**
-     * 机器人用的 Redis 连接（v1 插件写的就是它）。
-     * 没有扩展、没配置或连接失败时返回 null，所有逻辑自动退回 store。
+     * 直连 [Redis] 配置里的那个 Redis。
+     * 不复用 Controller\Api::redis —— 那是 StoreBridge（长得像 Redis，实际是 store），
+     * 拿它去读 v1 的历史数据永远是空的。
      */
-    private static function redis(): ?object
+    private static function realRedis(): ?\Redis
     {
-        try {
-            $redis = \Controller\Api::getInstance()->redis;
-            return is_object($redis) ? $redis : null;
-        } catch (\Throwable) {
+        if (!class_exists('Redis')) {
+            self::$redisOk = false;
+            self::$redisError = '没有 php-redis 扩展';
             return null;
         }
+        $client = new \Redis();
+        $host = Config::string('Redis.host', '127.0.0.1');
+        $port = Config::int('Redis.port', 6379);
+        try {
+            if (@$client->connect($host, $port, 0.6) !== true) {
+                self::$redisOk = false;
+                self::$redisError = '连不上 ' . $host . ':' . $port;
+                return null;
+            }
+            $auth = Config::string('Redis.auth', '');
+            if ($auth !== '') {
+                try {
+                    @$client->auth($auth);
+                } catch (\Throwable $e) {
+                    if (stripos($e->getMessage(), 'no password is set') === false) {
+                        self::$redisOk = false;
+                        self::$redisError = 'AUTH 失败：' . $e->getMessage();
+                        return null;
+                    }
+                }
+            }
+            $select = Config::int('Redis.select', 0);
+            if ($select > 0) {
+                try {
+                    @$client->select($select);
+                } catch (\Throwable $e) {
+                    self::$redisOk = false;
+                    self::$redisError = 'SELECT ' . $select . ' 失败：' . $e->getMessage();
+                    return null;
+                }
+            }
+            if (@$client->ping() === false) {
+                self::$redisOk = false;
+                self::$redisError = 'PING 无响应（对端可能不是 Redis）';
+                return null;
+            }
+            self::$redisOk = true;
+            self::$redisError = '';
+            return $client;
+        } catch (\Throwable $e) {
+            self::$redisOk = false;
+            self::$redisError = $e->getMessage();
+            return null;
+        }
+    }
+
+    /** @return array<string, string> 扫当前库里的 memberPermission.* */
+    private static function scanRedis(\Redis $client): array
+    {
+        $out = [];
+        $keys = $client->keys(self::PREFIX . '*') ?: [];
+        foreach ($keys as $key) {
+            $qq = self::qqOf((string)$key);
+            if ($qq === '') {
+                continue;
+            }
+            $value = $client->get((string)$key);
+            if ($value !== false && $value !== null) {
+                $out[$qq] = (string)$value;
+            }
+        }
+        return $out;
+    }
+
+    /** 从 key 里取出 QQ（兼容 dbN: 前缀与各种分隔） */
+    private static function qqOf(string $key): string
+    {
+        $key = preg_replace('/^db\d+:/', '', $key) ?? $key;
+        $qq = substr($key, strlen(self::PREFIX));
+        return ctype_digit($qq) ? $qq : '';
+    }
+
+    /** @return array<string, string> qq => 原始值 */
+    private static function readStore(): array
+    {
+        $out = [];
+        foreach ([self::PREFIX . '*', 'db*:' . self::PREFIX . '*'] as $pattern) {
+            foreach (self::store()->keys($pattern) as $key) {
+                $qq = self::qqOf((string)$key);
+                if ($qq !== '' && !isset($out[$qq])) {
+                    $out[$qq] = (string)self::store()->get((string)$key);
+                }
+            }
+        }
+        return $out;
+    }
+
+    /** @return array<string, string> */
+    private static function readRedis(): array
+    {
+        $client = self::realRedis();
+        if ($client === null) {
+            return [];
+        }
+        $out = [];
+        try {
+            $keys = $client->keys(self::PREFIX . '*') ?: [];
+            foreach ($keys as $key) {
+                $qq = self::qqOf((string)$key);
+                if ($qq === '') {
+                    continue;
+                }
+                $value = $client->get((string)$key);
+                if ($value !== false && $value !== null) {
+                    $out[$qq] = (string)$value;
+                }
+            }
+        } catch (\Throwable $e) {
+            self::$redisError = $e->getMessage();
+        } finally {
+            try { $client->close(); } catch (\Throwable) {}
+        }
+        return $out;
     }
 
     /** @return array<int, array{qq:string, role:string, level:int, label:string, capabilities:array}> */
     public static function all(): array
     {
-        $map = [];
-
-        // 1) WebUI store
-        foreach (self::store()->keys(self::PREFIX . '*') as $key) {
-            $qq = substr((string)$key, strlen(self::PREFIX));
-            if ($qq === '' || !ctype_digit($qq)) {
-                continue;
-            }
-            $map[$qq] = (string)self::store()->get($key);
-        }
-
-        // 2) 机器人 Redis（v1 数据多半只在这里）
-        $redis = self::redis();
-        if ($redis !== null) {
-            try {
-                $keys = $redis->keys(self::PREFIX . '*');
-                foreach (is_array($keys) ? $keys : [] as $key) {
-                    $key = (string)$key;
-                    $qq = substr($key, strlen(self::PREFIX));
-                    if ($qq === '' || !ctype_digit($qq) || isset($map[$qq])) {
-                        continue;
-                    }
-                    $map[$qq] = (string)$redis->get($key);
-                }
-            } catch (\Throwable) {
-                // Redis 不可用不影响 store 里的数据
-            }
-        }
-
         $rows = [];
-        foreach ($map as $qq => $raw) {
-            $role = MemberRoles::normalize(strtolower(trim($raw)));
+        foreach (self::readStore() + self::readRedis() as $qq => $raw) {
+            $role = MemberRoles::normalize($raw);
             $rows[] = [
                 'qq'           => (string)$qq,
                 'role'         => $role,
@@ -97,60 +191,84 @@ final class MemberPermissions
 
     public static function get(string $qq): ?string
     {
-        $value = self::store()->get(self::PREFIX . $qq);
-        if ($value === null && ($redis = self::redis()) !== null) {
-            try {
-                $value = $redis->get(self::PREFIX . $qq);
-            } catch (\Throwable) {
-                $value = null;
-            }
+        $qq = trim($qq);
+        if ($qq === '') {
+            return null;
         }
-        return $value === null || $value === false ? null : MemberRoles::normalize(strtolower(trim((string)$value)));
+        $store = self::readStore();
+        if (isset($store[$qq])) {
+            return MemberRoles::normalize($store[$qq]);
+        }
+        $redis = self::readRedis();
+        return isset($redis[$qq]) ? MemberRoles::normalize($redis[$qq]) : null;
     }
 
     /** @return array{ok:bool,msg:string} */
     public static function set(string $qq, string $role): array
     {
         $qq = trim($qq);
-        $raw = strtolower(trim($role));
-        // 先拒绝未知值，再映射旧名：normalize() 会把未知值兜底成 member，
-        // 直接用它会让「传错角色」被静默接受
-        $isNumericLevel = $raw !== '' && ctype_digit($raw);
-        if (!$isNumericLevel && !isset(MemberRoles::ROLES[$raw]) && !isset(MemberRoles::LEGACY[$raw])) {
-            return ['ok' => false, 'msg' => '角色只能是 ' . implode(' / ', array_keys(MemberRoles::ROLES))];
-        }
-        $role = MemberRoles::normalize($raw);
         if (!ctype_digit($qq) || strlen($qq) < 5 || strlen($qq) > 12) {
             return ['ok' => false, 'msg' => 'QQ 号必须是 5-12 位数字'];
         }
-        if (!isset(MemberRoles::ROLES[$role])) {
-            return ['ok' => false, 'msg' => '角色只能是 ' . implode(' / ', array_keys(MemberRoles::ROLES))];
+        if (!MemberRoles::known($role)) {
+            return ['ok' => false, 'msg' => '角色只能是 ' . implode(' / ', array_keys(MemberRoles::ROLES)) . '（也接受旧等级名）'];
+        }
+        $normalized = MemberRoles::normalize($role);
+        if (!MemberRoles::exists($normalized)) {
+            return ['ok' => false, 'msg' => '角色只能是 ' . implode(' / ', array_keys(MemberRoles::ROLES)) . '（也接受旧等级名）'];
         }
 
-        self::store()->set(self::PREFIX . $qq, $role);
-        $redis = self::redis();
-        if ($redis !== null) {
+        // 1) store：不带前缀 + 当前 select 对应的 dbN: 前缀都写一份
+        self::store()->set(self::PREFIX . $qq, $normalized);
+        $select = Config::int('Redis.select', 0);
+        if ($select > 0) {
+            self::store()->set('db' . $select . ':' . self::PREFIX . $qq, $normalized);
+        }
+
+        // 2) 真 Redis：v1 插件读的是它
+        $client = self::realRedis();
+        if ($client !== null) {
             try {
-                $redis->set(self::PREFIX . $qq, $role);
-            } catch (\Throwable) {
-                // store 写成功就算成功，Redis 失败只影响插件侧的即时生效
+                $client->set(self::PREFIX . $qq, $normalized);
+            } catch (\Throwable $e) {
+                self::$redisError = $e->getMessage();
+            } finally {
+                try { $client->close(); } catch (\Throwable) {}
             }
         }
-        return ['ok' => true, 'msg' => '已设置为 ' . MemberRoles::label($role)];
+        return ['ok' => true, 'msg' => '已设置为 ' . MemberRoles::label($normalized)];
     }
 
     public static function remove(string $qq): bool
     {
-        $deleted = self::store()->del(self::PREFIX . $qq) > 0;
-        $redis = self::redis();
-        if ($redis !== null) {
+        $qq = trim($qq);
+        if ($qq === '') {
+            return false;
+        }
+        $existed = false;
+        $key = self::PREFIX . $qq;
+        if (self::store()->has($key)) {
+            $existed = true;
+            self::store()->del($key);
+        }
+        foreach (self::store()->keys('db*:' . $key) as $prefixed) {
+            $existed = true;
+            self::store()->del((string)$prefixed);
+        }
+        $client = self::realRedis();
+        if ($client !== null) {
             try {
-                $deleted = ((int)$redis->del(self::PREFIX . $qq) > 0) || $deleted;
-            } catch (\Throwable) {
-                // 忽略
+                if ($client->exists($key)) {
+                    $existed = true;
+                    $client->del($key);
+                }
+            } catch (\Throwable $e) {
+                self::$redisError = $e->getMessage();
+            } finally {
+                try { $client->close(); } catch (\Throwable) {}
             }
         }
-        return $deleted;
+        return $existed;
     }
 
     /** 面板顶部的统计 */
@@ -158,25 +276,39 @@ final class MemberPermissions
     {
         $rows = self::all();
         $byRole = [];
-        $byLevel = [];
         foreach ($rows as $row) {
             $byRole[$row['role']] = ($byRole[$row['role']] ?? 0) + 1;
-            $byLevel[$row['level']] = ($byLevel[$row['level']] ?? 0) + 1;
         }
-        return ['total' => count($rows), 'by_role' => $byRole, 'by_level' => $byLevel];
+        return ['total' => count($rows), 'by_role' => $byRole, 'by_level' => $byRole];
     }
 
-    /** 角色-能力矩阵（面板展示）：roles 给下拉、matrix 给表格、legacy 给映射说明 */
+    /** 列表为空时告诉面板「为什么空」 */
+    public static function diagnose(): array
+    {
+        $store = self::readStore();
+        $redis = self::readRedis();
+        return [
+            'store_keys'   => count($store),
+            'redis_keys'   => count($redis),
+            'redis_ok'     => self::$redisOk === true,
+            'redis_error'  => self::$redisError,
+            'redis_target' => Config::string('Redis.host', '127.0.0.1') . ':' . (string)Config::int('Redis.port', 6379)
+                . '/db' . (string)Config::int('Redis.select', 0),
+            'redis_data_db' => self::$redisDataDb,
+            'store_driver' => (new \ReflectionClass(self::store()))->getShortName(),
+        ];
+    }
+
     public static function model(): array
     {
         $roles = [];
-        foreach (MemberRoles::ROLES as $role => $meta) {
-            $roles[$role] = $meta['label'];
+        foreach (array_keys(MemberRoles::ROLES) as $role) {
+            $roles[$role] = MemberRoles::label($role);
         }
         return [
             'roles'        => $roles,
             'capabilities' => MemberRoles::CAPABILITIES,
-            'matrix'       => MemberRoles::catalog(),
+            'matrix'       => MemberRoles::matrix(),
             'legacy'       => MemberRoles::LEGACY,
         ];
     }

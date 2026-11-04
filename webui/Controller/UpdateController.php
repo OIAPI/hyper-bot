@@ -58,6 +58,23 @@ final class UpdateController extends Base
     }
 
     /** 上传 zip 更新（整包当 raw body 走，和插件导入一致） */
+
+    /** 把当前目录关联成 git 仓库（只写 .git，不覆盖文件） */
+    public function attach(Request $request): Response
+    {
+        if ($deny = $this->guard($request, 'user.manage')) {
+            return $deny;
+        }
+        $result = UpdateService::attachRepo(
+            (string)$request->input('url', ''),
+            (string)$request->input('branch', ''),
+            (string)$request->input('proxy', '')
+        );
+        return $result['ok']
+            ? $this->ok($result, $result['msg'])
+            : $this->fail($result['msg'], -1, 400);
+    }
+
     public function fromZip(Request $request): Response
     {
         if ($deny = $this->guard($request, 'user.manage')) {

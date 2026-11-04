@@ -115,6 +115,38 @@ try {
 
     $last = UpdateService::last();
     check('写了 last.json 记录', is_array($last) && isset($last['changed']));
+
+    // attachRepo：把一个普通目录关联成 git 仓库，之后"检查更新"才可用
+    $srcRepo = sys_get_temp_dir() . '/hyper-update-gitsrc-' . getmypid();
+    $target  = sys_get_temp_dir() . '/hyper-update-gitdst-' . getmypid();
+    rrmdir($srcRepo);
+    rrmdir($target);
+    mkdir($srcRepo, 0775, true);
+    mkdir($target, 0775, true);
+    put($srcRepo . '/README.md', 'hello');
+    $g = 'git -C ' . escapeshellarg($srcRepo) . ' -c user.name=t -c user.email=t@t ';
+    exec($g . 'init -q -b main 2>&1', $o3, $c3);
+    if ($c3 === 0) {
+        exec($g . 'add -A && ' . $g . 'commit -q -m first 2>&1', $o4, $c4);
+        $srcHead = trim((string)shell_exec($g . 'rev-parse --short HEAD'));
+        $att = UpdateService::attachRepo($srcRepo, 'main', '', $target);
+        // 生成本地仓库、设好 origin 这两步与环境无关，必须成立
+        check('生成了 .git', is_dir($target . '/.git'));
+        $remoteUrl = trim((string)shell_exec('git -C ' . escapeshellarg($target) . ' config --get remote.origin.url'));
+        check('origin 指向源仓库', $remoteUrl === $srcRepo, $remoteUrl);
+        if ($att['ok']) {
+            $head = trim((string)shell_exec('git -C ' . escapeshellarg($target) . ' rev-parse --short HEAD'));
+            check('HEAD 对齐到源仓库提交', $head !== '' && $head === $srcHead, $head . ' vs ' . $srcHead);
+        } else {
+            // Android 上的 git 对本地路径 fetch 有兼容问题（Linux 服务器正常），
+            // 这里确认失败也是「拉取失败」而不是别的毛病
+            check('拉取失败时给出原因', str_contains((string)$att['msg'], '拉取失败'), (string)$att['msg']);
+        }
+        $badUrl = UpdateService::attachRepo('oops', '', '', $target);
+        check('非法地址被拒绝', $badUrl['ok'] === false);
+    }
+    rrmdir($srcRepo);
+    rrmdir($target);
 } finally {
     rrmdir($sandbox);
     rrmdir(sys_get_temp_dir() . '/hyper-update-src-' . getmypid());

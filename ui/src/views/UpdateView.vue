@@ -29,6 +29,27 @@ const proxySelectOptions = computed(() =>
   proxyOptions.value.map((p) => ({ label: p.label, value: p.prefix })),
 )
 
+const attachUrl = ref('')
+const attachBranch = ref('')
+const attaching = ref(false)
+const attachMsg = ref('')
+
+async function doAttach(): Promise<void> {
+  attachMsg.value = ''
+  if (!attachUrl.value.trim()) { attachMsg.value = '请填写仓库地址'; return }
+  attaching.value = true
+  try {
+    const res = await updateApi.attach({ url: attachUrl.value.trim(), branch: attachBranch.value.trim(), proxy: proxy.value })
+    attachMsg.value = res.msg
+    toast.ok(res.msg)
+    await load()
+  } catch (e) {
+    attachMsg.value = e instanceof Error ? e.message : '关联失败'
+  } finally {
+    attaching.value = false
+  }
+}
+
 const checking = ref(false)
 const checkResult = ref<UpdateCheckResult | null>(null)
 const running = ref(false)
@@ -175,7 +196,28 @@ onMounted(load)
           现在检查：<b>{{ info?.git.repo ? '可用' : '不可用' }}</b>
         </div>
         <div class="row">
-          <UiButton size="small" :loading="checking" @click="doCheck">检查远端</UiButton>
+          <UiButton size="small" :loading="checking" :disabled="!info?.git.repo" @click="doCheck">检查远端</UiButton>
+        </div>
+
+        <div v-if="info && !info.git.repo" class="attach-box">
+          <div class="field-hint">
+            当前目录还不是 git 仓库。填地址关联一次（只写 .git，不覆盖任何文件），之后就能用「检查更新」：
+          </div>
+          <div class="grid">
+            <label class="field span-2">
+              <span class="field-label">仓库地址</span>
+              <UiInput v-model="attachUrl" placeholder="https://github.com/OIAPI/hyper-bot.git" />
+            </label>
+            <label class="field">
+              <span class="field-label">分支</span>
+              <UiInput v-model="attachBranch" placeholder="留空用默认分支" />
+            </label>
+            <div class="field">
+              <span class="field-label">&nbsp;</span>
+              <UiButton size="small" :loading="attaching" @click="doAttach">关联现有目录</UiButton>
+            </div>
+          </div>
+          <div v-if="attachMsg" class="tiny">{{ attachMsg }}</div>
         </div>
         <div v-if="checkResult" class="check-result">
           <div>{{ checkResult.msg }}</div>
@@ -284,6 +326,7 @@ onMounted(load)
 .field-hint { font-size: 11.5px; color: var(--text-faint); line-height: 1.7; }
 .row { display: flex; gap: 8px; }
 .file-input { font-size: 12px; }
+.attach-box { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border-soft); display: flex; flex-direction: column; gap: 8px; }
 .check-result { font-size: 12px; color: var(--text-dim); display: flex; flex-direction: column; gap: 4px; }
 .tiny { font-size: 11px; color: var(--text-faint); }
 .result { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }

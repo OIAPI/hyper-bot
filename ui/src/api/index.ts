@@ -79,6 +79,9 @@ export const permissionApi = {
 export const updateApi = {
   info: () => http.get<UpdateInfo>('/update'),
   check: () => http.post<UpdateCheckResult>('/update/check'),
+  /** 把当前目录关联成 git 仓库（不覆盖文件） */
+  attach: (payload: { url: string; branch?: string; proxy?: string }) =>
+    http.post<{ commit: string; branch: string; msg: string }>('/update/attach', payload),
   fromGit: (payload: { url: string; branch?: string; proxy?: string }) =>
     http.post<UpdateResult>('/update/git', payload),
   fromZip: (file: File) =>

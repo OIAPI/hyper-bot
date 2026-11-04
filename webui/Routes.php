@@ -145,6 +145,7 @@ final class Routes {
                 // 程序更新（仅主人）
                 $r->get('/update', [$update, 'index'], 'update.index');
                 $r->post('/update/check', [$update, 'check'], 'update.check');
+                $r->post('/update/attach', [$update, 'attach'], 'update.attach');
                 $r->post('/update/git', [$update, 'fromGit'], 'update.git');
                 $r->post('/update/zip', [$update, 'fromZip'], 'update.zip');
 

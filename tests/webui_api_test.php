@@ -254,6 +254,10 @@ $upd = $call('GET', '/webui/api/update', [], $ownerToken);
 $ok('更新页信息带版本与 git 状态', ($upd['json']['data']['version'] ?? '') !== '' && isset($upd['json']['data']['git']));
 $vUpd = $call('POST', '/webui/api/update/check', [], $viewerToken);
 $ok('viewer 检查更新 → 403', $vUpd['status'] === 403);
+$badAttach = $call('POST', '/webui/api/update/attach', ['url' => 'not-a-url'], $ownerToken);
+$ok('关联仓库：非法地址被拒', $badAttach['status'] === 400 && str_contains((string)($badAttach['json']['message'] ?? ''), 'http'));
+$vAttach = $call('POST', '/webui/api/update/attach', ['url' => 'https://github.com/OIAPI/hyper-bot.git'], $viewerToken);
+$ok('关联仓库：viewer → 403', $vAttach['status'] === 403);
 $badGit = $call('POST', '/webui/api/update/git', ['url' => 'not-a-url'], $ownerToken);
 $ok('非法仓库地址被拒', $badGit['status'] === 400 && str_contains((string)($badGit['json']['message'] ?? ''), 'http'));
 

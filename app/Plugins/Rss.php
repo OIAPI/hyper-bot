@@ -27,7 +27,7 @@ final class Rss extends BaseApp
         return [
             'title' => 'RSS 订阅',
             'blocks' => [
-                ['type' => 'text', 'text' => '支持 RSS 2.0 与 Atom。抓取由后台心跳驱动（与定时任务同一套），每轮最多抓 5 个源，抓到的条目按链接去重；填了群号的源会把新条目推到群里。'],
+                ['type' => 'text', 'text' => '支持 RSS 2.0 与 Atom。抓取由后台心跳驱动（与定时任务同一套），每轮最多抓 5 个源，抓到的条目按链接去重。推送群可填多个（逗号分隔）；模板按「每条」渲染，可用变量：{feed} {feed_id} {title} {link} {summary} {published}，留空默认「· 标题 + 链接」。'],
                 [
                     'type' => 'table',
                     'title' => '订阅源',
@@ -37,7 +37,8 @@ final class Rss extends BaseApp
                         ['key' => 'id', 'title' => 'ID', 'width' => 130],
                         ['key' => 'title', 'title' => '名称', 'minWidth' => 160],
                         ['key' => 'url', 'title' => '地址', 'minWidth' => 220],
-                        ['key' => 'group', 'title' => '推送群', 'width' => 130],
+                        ['key' => 'groups', 'title' => '推送群', 'minWidth' => 130],
+                        ['key' => 'template', 'title' => '模板', 'minWidth' => 160],
                         ['key' => 'last_text', 'title' => '最近抓取', 'width' => 170],
                         ['key' => 'enabled', 'title' => '启用', 'width' => 80],
                     ],
@@ -51,7 +52,8 @@ final class Rss extends BaseApp
                     'fields' => [
                         ['key' => 'url', 'label' => '订阅地址', 'placeholder' => 'https://example.com/feed.xml'],
                         ['key' => 'title', 'label' => '名称', 'placeholder' => '留空自动用源标题'],
-                        ['key' => 'group', 'label' => '推送到群', 'placeholder' => '群号，留空只存不推'],
+                        ['key' => 'groups', 'label' => '推送到群（可多个）', 'placeholder' => '群号，多个用逗号分隔；留空只存不推'],
+                        ['key' => 'template', 'label' => '消息模板', 'type' => 'textarea', 'placeholder' => '留空默认「· {title} + {link}」；可用 {feed} {feed_id} {title} {link} {summary} {published}'],
                         ['key' => 'id', 'label' => 'ID（修改已有源时填）', 'placeholder' => '留空新建'],
                     ],
                 ],
@@ -140,7 +142,9 @@ final class Rss extends BaseApp
                         'id'        => $id,
                         'title'     => (string)($feed['title'] ?? ''),
                         'url'       => (string)($feed['url'] ?? ''),
+                        'groups'    => implode(',', FeedStore::groups($feed['groups'] ?? ($feed['group'] ?? ''))),
                         'group'     => (string)($feed['group'] ?? ''),
+                        'template'  => (string)($feed['template'] ?? ''),
                         'enabled'   => !empty($feed['enabled']),
                         'last_text' => (int)($feed['last_poll'] ?? 0) > 0
                             ? date('m-d H:i', (int)$feed['last_poll']) . ' ' . (string)($feed['last_status'] ?? '') . '（' . (int)($feed['last_count'] ?? 0) . ' 条）'
@@ -155,7 +159,8 @@ final class Rss extends BaseApp
                     'id'    => (string)($in['id'] ?? ''),
                     'url'   => (string)($in['url'] ?? ''),
                     'title' => (string)($in['title'] ?? ''),
-                    'group' => (string)($in['group'] ?? ''),
+                    'groups' => (string)($in['groups'] ?? ''),
+                    'template' => (string)($in['template'] ?? ''),
                 ]);
                 if (!$result['ok']) {
                     throw new \RuntimeException((string)$result['msg']);
@@ -196,28 +201,52 @@ final class Rss extends BaseApp
         }
         $feedId = (string)($context['feed'] ?? '');
         $feed = FeedStore::get($feedId);
-        $group = (string)($feed['group'] ?? '');
-        if ($group === '' || !ctype_digit($group)) {
+        if ($feed === null) {
+            return;
+        }
+        $groups = FeedStore::groups($feed['groups'] ?? ($feed['group'] ?? ''));
+        if ($groups === []) {
             return;
         }
         $settings = FeedStore::settings();
         $limit = max(1, min(10, (int)($settings['max_items'] ?? 5)));
-        $lines = [];
-        foreach (array_slice((array)($context['items'] ?? []), 0, $limit) as $item) {
-            $lines[] = '· ' . (string)($item['title'] ?? '') . "\n" . (string)($item['link'] ?? '');
-        }
-        if ($lines === []) {
+        $items = array_slice((array)($context['items'] ?? []), 0, $limit);
+        if ($items === []) {
             return;
         }
-        $title = (string)($feed['title'] ?? $feedId);
+        $title = (string)($feed['title'] ?? ($context['feed_title'] ?? $feedId));
+        $template = trim((string)($feed['template'] ?? ''));
+        if ($template === '') {
+            $template = "· {title}\n{link}";
+        }
+        $lines = [];
+        foreach ($items as $item) {
+            $published = (int)($item['published'] ?? 0);
+            $lines[] = strtr($template, [
+                '{feed}'      => $title,
+                '{feed_id}'   => $feedId,
+                '{title}'     => (string)($item['title'] ?? ''),
+                '{link}'      => (string)($item['link'] ?? ''),
+                '{summary}'   => (string)($item['summary'] ?? ''),
+                '{published}' => $published > 0 ? date('Y-m-d H:i', $published) : '',
+            ]);
+        }
         $message = '【RSS】' . $title . "\n" . implode("\n", $lines);
         try {
-            \Protocol\OneBot\Adapter::currentAdapter()->call('send_group_msg', [
-                'group_id' => (int)$group,
-                'message'  => $message,
-            ]);
+            $adapter = \Protocol\OneBot\Adapter::currentAdapter();
         } catch (\Throwable $e) {
-            \Utils\Logger::warning('[rss] 推送到群失败：' . $e->getMessage());
+            \Utils\Logger::warning('[rss] 没有可用的协议适配器：' . $e->getMessage());
+            return;
+        }
+        foreach ($groups as $group) {
+            try {
+                $adapter->call('send_group_msg', [
+                    'group_id' => (int)$group,
+                    'message'  => $message,
+                ]);
+            } catch (\Throwable $e) {
+                \Utils\Logger::warning('[rss] 推送到群 ' . $group . ' 失败：' . $e->getMessage());
+            }
         }
     }
 }

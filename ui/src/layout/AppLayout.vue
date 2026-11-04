@@ -12,7 +12,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   Odometer, Connection, Download, Document, ChatDotRound, Grid, Box,
   Tickets, Setting, Cpu, Tools, User, Fold, Expand, Menu as MenuIcon, ArrowDown,
-  Postcard, Timer, Lock, Refresh, Operation,
+  Postcard, Timer, Lock, Refresh, Operation, Link, Bell,
 } from '@element-plus/icons-vue'
 import {
   useThemeStore, THEME_PRESETS, FRAMEWORKS, type ThemeMode, type FrameworkId,
@@ -320,6 +320,9 @@ const NAV_ICONS: Record<string, Component> = {
   permissions: Lock,
   update: Refresh,
   account: User,
+  // 插件自带菜单用的图标名（adminMenu.icon）
+  git: Link,
+  rss: Bell,
 }
 
 // 插件注入的后台菜单（后端 schema 驱动，前端不用为每个插件改代码）

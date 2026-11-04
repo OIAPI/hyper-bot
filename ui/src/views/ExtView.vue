@@ -145,7 +145,7 @@ onMounted(loadPage)
         <UiCard v-else-if="block.type === 'form'">
           <template #header><span class="card-title">{{ block.title || '表单' }}</span></template>
           <div class="form-grid">
-            <label v-for="f in block.fields ?? []" :key="f.key" class="field" :class="{ 'span-2': (f.placeholder ?? '').length > 40 }">
+            <label v-for="f in block.fields ?? []" :key="f.key" class="field" :class="{ 'span-2': f.type === 'textarea' || (f.placeholder ?? '').length > 40 }">
               <span class="field-label">{{ f.label }}</span>
               <UiSelect
                 v-if="f.options && f.options.length"
@@ -156,7 +156,8 @@ onMounted(loadPage)
               <UiInput
                 v-else
                 :model-value="forms[i]?.[f.key] ?? ''"
-                :type="f.type === 'password' ? 'password' : 'text'"
+                :type="f.type === 'password' ? 'password' : f.type === 'textarea' ? 'textarea' : 'text'"
+                :rows="f.type === 'textarea' ? 4 : undefined"
                 :placeholder="f.placeholder || ''"
                 @update:model-value="(v: string | number) => setField(i, f.key, String(v))"
               />

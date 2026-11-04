@@ -57,7 +57,13 @@ final class WebhookStore
         if (!preg_match('/^[a-zA-Z0-9_-]{3,64}$/', $id)) {
             return ['ok' => false, 'msg' => 'id 只能用字母、数字、下划线和横线，长度 3-64'];
         }
+        $hooks = self::all();
+        $current = $hooks[$id] ?? [];
+        // 修改已有订阅时 secret 可以留空：沿用原值，避免只改模板还要重新填一次
         $secret = (string)($row['secret'] ?? '');
+        if ($secret === '' && (string)($current['secret'] ?? '') !== '') {
+            $secret = (string)$current['secret'];
+        }
         if ($secret === '') {
             return ['ok' => false, 'msg' => 'secret 不能为空（GitHub 用它签名，必须填）'];
         }
@@ -68,14 +74,29 @@ final class WebhookStore
         if (!is_array($events) || $events === []) {
             $events = ['*'];
         }
-        $hooks = self::all();
-        $current = $hooks[$id] ?? [];
+        // 多群通知：groups 是数组；老配置只有单数 group，这里做一次兼容迁移
+        $groups = self::groups($row['groups'] ?? null);
+        if ($groups === []) {
+            $legacy = trim((string)($row['group'] ?? ''));
+            if ($legacy !== '' && ctype_digit($legacy)) {
+                $groups = [$legacy];
+            }
+        }
+        if ($groups === [] && !array_key_exists('groups', $row)) {
+            $groups = self::groups($current['groups'] ?? ($current['group'] ?? ''));
+        }
+        $template = array_key_exists('template', $row)
+            ? (string)$row['template']
+            : (string)($current['template'] ?? '');
+
         $hooks[$id] = [
             'id'          => $id,
             'kind'        => 'github',
             'note'        => (string)($row['note'] ?? ($current['note'] ?? '')),
             'secret'      => $secret,
-            'group'       => (string)($row['group'] ?? ($current['group'] ?? '')),
+            'groups'      => $groups,
+            'group'       => (string)($groups[0] ?? ''),
+            'template'    => $template,
             'events'      => $events,
             'enabled'     => array_key_exists('enabled', $row) ? (bool)$row['enabled'] : (bool)($current['enabled'] ?? true),
             'created_at'  => (int)($current['created_at'] ?? time()),
@@ -87,6 +108,20 @@ final class WebhookStore
         self::$cache = $hooks;
         self::flush();
         return ['ok' => true, 'msg' => '已保存', 'data' => $hooks[$id]];
+    }
+
+    /** 把 "123,456 789" / ["123","456"] 统一成数字群号数组 */
+    public static function groups(mixed $raw): array
+    {
+        $list = is_array($raw) ? $raw : preg_split('/[\s,，;；]+/u', (string)$raw, -1, PREG_SPLIT_NO_EMPTY);
+        $out = [];
+        foreach ((array)$list as $value) {
+            $value = trim((string)$value);
+            if ($value !== '' && ctype_digit($value) && !in_array($value, $out, true)) {
+                $out[] = $value;
+            }
+        }
+        return $out;
     }
 
     public static function remove(string $id): bool

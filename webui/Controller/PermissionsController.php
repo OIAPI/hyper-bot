@@ -13,17 +13,29 @@ use Core\Http\Response;
  */
 final class PermissionsController extends Base
 {
-    public function index(Request $request): Response
+    /**
+     * 统一的响应体：所有写操作也返回完整结构。
+     *
+     * 以前 save/destroy 只回 items+stats，前端直接把它赋给 data，模板里的
+     * data.levels[role] 就变成 undefined[role]（报 member 读不到）——所以
+     * 写接口也必须回 levels/model/diagnose。
+     */
+    private function payload(): array
     {
-        return $this->ok([
-            'items'  => MemberPermissions::all(),
+        return [
+            'items'    => MemberPermissions::all(),
             // levels 保留给前端下拉，roles/capabilities/matrix 是新的 RBAC 模型
-            'levels' => MemberPermissions::LEVELS,
+            'levels'   => MemberPermissions::LEVELS,
             'model'    => MemberPermissions::model(),
             'stats'    => MemberPermissions::stats(),
             // 列表为空时，面板要能说清「是没配置，还是连不上机器人的 Redis」
             'diagnose' => MemberPermissions::diagnose(),
-        ]);
+        ];
+    }
+
+    public function index(Request $request): Response
+    {
+        return $this->ok($this->payload());
     }
 
     public function save(Request $request): Response
@@ -38,7 +50,7 @@ final class PermissionsController extends Base
         if (!$result['ok']) {
             return $this->fail($result['msg'], -1, 400);
         }
-        return $this->ok(['items' => MemberPermissions::all(), 'stats' => MemberPermissions::stats()], $result['msg']);
+        return $this->ok($this->payload(), $result['msg']);
     }
 
     public function destroy(Request $request, array $params): Response
@@ -50,6 +62,6 @@ final class PermissionsController extends Base
         if (!MemberPermissions::remove($qq)) {
             return $this->fail('没有这个人的权限记录', -1, 404);
         }
-        return $this->ok(['items' => MemberPermissions::all(), 'stats' => MemberPermissions::stats()], '已移除，将回落到群角色');
+        return $this->ok($this->payload(), '已移除，将回落到群角色');
     }
 }

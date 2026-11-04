@@ -31,7 +31,7 @@ final class Github extends BaseApp
             'blocks' => [
                 [
                     'type' => 'text',
-                    'text' => '在 GitHub 仓库 Settings → Webhooks 里添加：Payload URL = 本站地址 + /webhook/github/<订阅 id>，Content type 选 application/json，Secret 与下表一致。支持 push / issues / pull_request / release / star 等事件。',
+                    'text' => '在 GitHub 仓库 Settings → Webhooks 里添加：Payload URL = 本站地址 + /webhook/github/<订阅 id>，Content type 选 application/json，Secret 与下表一致。支持 push / issues / pull_request / release / star 等事件。通知群可填多个（逗号分隔）；模板留空用默认 [GitHub] 摘要，可用变量：{event} {repo} {sender} {hook} {summary}。',
                 ],
                 [
                     'type' => 'table',
@@ -42,7 +42,8 @@ final class Github extends BaseApp
                         ['key' => 'id', 'title' => 'ID', 'width' => 140],
                         ['key' => 'note', 'title' => '备注', 'minWidth' => 160],
                         ['key' => 'events', 'title' => '事件', 'minWidth' => 150],
-                        ['key' => 'group', 'title' => '通知群', 'width' => 130],
+                        ['key' => 'groups', 'title' => '通知群', 'minWidth' => 130],
+                        ['key' => 'template', 'title' => '模板', 'minWidth' => 160],
                         ['key' => 'last_text', 'title' => '最近投递', 'width' => 170],
                         ['key' => 'enabled', 'title' => '启用', 'width' => 80],
                     ],
@@ -58,7 +59,8 @@ final class Github extends BaseApp
                         ['key' => 'secret', 'label' => 'Secret', 'type' => 'password', 'placeholder' => 'GitHub 里填同一个值'],
                         ['key' => 'note', 'label' => '备注', 'placeholder' => 'OIAPI/hyper-bot'],
                         ['key' => 'events', 'label' => '事件', 'placeholder' => '逗号分隔，留空为全部，如 push,release'],
-                        ['key' => 'group', 'label' => '通知到群', 'placeholder' => '群号，留空只记日志'],
+                        ['key' => 'groups', 'label' => '通知到群（可多个）', 'placeholder' => '群号，多个用逗号分隔；留空只记日志'],
+                        ['key' => 'template', 'label' => '消息模板', 'type' => 'textarea', 'placeholder' => '留空默认 [GitHub] {summary}；可用 {event} {repo} {sender} {hook} {summary}'],
                     ],
                 ],
                 [
@@ -146,7 +148,9 @@ final class Github extends BaseApp
                         'id'        => $id,
                         'note'      => (string)($hook['note'] ?? ''),
                         'events'    => implode(',', (array)($hook['events'] ?? ['*'])),
+                        'groups'    => implode(',', WebhookStore::groups($hook['groups'] ?? ($hook['group'] ?? ''))),
                         'group'     => (string)($hook['group'] ?? ''),
+                        'template'  => (string)($hook['template'] ?? ''),
                         'enabled'   => !empty($hook['enabled']),
                         'secret_set' => (string)($hook['secret'] ?? '') !== '',
                         'last_text' => (int)($hook['last_at'] ?? 0) > 0
@@ -163,7 +167,8 @@ final class Github extends BaseApp
                     'secret'  => (string)($in['secret'] ?? ''),
                     'note'    => (string)($in['note'] ?? ''),
                     'events'  => (string)($in['events'] ?? ''),
-                    'group'   => (string)($in['group'] ?? ''),
+                    'groups'  => (string)($in['groups'] ?? ''),
+                    'template' => (string)($in['template'] ?? ''),
                 ]);
                 if (!$result['ok']) {
                     throw new \RuntimeException((string)$result['msg']);
@@ -198,24 +203,45 @@ final class Github extends BaseApp
         if (!str_starts_with($topic, 'github')) {
             return;
         }
-        $payload = (array)($context['payload'] ?? []);
         $hook = WebhookStore::get((string)($context['hook'] ?? ''));
-        $group = (string)($hook['group'] ?? '');
-        if ($group === '' || !ctype_digit($group)) {
+        if ($hook === null) {
             return;
         }
-        $summary = (string)($context['summary'] ?? '');
-        if ($summary === '') {
+        // 多群：groups 为主，老配置的单数 group 也认
+        $groups = WebhookStore::groups($hook['groups'] ?? ($hook['group'] ?? ''));
+        if ($groups === []) {
+            return;
+        }
+        $summary = trim((string)($context['summary'] ?? ''));
+        $template = trim((string)($hook['template'] ?? ''));
+        if ($summary === '' && $template === '') {
+            return;
+        }
+        $message = $template !== '' ? strtr($template, [
+            '{event}'   => (string)($context['event'] ?? ''),
+            '{repo}'    => (string)($context['repo'] ?? ''),
+            '{sender}'  => (string)($context['sender'] ?? ''),
+            '{hook}'    => (string)($context['hook'] ?? ''),
+            '{summary}' => $summary,
+        ]) : '[GitHub] ' . $summary;
+        if (trim($message) === '') {
             return;
         }
         try {
             $adapter = \Protocol\OneBot\Adapter::currentAdapter();
-            $adapter->call('send_group_msg', [
-                'group_id' => (int)$group,
-                'message'  => '[GitHub] ' . $summary,
-            ]);
         } catch (\Throwable $e) {
-            \Utils\Logger::warning('[github] 推送到群失败：' . $e->getMessage());
+            \Utils\Logger::warning('[github] 没有可用的协议适配器：' . $e->getMessage());
+            return;
+        }
+        foreach ($groups as $group) {
+            try {
+                $adapter->call('send_group_msg', [
+                    'group_id' => (int)$group,
+                    'message'  => $message,
+                ]);
+            } catch (\Throwable $e) {
+                \Utils\Logger::warning('[github] 推送到群 ' . $group . ' 失败：' . $e->getMessage());
+            }
         }
     }
 }

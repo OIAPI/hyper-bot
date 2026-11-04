@@ -591,6 +591,15 @@ const Table = defineComponent({
       })
       const limit = parsePx(props.height ?? props.maxHeight)
       const rawLimit = props.height ?? props.maxHeight
+      // Ant Design Table 不会自己横向撑开：列有 width/minWidth 时必须给 scroll.x，
+      // 否则窄屏上右侧列会被直接裁掉（Element/Naive 默认是 overflow 可见）。
+      const hasColumnWidth = cols.some((c) => c.width != null || c.minWidth != null)
+      const userScroll = (attrs.scroll as Record<string, unknown> | undefined) ?? {}
+      const scroll = {
+        ...(hasColumnWidth ? { x: 'max-content' } : {}),
+        ...userScroll,
+        ...(limit !== undefined ? { y: limit } : {}),
+      }
       const empty = slots.empty
         ? h('div', { class: 'ui-antd-empty' }, slots.empty())
         : (props.emptyText ?? '暂无数据')
@@ -605,7 +614,7 @@ const Table = defineComponent({
         size: props.size === 'small' ? 'small' : props.size === 'large' ? 'large' : 'middle',
         bordered: (attrs.bordered as boolean | undefined) ?? props.border,
         pagination: (attrs.pagination as unknown) ?? false,
-        scroll: limit !== undefined ? { y: limit } : (attrs.scroll as unknown),
+        scroll: (hasColumnWidth || limit !== undefined || attrs.scroll) ? scroll : undefined,
         locale: { emptyText: empty },
         rowClassName: (attrs.rowClassName as unknown) ?? rowClass,
         customRow: (record: Record<string, unknown>, index: number) => ({

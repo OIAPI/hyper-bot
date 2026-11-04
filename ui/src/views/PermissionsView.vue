@@ -123,7 +123,8 @@ async function add(): Promise<void> {
 async function change(row: { qq: string; level: string }, level: string): Promise<void> {
   try {
     const res = await permissionApi.save(row.qq, level)
-    data.value = res
+    // 局部响应（只有 items/stats）直接覆盖会让 template 里的 levels 变 undefined
+    data.value = { ...(data.value ?? {}), ...res } as PermissionsData
     toast.ok(row.qq + ' → ' + (levels.value.find((l) => l.value === level)?.label ?? level))
   } catch (e) {
     toast.fromError(e, '修改失败')
@@ -134,7 +135,7 @@ async function change(row: { qq: string; level: string }, level: string): Promis
 async function remove(row: { qq: string }): Promise<void> {
   try {
     const res = await permissionApi.remove(row.qq)
-    data.value = res
+    data.value = { ...(data.value ?? {}), ...res } as PermissionsData
     toast.ok('已移除 ' + row.qq)
   } catch (e) {
     toast.fromError(e, '移除失败')
@@ -162,11 +163,11 @@ onMounted(load)
     </UiAlert>
 
     <div class="stat-row">
-      <div class="stat"><div class="stat-value">{{ data?.stats.total ?? 0 }}</div><div class="stat-label">已单独授权</div></div>
+      <div class="stat"><div class="stat-value">{{ data?.stats?.total ?? 0 }}</div><div class="stat-label">已单独授权</div></div>
       <div class="stat wide">
         <div class="stat-value small">
-          <span v-for="(count, level) in (data?.stats.by_level ?? {})" :key="level" class="chip">
-            {{ data?.levels[level] || level }} · {{ count }}
+          <span v-for="(count, level) in (data?.stats?.by_level ?? {})" :key="level" class="chip">
+            {{ data?.levels?.[level] || level }} · {{ count }}
           </span>
         </div>
         <div class="stat-label">等级分布</div>

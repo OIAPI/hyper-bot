@@ -85,11 +85,24 @@ final class FeedStore
         }
         $feeds = self::all();
         $current = $feeds[$id] ?? [];
+        // 多群推送：groups 是数组；老配置只有单数 group，自动迁移
+        $groups = self::groups($row['groups'] ?? null);
+        if ($groups === [] && array_key_exists('group', $row) && trim((string)$row['group']) !== '') {
+            $groups = self::groups($row['group']);
+        }
+        if ($groups === [] && !array_key_exists('groups', $row) && !array_key_exists('group', $row)) {
+            $groups = self::groups($current['groups'] ?? ($current['group'] ?? ''));
+        }
+        $template = array_key_exists('template', $row)
+            ? (string)$row['template']
+            : (string)($current['template'] ?? '');
         $feeds[$id] = [
             'id'          => $id,
             'title'       => (string)($row['title'] ?? ($current['title'] ?? '')),
             'url'         => $url,
-            'group'       => (string)($row['group'] ?? ($current['group'] ?? '')),
+            'groups'      => $groups,
+            'group'       => (string)($groups[0] ?? ''),
+            'template'    => $template,
             'enabled'     => array_key_exists('enabled', $row) ? (bool)$row['enabled'] : (bool)($current['enabled'] ?? true),
             'created_at'  => (int)($current['created_at'] ?? time()),
             'updated_at'  => time(),
@@ -104,6 +117,20 @@ final class FeedStore
         self::$feeds = $feeds;
         self::flush();
         return ['ok' => true, 'msg' => '已保存', 'data' => $feeds[$id]];
+    }
+
+    /** 把 "123,456 789" / ["123","456"] 统一成数字群号数组 */
+    public static function groups(mixed $raw): array
+    {
+        $list = is_array($raw) ? $raw : preg_split('/[\s,，;；]+/u', (string)$raw, -1, PREG_SPLIT_NO_EMPTY);
+        $out = [];
+        foreach ((array)$list as $value) {
+            $value = trim((string)$value);
+            if ($value !== '' && ctype_digit($value) && !in_array($value, $out, true)) {
+                $out[] = $value;
+            }
+        }
+        return $out;
     }
 
     public static function remove(string $id): bool

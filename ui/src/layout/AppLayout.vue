@@ -38,7 +38,8 @@ const pageHidden = ref<number[]>([])
 let pageDragFrom = -1
 let pageDragging = false
 
-const PAGE_PREF_PREFIX = 'hyper-page-blocks:'
+// v2：旧版本会把组件库浮层也算成区块，索引错位；换前缀让旧偏好一次性失效，避免藏错区块
+const PAGE_PREF_PREFIX = 'hyper-page-blocks:v2:'
 
 function loadPagePrefs(path: string): void {
   try {
@@ -85,14 +86,44 @@ function blockLabel(el: HTMLElement, index: number): string {
   return (text || '区块 ' + (index + 1)).slice(0, 16)
 }
 
+/**
+ * 不能当作「页面区块」参与排序/隐藏的节点。
+ *
+ * 组件库的浮层（Element Plus 的 dialog / popper）在 teleport 关闭时仍然渲染在
+ * 页面里，只是靠 v-show 写成行内 display:none 来隐藏。页面布局如果把它当成区块，
+ * 恢复布局时会写 el.style.display = ''，等于把 v-show 的 display:none 抹掉：
+ * 弹窗没打开，一个全屏半透明遮罩却盖在页面上，点什么都点不动。
+ */
+const NON_BLOCK_SELECTOR = [
+  '.el-overlay', '.el-overlay-dialog', '.el-popper', '.el-loading-mask',
+  '.v-modal', '.mobile-mask', '.route-loading', '.ui-progress',
+  '[role="dialog"]', '[role="tooltip"]', '[data-layout-skip]',
+].join(',')
+
+function isPageBlock(el: HTMLElement): boolean {
+  if (!el.matches('div,section,article,main,form,aside,ul,ol,table')) return false
+  if (el.matches('header,.page-head,.layout-bar,' + NON_BLOCK_SELECTOR)) return false
+  if (el.closest(NON_BLOCK_SELECTOR)) return false
+  // 浮层基本都是 fixed/absolute：不参与文档流的节点不是「区块」
+  const position = getComputedStyle(el).position
+  return position !== 'fixed' && position !== 'absolute'
+}
+
 function collectPageBlocks(): void {
   const root = viewRoot()
   if (!root) {
     pageBlocks.value = []
     return
   }
+  // 先清掉上一轮的标记，避免浮层残留 data-auto-block 被后续 applyPageLayout 命中
+  for (const child of Array.from(root.children)) {
+    if (child instanceof HTMLElement && child.dataset.autoBlock !== undefined) {
+      delete child.dataset.autoBlock
+      delete child.dataset.layoutPrevDisplay
+    }
+  }
   const children = Array.from(root.children).filter((el): el is HTMLElement =>
-    el instanceof HTMLElement && !el.matches('header,.page-head,.layout-bar,[data-layout-skip]'),
+    el instanceof HTMLElement && isPageBlock(el),
   )
   pageBlocks.value = children.map((el, index) => {
     el.dataset.autoBlock = String(index)
@@ -122,7 +153,17 @@ function applyPageLayout(): void {
     if (!el) continue
     const pos = order.indexOf(block.index)
     el.style.order = String(pos === -1 ? order.length : pos)
-    el.style.display = hidden.has(block.index) ? 'none' : ''
+    if (hidden.has(block.index)) {
+      // 记住原来的行内 display，恢复时原样写回：绝不无条件清空，
+      // 否则会把组件自己（v-show / 浮层）控制的 display 一起抹掉。
+      if (el.style.display !== 'none') {
+        el.dataset.layoutPrevDisplay = el.style.display
+        el.style.display = 'none'
+      }
+    } else if (el.dataset.layoutPrevDisplay !== undefined) {
+      el.style.display = el.dataset.layoutPrevDisplay
+      delete el.dataset.layoutPrevDisplay
+    }
   }
 }
 
@@ -137,6 +178,7 @@ function refreshPageLayout(): void {
   window.setTimeout(() => {
     collectPageBlocks()
     applyPageLayout()
+    cleanOrphanOverlays()
   }, 300)
 }
 
@@ -211,12 +253,15 @@ function stopPageDrag(): void {
   window.removeEventListener('pointermove', onPagePointerMove)
 }
 
-/** Element Plus 的 ElDialog 在路由/框架切换时偶尔把 .el-overlay 留在 body 上，只清理没有可见 dialog 的孤儿遮罩 */
+/**
+ * 兜底：Element Plus 的弹窗关闭后会把 .el-overlay 留在 DOM 里（行内 display:none）。
+ * 只要没有 .el-dialog 子节点，就确保它是隐藏的——空遮罩绝不能吃掉整页点击。
+ * 只改行内 display、不删除节点：节点归 Vue 管理，删掉会让组件指向游离 DOM。
+ */
 function cleanOrphanOverlays(): void {
   document.querySelectorAll<HTMLElement>('.el-overlay').forEach((overlay) => {
-    const dialog = overlay.querySelector<HTMLElement>('.el-dialog')
-    const visible = dialog !== null && dialog.offsetParent !== null
-    if (!visible) overlay.remove()
+    if (overlay.querySelector('.el-dialog')) return
+    if (overlay.style.display !== 'none') overlay.style.display = 'none'
   })
 }
 

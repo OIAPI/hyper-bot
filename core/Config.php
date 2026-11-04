@@ -221,12 +221,40 @@ final class Config {
      *    必须用反向引用 \$1 保留「键 = 」前缀。
      */
     public static function set(string $key, mixed $value): bool {
-        $path = self::path();
-        if (!is_writable($path)) {
-            return false;
-        }
         $segments = array_values(array_filter(explode('.', trim($key)), fn($v) => $v !== ''));
         if ($segments === []) {
+            return false;
+        }
+        [$section, $rest] = self::splitSection($segments);
+        $inFile = implode('.', $rest);
+        if ($inFile === '') {
+            return false;
+        }
+        return self::writeKey($section, $inFile, $value);
+    }
+
+    /**
+     * 明确指定小节写入，允许创建文件里还不存在的小节（包括带点的名字）。
+     *
+     * 为什么需要它：set() 只能沿用文件里已有小节的名字，否则按第一个点拆开——
+     * 想给插件新建 [plugin.hello] 会被写成 [plugin] 里的 hello.theme 键，
+     * 插件用 Config::string('plugin.hello.theme') 根本读不到。
+     * 面板的「新增配置项」走这里，插件读自己的配置才有地方配。
+     */
+    public static function setInSection(string $section, string $key, mixed $value): bool {
+        $section = trim($section);
+        $key = trim($key);
+        if ($section === '' || $key === '') {
+            return false;
+        }
+        return self::writeKey($section, $key, $value);
+    }
+
+    /** 真正的写入实现：set() / setInSection() 共用 */
+    private static function writeKey(string $section, string $inFile, mixed $value): bool {
+        $label = $inFile !== '' ? $section . '.' . $inFile : $section;
+        $path = self::path();
+        if (!is_writable($path)) {
             return false;
         }
         $current = Fs::read($path);
@@ -235,17 +263,12 @@ final class Config {
         }
 
         if (self::isInexpressible($value)) {
-            self::warn("拒绝写入 {$key}：值里含有换行，INI 格式无法表达。"
+            self::warn("拒绝写入 {$label}：值里含有换行，INI 格式无法表达。"
                 . "请改用不含换行的值，或写到独立的配置文件里。");
             return false;
         }
 
         $encoded = self::encodeValue($value);
-        [$section, $rest] = self::splitSection($segments);
-        $inFile = implode('.', $rest);
-        if ($inFile === '') {
-            return false;
-        }
 
         // 必须带 /u，理由同 preprocess()：不带会把 UTF-8 中文按字节切断
         $lines = preg_split('/\R/u', $current);
@@ -305,9 +328,9 @@ final class Config {
         // 回读校验：确认「写进去的」和「读回来的」一致。
         // 这正是值含分号那类 bug 的防线——encode 与 decode 两侧不对齐时，
         // 写进去 a;b 读回来 a，双方都不报错，只能靠回读发现。
-        $readBack = self::get($key, self::UNSET);
+        $readBack = self::get($label, self::UNSET);
         if ($readBack !== self::UNSET && !self::valueEquivalent($readBack, $value)) {
-            self::warn("写入 {$key} 后回读不一致：写入 " . json_encode($value, 256)
+            self::warn("写入 {$label} 后回读不一致：写入 " . json_encode($value, 256)
                 . '，读回 ' . json_encode($readBack, 256)
                 . '。通常是值里含有 INI 特殊字符（分号 / 换行 / 首尾空白）。');
         }

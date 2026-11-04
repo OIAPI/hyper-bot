@@ -159,6 +159,9 @@ export const settingsApi = {
   get: () => http.get<SettingsData>('/settings'),
   raw: () => http.get<{ text: string }>('/settings/raw'),
   update: (key: string, value: unknown) => http.put<SettingsUpdateResult>('/settings', { key, value }),
+  /** 新增配置项：section 可以是不存在的小节（含 plugin.xxx 这种带点的） */
+  add: (section: string, key: string, value: unknown) =>
+    http.put<SettingsUpdateResult>('/settings', { section, key, value }),
   reload: () => http.post<{ warnings: string[] }>('/settings/reload'),
 }
 

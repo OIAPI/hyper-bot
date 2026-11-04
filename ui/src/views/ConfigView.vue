@@ -32,6 +32,86 @@ const editOpen = ref(false)
 const editValue = ref('')
 const saving = ref(false)
 
+/* ---------------- 新增配置项 ---------------- */
+const addOpen = ref(false)
+const addSection = ref('')
+const addKey = ref('')
+const addValue = ref('')
+const addType = ref<'string' | 'number' | 'boolean' | 'json'>('string')
+const adding = ref(false)
+const addError = ref('')
+
+const typeOptions = [
+  { label: '字符串', value: 'string' },
+  { label: '数字', value: 'number' },
+  { label: '布尔', value: 'boolean' },
+  { label: 'JSON / 数组', value: 'json' },
+]
+
+function openAdd(): void {
+  addSection.value = ''
+  addKey.value = ''
+  addValue.value = ''
+  addType.value = 'string'
+  addError.value = ''
+  addOpen.value = true
+}
+
+/** 按所选类型把输入转成真正写进 Config.ini 的值 */
+function coerceNew(): unknown {
+  const raw = addValue.value.trim()
+  if (addType.value === 'number') {
+    const n = Number(raw)
+    if (!Number.isFinite(n)) throw new Error('值不是合法数字')
+    return n
+  }
+  if (addType.value === 'boolean') {
+    const v = raw.toLowerCase()
+    if (['true', '1', 'yes', 'on'].includes(v)) return true
+    if (['false', '0', 'no', 'off'].includes(v)) return false
+    if (v === '') return false
+    throw new Error('布尔值请填 true / false')
+  }
+  if (addType.value === 'json') {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      throw new Error('JSON 解析失败，请检查格式（例如 ["a","b"]）')
+    }
+  }
+  return addValue.value
+}
+
+async function saveAdd(): Promise<void> {
+  addError.value = ''
+  const section = addSection.value.trim().replace(/^\[|\]$/g, '')
+  const key = addKey.value.trim()
+  const nameRe = /^[A-Za-z0-9_.-]+$/
+  if (section === '') { addError.value = '请填写小节名，例如 plugin.hello'; return }
+  if (key === '') { addError.value = '请填写键名，例如 theme'; return }
+  if (key.startsWith('_')) { addError.value = '键名不能以下划线开头'; return }
+  if (!nameRe.test(section) || section.includes('..')) { addError.value = '小节名只能用字母、数字、点、下划线、横线'; return }
+  if (!nameRe.test(key) || key.includes('..')) { addError.value = '键名只能用字母、数字、点、下划线、横线'; return }
+  let value: unknown
+  try {
+    value = coerceNew()
+  } catch (e) {
+    addError.value = e instanceof Error ? e.message : '值格式不对'
+    return
+  }
+  adding.value = true
+  try {
+    const res = await settingsApi.add(section, key, value)
+    toast.ok('已新增 ' + (res.path ?? section + '.' + key) + (res.backup ? '，旧文件已备份' : ''))
+    addOpen.value = false
+    await load()
+  } catch (e) {
+    addError.value = e instanceof Error ? e.message : '保存失败'
+  } finally {
+    adding.value = false
+  }
+}
+
 /** 展开状态：键 = 完整配置路径，缺省时按深度决定（前两层展开） */
 const expanded = ref<Record<string, boolean>>({})
 
@@ -269,7 +349,7 @@ const warnings = computed(() => data.value?.warnings ?? [])
     <header class="page-head">
       <div>
         <h1>配置</h1>
-        <p class="sub">逐项查看与修改配置，保存后旧值会备份，服务重启生效。</p>
+        <p class="sub">逐项查看与修改配置，也可以新增配置项；保存后旧值会备份，服务重启（或插件重载）后生效。</p>
       </div>
     </header>
 
@@ -293,6 +373,7 @@ const warnings = computed(() => data.value?.warnings ?? [])
           {{ data.writable ? '可写' : '只读' }}
         </UiTag>
         <span v-if="data" class="path-text mono truncate">{{ data.path }}</span>
+        <UiButton v-if="data?.writable" size="small" type="primary" @click="openAdd">新增配置项</UiButton>
         <UiButton size="small" @click="reloadConfig">重新加载</UiButton>
       </div>
     </UiCard>
@@ -387,6 +468,40 @@ const warnings = computed(() => data.value?.warnings ?? [])
         </div>
       </template>
     </UiDialog>
+
+    <UiDialog v-model="addOpen" title="新增配置项" width="560px">
+      <UiForm label-position="top">
+        <UiFormItem label="小节">
+          <UiInput v-model="addSection" class="mono" placeholder="例如 plugin.hello（不存在会自动创建）" />
+        </UiFormItem>
+        <UiFormItem label="键名">
+          <UiInput v-model="addKey" class="mono" placeholder="例如 theme" />
+        </UiFormItem>
+        <UiFormItem label="类型">
+          <UiSelect v-model="addType" :options="typeOptions" />
+        </UiFormItem>
+        <UiFormItem label="值">
+          <UiInput v-model="addValue" class="mono" placeholder="例如 dark" @enter="saveAdd" />
+        </UiFormItem>
+      </UiForm>
+      <div class="field-hint mono" v-if="addSection && addKey">
+        将写入：{{ addSection.replace(/^\[|\]$/g, '') }}.{{ addKey }}
+      </div>
+      <div v-if="addError" class="form-error">{{ addError }}</div>
+      <div class="field-hint">
+        插件读取自己的配置用 <code>Config::string('小节.键')</code>：例如在
+        <code>plugin.hello</code> 下加 <code>theme = dark</code>，插件里就写
+        <code>Config::string('plugin.hello.theme')</code>。
+      </div>
+      <template #footer>
+        <div class="row right gap-8">
+          <UiButton size="small" @click="addOpen = false">取消</UiButton>
+          <UiButton size="small" type="primary" :loading="adding" @click="saveAdd">
+            {{ adding ? '保存中…' : '保存' }}
+          </UiButton>
+        </div>
+      </template>
+    </UiDialog>
   </div>
 </template>
 
@@ -412,6 +527,12 @@ h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 .row { display: flex; align-items: center; }
 .right { justify-content: flex-end; }
 .gap-8 { gap: 8px; }
+.form-error {
+  margin-top: 10px; padding: 7px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--danger, #d33); color: var(--danger, #d33);
+  background: color-mix(in srgb, var(--danger, #d33) 8%, transparent);
+  font-size: 12px; line-height: 1.6; user-select: text;
+}
 
 .warn-list {
   margin: 4px 0 0;

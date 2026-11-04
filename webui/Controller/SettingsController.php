@@ -41,16 +41,33 @@ final class SettingsController extends Base {
         return $this->ok(['text' => implode("\n", $lines)]);
     }
 
-    /** 修改单个配置项 */
+    /**
+     * 修改单个配置项。
+     *
+     * 传了 section 就按「明确小节」写入：小节可以不存在、也可以带点
+     * （插件常把配置放在 [plugin.xxx] 下，用 Config::string('plugin.xxx.key') 读）。
+     * 不传 section 时保持原行为（按 key 的点分路径找已有小节）。
+     */
     public function update(Request $request): Response {
         if ($deny = $this->guard($request, 'settings.write')) {
             return $deny;
         }
-        $key = (string)$request->input('key', '');
+        $key = trim((string)$request->input('key', ''));
+        $section = trim((string)$request->input('section', ''));
         if ($key === '' || str_starts_with($key, '_')) {
             return $this->fail('配置键不合法', -1, 400);
         }
-        if (!Config::set($key, $request->input('value'))) {
+        if ($section !== '') {
+            if (!preg_match('/^[A-Za-z0-9_.\-]{1,64}$/', $section) || str_contains($section, '..')) {
+                return $this->fail('小节名不合法：只能用字母、数字、点、下划线、横线', -1, 400);
+            }
+            if (!preg_match('/^[A-Za-z0-9_.\-]{1,96}$/', $key) || str_contains($key, '..')) {
+                return $this->fail('键名不合法：只能用字母、数字、点、下划线、横线', -1, 400);
+            }
+        }
+        $value = $request->input('value');
+        $ok = $section !== '' ? Config::setInSection($section, $key, $value) : Config::set($key, $value);
+        if (!$ok) {
             // 具体原因在 Config::warnings() 里（值含换行被拒、文件不可写等），
             // 不透出来用户只会看到一句笼统的"写入失败"，不知道该改什么。
             $warnings = Config::warnings();
@@ -59,9 +76,12 @@ final class SettingsController extends Base {
                 : (string)end($warnings);
             return $this->fail($reason, -2, 500);
         }
+        $path = $section !== '' ? $section . '.' . $key : $key;
         return $this->ok([
+            'section'  => $section,
             'key'      => $key,
-            'value'    => Config::get($key),
+            'path'     => $path,
+            'value'    => Config::get($path),
             'backup'   => Config::lastBackup(),
             'warnings' => Config::warnings(),
         ]);

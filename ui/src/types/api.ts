@@ -186,6 +186,10 @@ export interface SettingsData {
 
 export interface SettingsUpdateResult {
   key: string
+  /** 明确写入小节时返回（新增配置项会用到） */
+  section?: string
+  /** 实际写入的完整路径 */
+  path?: string
   value: ConfigValue
   backup: string | null
   warnings: string[]

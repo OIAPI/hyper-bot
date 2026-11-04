@@ -16,6 +16,8 @@ import { useToastStore } from '@/stores/toast'
 import { useAuthStore } from '@/stores/auth'
 import type { Plugin, PluginHook, PluginImportResult } from '@/types/api'
 import type { UiColumn } from '@/ui/types'
+import SortControl from '@/components/SortControl.vue'
+import { sortRows, type SortState } from '@/utils/sortRows'
 
 const toast = useToastStore()
 const auth = useAuthStore()
@@ -32,6 +34,19 @@ const reloading = ref(false)
 const current = ref<Plugin | null>(null)
 const visible = ref(false)
 const count = computed(() => items.value.length)
+const sort = ref<SortState | null>(null)
+const sortOptions = [
+  { key: 'name', label: '名称' },
+  { key: 'class', label: '类名' },
+  { key: 'enabled', label: '状态' },
+  { key: 'hooks', label: '钩子数' },
+]
+const sorted = computed(() => sortRows(items.value, sort.value, {
+  name: (p) => p.name,
+  class: (p) => p.class,
+  enabled: (p) => p.enabled,
+  hooks: (p) => p.hooks?.length ?? 0,
+}))
 
 const hookColumns: UiColumn[] = [
   { key: 'type', title: '类型', width: 86 },
@@ -212,6 +227,7 @@ async function submit(): Promise<void> {
       </div>
       <div class="row gap-8">
         <UiTag size="small" type="plain">{{ count }} 个</UiTag>
+        <SortControl v-model="sort" :options="sortOptions" />
         <UiButton v-if="auth.can('plugin.install')" size="small" @click="openImport">
           <template #icon><UiIcon><Upload /></UiIcon></template>
           导入插件
@@ -228,7 +244,7 @@ async function submit(): Promise<void> {
     </UiCard>
 
     <div v-else-if="items.length" class="plugin-grid">
-      <UiCard v-for="p in items" :key="p.class" class="plugin-card" :class="{ off: !p.enabled }">
+      <UiCard v-for="p in sorted" :key="p.class" class="plugin-card" :class="{ off: !p.enabled }">
         <div class="plugin-body">
           <div class="plugin-head">
             <div class="plugin-text">

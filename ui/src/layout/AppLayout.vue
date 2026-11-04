@@ -111,7 +111,14 @@ function blockLabel(el: HTMLElement, index: number): string {
   const text = (node?.textContent ?? '').replace(/\s+/g, ' ').trim()
   if (text !== '') return text.slice(0, 16)
 
-  // 3) 无标题卡：按内容判断用途，名字仍然是「页面标题 + 用途」
+  // 3) 没有卡片头：用前面紧挨着的小节标题（事件通道 / 按群覆盖…）当名字
+  const prev = sectionTitleOf(el)
+  if (prev) {
+    const section = (prev.textContent ?? '').replace(/\s+/g, ' ').trim()
+    if (section !== '') return section.slice(0, 16)
+  }
+
+  // 4) 无标题卡：按内容判断用途，名字是「页面标题 + 用途」
   const title = pageTitle()
   if (el.querySelector('table, .el-table, .ant-table, .n-data-table, .arco-table')) {
     return (title || '数据') + '列表'
@@ -136,6 +143,9 @@ function blockLabel(el: HTMLElement, index: number): string {
 const NON_BLOCK_SELECTOR = [
   '.el-overlay', '.el-overlay-dialog', '.el-popper', '.el-loading-mask',
   '.v-modal', '.mobile-mask', '.route-loading', '.ui-progress',
+  // 装饰性元素：小节标题 / 分割线 / 提示条不是「可拖动的区块」
+  '.section-title', '[class*="section-title"]', '.divider', '.divider-line',
+  '.card-divider', '.page-divider', '.form-divider',
   '[role="dialog"]', '[role="tooltip"]', '[data-layout-skip]',
 ].join(',')
 
@@ -182,6 +192,20 @@ function currentPageOrder(): number[] {
   return order
 }
 
+/**
+ * 紧贴在区块前面的小节标题（装饰元素，不参与拖拽，但要跟着区块走）。
+ * 编辑态下区块前面会插一条操作条，所以要先跳过 bar 再判断。
+ */
+const SECTION_TITLE_SELECTOR = '.section-title, [class*="section-title"], .section-head'
+function sectionTitleOf(el: HTMLElement): HTMLElement | null {
+  let prev = el.previousElementSibling
+  while (prev instanceof HTMLElement && prev.classList.contains(EDIT_BAR_CLASS)) {
+    prev = prev.previousElementSibling
+  }
+  if (prev instanceof HTMLElement && prev.matches(SECTION_TITLE_SELECTOR)) return prev
+  return null
+}
+
 function applyPageLayout(): void {
   const root = viewRoot()
   if (!root) return
@@ -193,10 +217,19 @@ function applyPageLayout(): void {
     const pos = order.indexOf(block.index)
     el.style.order = String(pos === -1 ? order.length : pos)
     // 操作条是区块的兄弟节点：order 必须同步，否则拖走的是内容、操作条留在原地
-    const bar = el.previousElementSibling
-    if (bar instanceof HTMLElement && bar.classList.contains(EDIT_BAR_CLASS)) {
+    // 操作条现在插在「小节标题」前面，不再是卡片的 previousElementSibling，
+    // 必须按 data-for 找，否则它的 order 一直是默认 0，会全部堆到页面顶部。
+    const bar = root.querySelector<HTMLElement>('.' + EDIT_BAR_CLASS + '[data-for="' + block.index + '"]')
+    if (bar) {
       bar.style.order = el.style.order
       bar.style.opacity = hidden.has(block.index) ? '0.45' : ''
+    }
+    // 小节标题跟着后面的卡片一起排序/隐藏，避免「卡片藏了、标题还留在原地」
+    const title = sectionTitleOf(el)
+    if (title) {
+      title.style.order = el.style.order
+      if (hidden.has(block.index) && !pageEdit.value) title.style.display = 'none'
+      else title.style.display = ''
     }
     if (hidden.has(block.index)) {
       if (pageEdit.value) {
@@ -302,14 +335,21 @@ function refreshEditBars(): void {
     const el = root.querySelector<HTMLElement>('[data-auto-block="' + block.index + '"]')
     if (!el || !el.parentElement) continue
     alive.add(block.index)
-    let bar = el.previousElementSibling as HTMLElement | null
-    if (!bar || !bar.classList.contains(EDIT_BAR_CLASS) || bar.dataset.for !== String(block.index)) {
-      if (bar && bar.classList.contains(EDIT_BAR_CLASS)) bar.remove()
+    // 先按 data-for 找已存在的操作条，而不是只看 previousElementSibling：
+    // 条插在「小节标题」前面时，卡片的 previousElementSibling 是标题，
+    // 只看前一个兄弟会误判为「没有条」，于是每 700ms 再插一条——直接无限增殖。
+    const owned = host.querySelectorAll<HTMLElement>('.' + EDIT_BAR_CLASS + '[data-for="' + block.index + '"]')
+    owned.forEach((item, i) => { if (i > 0) item.remove() })
+    let bar = owned[0] ?? null
+    if (!bar) {
       bar = document.createElement('div')
       bar.className = EDIT_BAR_CLASS
       bar.dataset.layoutSkip = '1'
       bar.dataset.for = String(block.index)
-      el.parentElement.insertBefore(bar, el)
+    }
+    const anchor = sectionTitleOf(el) ?? el
+    if (bar.nextElementSibling !== anchor || bar.parentElement !== el.parentElement) {
+      el.parentElement.insertBefore(bar, anchor)
     }
     bar.textContent = ''
     if (narrow.value) {

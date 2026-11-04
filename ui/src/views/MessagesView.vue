@@ -8,6 +8,7 @@ import { logApi } from '@/api'
 import { useToastStore } from '@/stores/toast'
 import { formatTime } from '@/utils/format'
 import type { UiColumn } from '@/ui/types'
+import { sortRows, type SortState } from '@/utils/sortRows'
 import type { MessageRecord } from '@/types/api'
 
 const toast = useToastStore()
@@ -67,6 +68,13 @@ const filtered = computed(() => {
   return items.value.filter((m) => JSON.stringify(m).toLowerCase().includes(kw))
 })
 
+const sort = ref<SortState | null>(null)
+const sorted = computed(() => sortRows(filtered.value, sort.value, {
+  time: (m) => (m.time ? Number(m.time) : 0),
+  source: (m) => m.group_id || m.user_id,
+  content: (m) => m.raw_message,
+}))
+
 function messageTime(m: MessageRecord): string {
   return m.time ? formatTime(Number(m.time)) : '—'
 }
@@ -99,7 +107,10 @@ function source(m: MessageRecord): string {
 
       <UiTable
         v-else
-        :data="filtered"
+        :data="sorted"
+        :sort="sort"
+        :sort-keys="{ message: 'content' }"
+        @update:sort="sort = $event"
         :columns="cols"
         max-height="clamp(240px, calc(100vh - 300px), 1400px)"
       >

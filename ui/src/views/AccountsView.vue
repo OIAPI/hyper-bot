@@ -12,6 +12,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import type { BotAccount, BotAccountList } from '@/types/api'
 import type { UiColumn } from '@/ui/types'
+import { sortRows, type SortState } from '@/utils/sortRows'
 
 const auth = useAuthStore()
 const toast = useToastStore()
@@ -57,6 +58,52 @@ const protocols = computed(() =>
 const protocolOptions = computed(() =>
   Object.entries(protocols.value).map(([value, label]) => ({ label, value })),
 )
+
+/* ---------------- 搜索 / 筛选 / 排序 ---------------- */
+const search = ref('')
+const protocolFilter = ref('')
+const enableFilter = ref('all')
+const sort = ref<SortState | null>(null)
+
+const protocolFilterOptions = computed(() => [
+  { label: '全部协议', value: '' },
+  ...protocolOptions.value,
+])
+const enableFilterOptions = [
+  { label: '全部状态', value: 'all' },
+  { label: '已启用', value: 'on' },
+  { label: '已停用', value: 'off' },
+]
+
+const filteredRows = computed(() => {
+  const kw = search.value.trim().toLowerCase()
+  return rows.value.filter((row) => {
+    if (protocolFilter.value !== '' && row.protocol !== protocolFilter.value) return false
+    if (enableFilter.value === 'on' && !row.enable) return false
+    if (enableFilter.value === 'off' && row.enable) return false
+    if (kw !== '') {
+      const hay = [row.name, row.id, row.self_id, row.api, row.remark].join(' ').toLowerCase()
+      if (!hay.includes(kw)) return false
+    }
+    return true
+  })
+})
+
+const visibleRows = computed(() => sortRows(filteredRows.value, sort.value, {
+  name: (row) => row.name || row.id,
+  protocol: (row) => row.protocol,
+  self_id: (row) => row.self_id,
+  enable: (row) => row.enable,
+}))
+
+const PROTOCOL_COLORS: Record<string, string> = {
+  onebot: '#409eff',
+  milky: '#67c23a',
+  qqbot: '#e6a23c',
+}
+function protoColor(name: string): string {
+  return PROTOCOL_COLORS[name] ?? 'var(--accent)'
+}
 
 async function load(): Promise<void> {
   loading.value = true
@@ -198,31 +245,57 @@ onMounted(load)
       </div>
     </div>
 
-    <div class="stat-row">
-      <div class="stat">
-        <div class="stat-value">{{ stats.total }}</div>
-        <div class="stat-label">账号总数</div>
+    <div class="summary">
+      <div class="sum-kpi">
+        <div class="sum-v">{{ stats.total }}</div>
+        <div class="sum-l">账号总数</div>
       </div>
-      <div class="stat">
-        <div class="stat-value">{{ stats.enabled }}</div>
-        <div class="stat-label">已启用</div>
-      </div>
-      <div class="stat">
-        <div class="stat-value">{{ Object.keys(stats.protocols).length }}</div>
-        <div class="stat-label">协议种类</div>
-      </div>
-      <div class="stat wide">
-        <div class="stat-value small">
-          <span v-for="(count, name) in stats.protocols" :key="name" class="proto-chip">
-            {{ protocols[name] || name }} · {{ count }}
-          </span>
+      <div class="sum-kpi">
+        <div class="sum-v">
+          {{ stats.enabled }}<span class="sum-of">/{{ stats.total }}</span>
         </div>
-        <div class="stat-label">分布</div>
+        <div class="sum-l">已启用</div>
+      </div>
+      <div class="sum-kpi">
+        <div class="sum-v">{{ Object.keys(stats.protocols).length }}</div>
+        <div class="sum-l">协议种类</div>
+      </div>
+      <div class="sum-dist">
+        <div class="sum-l">协议分布</div>
+        <div class="dist-row">
+          <span v-for="(count, name) in stats.protocols" :key="name" class="dist-item">
+            <i class="dist-dot" :style="{ background: protoColor(String(name)) }" />
+            <span class="dist-name">{{ protocols[name] || name }}</span>
+            <b class="dist-n">{{ count }}</b>
+          </span>
+          <span v-if="!Object.keys(stats.protocols).length" class="dim">还没有账号</span>
+        </div>
       </div>
     </div>
 
     <UiCard>
-      <UiTable :columns="columns" :data="rows" :loading="loading" row-key="id" empty-text="还没有配置机器人账号">
+      <div class="filter-bar">
+        <UiInput
+          v-model="search"
+          class="fb-search"
+          placeholder="搜索名称 / ID / 号码 / 地址 / 备注…"
+          clearable
+        />
+        <UiSelect v-model="protocolFilter" :options="protocolFilterOptions" class="fb-sel" />
+        <UiSelect v-model="enableFilter" :options="enableFilterOptions" class="fb-sel" />
+        <span class="fb-count dim">{{ visibleRows.length }} / {{ rows.length }}</span>
+        <div class="fb-spacer" />
+      </div>
+      <UiTable
+        :columns="columns"
+        :data="visibleRows"
+        :loading="loading"
+        row-key="id"
+        empty-text="没有匹配的机器人账号"
+        :sort="sort"
+        :sort-keys="{ endpoint: '', credential: '' }"
+        @update:sort="sort = $event"
+      >
         <template #cell-name="{ row }">
           <div class="acc-name">{{ row.name || row.id }}</div>
           <div class="acc-id">{{ row.id }}</div>
@@ -316,17 +389,51 @@ onMounted(load)
 .subtle code { font-family: var(--font-mono); font-size: 11.5px; }
 .head-ops { display: flex; gap: 8px; }
 
-.stat-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.stat {
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 2fr);
+  gap: 10px;
+}
+.sum-kpi,
+.sum-dist {
+  min-width: 0;
   padding: 12px 14px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   background: var(--surface-raised, var(--surface));
 }
-.stat-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.stat-value.small { font-size: 12px; font-weight: 500; display: flex; flex-wrap: wrap; gap: 6px; }
-.stat-label { margin-top: 2px; font-size: 11px; color: var(--text-faint); }
-.proto-chip { padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border-soft); }
+.sum-v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sum-of { margin-left: 2px; font-size: 12px; font-weight: 400; color: var(--text-faint); }
+.sum-l { font-size: 11px; color: var(--text-faint); }
+.dist-row { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.dist-item { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; }
+.dist-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.dist-name { color: var(--text-dim); }
+.dist-n { font-variant-numeric: tabular-nums; }
+@media (max-width: 860px) {
+  .summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sum-dist { grid-column: span 3; }
+}
+@media (max-width: 520px) {
+  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sum-dist { grid-column: span 2; }
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 0 10px;
+}
+.fb-search { width: 260px; max-width: 100%; }
+.fb-sel { width: 128px; }
+.fb-spacer { flex: 1; }
+.fb-count { font-size: 11.5px; }
+@media (max-width: 640px) {
+  .fb-search { width: 100%; }
+  .fb-sel { width: calc(50% - 4px); }
+}
 
 .acc-name { font-size: 12.5px; }
 .acc-id { font-size: 10.5px; color: var(--text-faint); font-family: var(--font-mono); }

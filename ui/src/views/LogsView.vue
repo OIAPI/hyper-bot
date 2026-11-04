@@ -7,6 +7,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { logApi } from '@/api'
 import { useToastStore } from '@/stores/toast'
 import type { UiColumn } from '@/ui/types'
+import { sortRows, type SortState } from '@/utils/sortRows'
 import type { LogEntry } from '@/types/api'
 
 const toast = useToastStore()
@@ -96,6 +97,13 @@ const filtered = computed(() => {
     return hay.includes(kw)
   })
 })
+
+const sort = ref<SortState | null>(null)
+const sorted = computed(() => sortRows(filtered.value, sort.value, {
+  time: (e) => e.time ?? 0,
+  level: (e) => e.level,
+  channel: (e) => e.channel,
+}))
 
 const levelCounts = computed(() => {
   const map: Record<string, number> = {}
@@ -189,7 +197,14 @@ function exportLogs(): void {
     </UiCard>
 
     <UiCard v-else padding="none">
-      <UiTable :data="filtered" :columns="cols" max-height="clamp(260px, calc(100vh - 400px), 1400px)">
+      <UiTable
+        :data="sorted"
+        :columns="cols"
+        max-height="clamp(260px, calc(100vh - 400px), 1400px)"
+        :sort="sort"
+        :sort-keys="{ message: '' }"
+        @update:sort="sort = $event"
+      >
         <template #cell-time="{ row }">
           <span class="cell-time" :title="row.time">{{ shortTime(row.time) }}</span>
         </template>

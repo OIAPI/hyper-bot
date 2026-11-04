@@ -11,6 +11,7 @@ import { useToastStore } from '@/stores/toast'
 import { formatRelative, formatTime } from '@/utils/format'
 import StreamChart from '@/components/StreamChart.vue'
 import type { UiColumn } from '@/ui/types'
+import { sortRows, type SortState } from '@/utils/sortRows'
 import type { TimelineEvent } from '@/types/api'
 
 const toast = useToastStore()
@@ -91,6 +92,13 @@ const detailOpen = computed({
     if (!open) detail.value = null
   },
 })
+
+const sort = ref<SortState | null>(null)
+const sorted = computed(() => sortRows(events.value, sort.value, {
+  time: (e) => e.time ?? e.received ?? 0,
+  type: (e) => e.post_type,
+  source: (e) => [e.group_id, e.user_id, e.self_id].filter(Boolean).join(' '),
+}))
 
 const bucketSeries = computed(() => metrics.buckets.map((b) => b.open))
 const recentOpen = computed(() => bucketSeries.value[bucketSeries.value.length - 1] ?? 0)
@@ -177,7 +185,10 @@ function summary(e: TimelineEvent): string {
 
       <UiTable
         v-else
-        :data="events"
+        :data="sorted"
+        :sort="sort"
+        :sort-keys="{ received: 'time', message: '' }"
+        @update:sort="sort = $event"
         :columns="cols"
         max-height="clamp(240px, calc(100vh - 520px), 1200px)"
       >

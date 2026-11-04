@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import type { PermissionsData } from '@/types/api'
 import type { UiColumn } from '@/ui/types'
+import { sortRows, type SortState } from '@/utils/sortRows'
 
 const auth = useAuthStore()
 const toast = useToastStore()
@@ -52,10 +53,22 @@ const filtered = computed(() => {
       || (row.role || '').toLowerCase().includes(kw)
   })
 })
-const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value)))
-const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
+const sort = ref<SortState | null>(null)
+const roleLevel = computed(() => {
+  const map: Record<string, number> = {}
+  for (const item of matrix.value) map[item.role] = item.level
+  return map
+})
+const sorted = computed(() => sortRows(filtered.value, sort.value, {
+  qq: (row) => row.qq,
+  role: (row) => row.role,
+  level: (row) => roleLevel.value[row.role] ?? 0,
+  label: (row) => row.label,
+}))
+const pageCount = computed(() => Math.max(1, Math.ceil(sorted.value.length / pageSize.value)))
+const paged = computed(() => sorted.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
 
-watch([keyword, roleFilter, pageSize], () => { page.value = 1 })
+watch([keyword, roleFilter, pageSize, sort], () => { page.value = 1 })
 watch(pageCount, (n) => { if (page.value > n) page.value = n })
 
 const emptyText = computed(() => {
@@ -200,6 +213,7 @@ onMounted(load)
           clearable
         />
         <UiSelect v-model="roleFilter" :options="roleOptions" class="role-filter" />
+        <div class="toolbar-spacer" />
         <span class="count">
           {{ filtered.length }} / {{ rows.length }} 人
         </span>
@@ -209,7 +223,16 @@ onMounted(load)
           class="page-size"
         />
       </div>
-      <UiTable :data="paged" :columns="columns" row-key="qq" :loading="loading" :empty-text="emptyText">
+      <UiTable
+        :data="paged"
+        :columns="columns"
+        row-key="qq"
+        :loading="loading"
+        :empty-text="emptyText"
+        :sort="sort"
+        :sort-keys="{ level: '' }"
+        @update:sort="sort = $event"
+      >
         <template #cell-qq="{ row }">
           <span class="mono">{{ (row as any).qq }}</span>
         </template>
@@ -273,6 +296,7 @@ onMounted(load)
 .chip { padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border-soft); }
 
 .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--border-soft); }
+.toolbar-spacer { flex: 1; }
 .search { flex: 1 1 220px; min-width: 160px; }
 .role-filter { width: 160px; }
 .page-size { width: 120px; }

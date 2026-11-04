@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import type { ScheduleData, ScheduleJob } from '@/types/api'
 import type { UiColumn } from '@/ui/types'
+import { sortRows, type SortState } from '@/utils/sortRows'
 
 const auth = useAuthStore()
 const toast = useToastStore()
@@ -31,6 +32,35 @@ const columns: UiColumn[] = [
 
 const rows = computed(() => data.value?.items ?? [])
 const presets = computed(() => data.value?.presets ?? [])
+
+/* ---------------- 搜索 / 筛选 / 排序 ---------------- */
+const search = ref('')
+const enableFilter = ref('all')
+const sort = ref<SortState | null>(null)
+const enableOptions = [
+  { label: '全部状态', value: 'all' },
+  { label: '已启用', value: 'on' },
+  { label: '已停用', value: 'off' },
+]
+
+const visibleRows = computed(() => {
+  const kw = search.value.trim().toLowerCase()
+  const list = rows.value.filter((job) => {
+    if (enableFilter.value === 'on' && !job.enabled) return false
+    if (enableFilter.value === 'off' && job.enabled) return false
+    if (kw !== '') {
+      const hay = [job.id, job.name, job.cron, job.last_status].join(' ').toLowerCase()
+      if (!hay.includes(kw)) return false
+    }
+    return true
+  })
+  return sortRows(list, sort.value, {
+    name: (job) => job.name,
+    enabled: (job) => job.enabled,
+    next_run: (job) => job.next_run_at ?? 0,
+    last_run: (job) => job.last_run_at ?? 0,
+  })
+})
 
 async function load(): Promise<void> {
   loading.value = true
@@ -212,7 +242,22 @@ onMounted(load)
     </div>
 
     <UiCard :padding="'none'">
-      <UiTable :data="rows" :columns="columns" row-key="id" :loading="loading" empty-text="还没有定时任务">
+      <div class="filter-bar">
+        <UiInput v-model="search" class="fb-search" placeholder="搜索任务名 / ID / cron…" clearable />
+        <UiSelect v-model="enableFilter" :options="enableOptions" class="fb-sel" />
+        <span class="fb-count dim">{{ visibleRows.length }} / {{ rows.length }}</span>
+        <div class="fb-spacer" />
+      </div>
+      <UiTable
+        :data="visibleRows"
+        :columns="columns"
+        row-key="id"
+        :loading="loading"
+        empty-text="没有匹配的定时任务"
+        :sort="sort"
+        :sort-keys="{ next_run_text: 'next_run', last_run_text: 'last_run', cron: '', action: '' }"
+        @update:sort="sort = $event"
+      >
         <template #cell-name="{ row }">
           <div class="job-name">{{ (row as ScheduleJob).name }}</div>
           <div class="job-id">{{ (row as ScheduleJob).id }}</div>
@@ -348,6 +393,22 @@ onMounted(load)
 .job-id { font-size: 10.5px; color: var(--text-faint); font-family: var(--font-mono); }
 .act { font-size: 12px; color: var(--text-dim); }
 .mono { font-family: var(--font-mono); font-size: 11.5px; }
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.fb-search { width: 240px; max-width: 100%; }
+.fb-sel { width: 128px; }
+.fb-spacer { flex: 1; }
+.fb-count { font-size: 11.5px; }
+@media (max-width: 640px) {
+  .fb-search { width: 100%; }
+  .fb-sel { width: calc(50% - 4px); }
+}
 .overdue { color: var(--danger, #d33); }
 .tiny { font-size: 10.5px; }
 .failed { color: var(--danger, #d33); }

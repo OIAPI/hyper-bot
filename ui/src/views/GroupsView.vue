@@ -15,6 +15,7 @@ import { useToastStore } from '@/stores/toast'
 import { formatTime } from '@/utils/format'
 import type { Group, Plugin } from '@/types/api'
 import type { UiColumn } from '@/ui/types'
+import { sortRows, type SortState } from '@/utils/sortRows'
 
 const toast = useToastStore()
 
@@ -28,6 +29,27 @@ const items = ref<Group[]>([])
 const plugins = ref<Plugin[]>([])
 const query = ref('')
 const busy = ref(false)
+
+/* ---------------- 筛选 / 排序 ---------------- */
+const statusFilter = ref('all')
+const sort = ref<SortState | null>(null)
+const statusOptions = [
+  { label: '全部状态', value: 'all' },
+  { label: '已启用', value: 'on' },
+  { label: '已停用', value: 'off' },
+]
+const visibleItems = computed(() => {
+  const list = statusFilter.value === 'all'
+    ? items.value
+    : items.value.filter((g) => (statusFilter.value === 'on' ? g.status : !g.status))
+  return sortRows(list, sort.value, {
+    group_id: (g) => g.group_id,
+    name: (g) => g.name,
+    plugins: (g) => g.plugins_on,
+    status: (g) => g.status,
+    updated_at: (g) => g.updated_at,
+  })
+})
 
 const manage = ref<Group | null>(null)
 const pluginBusy = ref<string | null>(null)
@@ -212,7 +234,20 @@ async function confirmRemove(): Promise<void> {
       <UiSkeleton v-if="loading" :rows="5" animated />
 
       <template v-else>
-        <UiTable v-if="items.length" :data="items" :columns="columns" row-key="group_id">
+        <div class="filter-bar">
+          <UiTag size="small" type="plain">{{ visibleItems.length }} / {{ items.length }} 个群</UiTag>
+          <UiSelect v-model="statusFilter" :options="statusOptions" class="fb-sel" />
+          <div class="fb-spacer" />
+        </div>
+
+        <UiTable
+          v-if="visibleItems.length"
+          :data="visibleItems"
+          :columns="columns"
+          row-key="group_id"
+          :sort="sort"
+          @update:sort="sort = $event"
+        >
           <template #cell-group_id="{ row }">
             <span class="mono">{{ asGroup(row).group_id }}</span>
           </template>
@@ -244,7 +279,9 @@ async function confirmRemove(): Promise<void> {
 
         <UiEmpty
           v-else
-          description="还没有纳管任何群。机器人收到群消息后会自动出现在这里，也可以手动添加。"
+          :description="items.length
+            ? '没有符合筛选条件的群。'
+            : '还没有纳管任何群。机器人收到群消息后会自动出现在这里，也可以手动添加。'"
         />
       </template>
     </UiCard>
@@ -334,6 +371,16 @@ p.sub { margin: 3px 0 0; font-size: 12.5px; color: var(--text-faint); }
 }
 .plugin-off { color: var(--warn, #b58900); font-size: 11.5px; }
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 0 10px;
+}
+.fb-sel { width: 128px; }
+.fb-spacer { flex: 1; }
+@media (max-width: 640px) { .fb-sel { width: calc(50% - 4px); } }
 .tiny { font-size: 11.5px; }
 .dim { color: var(--text-faint); }
 

@@ -430,3 +430,20 @@
   background: var(--danger-soft);
   color: var(--danger);
 }
+
+/* 表头点击排序：箭头紧跟在文字后面，不用绝对定位，不会被右侧内容挡住 */
+.ui-th-sortable { user-select: none; }
+.ui-th-sortable:hover { color: var(--accent); }
+.ui-th-sortable::after {
+  content: "↕";
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 10px;
+  line-height: 1;
+  vertical-align: 1px;
+  opacity: 0.5;
+  pointer-events: none;
+}
+.ui-th-sortable[data-sort="asc"]::after { content: "↑"; opacity: 1; color: var(--accent); font-weight: 700; }
+.ui-th-sortable[data-sort="desc"]::after { content: "↓"; opacity: 1; color: var(--accent); font-weight: 700; }
+.ui-th-sortable:hover::after { opacity: 0.85; }

@@ -1,6 +1,7 @@
-import { defineComponent, h, ref, type Component } from 'vue'
+import { defineComponent, h, nextTick, onMounted, ref, watch, type Component, type PropType } from 'vue'
 import { useUiPart } from './provider'
-import type { UiPart } from './types'
+import type { SortState } from '@/utils/sortRows'
+import type { UiColumn, UiPart } from './types'
 
 /**
  * 一层薄壳：把视图里的 UiXxx 解析成当前框架的同名组件。
@@ -71,7 +72,109 @@ export const UiSegmented = part('Segmented')
 export const UiSlider = part('Slider')
 export const UiForm = part('Form')
 export const UiFormItem = part('FormItem')
-export const UiTable = part('Table')
+/**
+ * 表格壳：透传组件库 Table，同时接管「点表头排序」。
+ *
+ * 四个组件库的排序 API 各不相同（Element 的 sort-change、Antd 的 sorter、
+ * Naive 的 update:sorter、Arco 的 sorter-change），与其写四份，不如统一在
+ * DOM 层处理：点击 th 按列序号找到 column.key，三态循环（升 → 降 → 取消），
+ * 用 data-sort 属性画箭头。视图只写 :sort / @update:sort。
+ */
+const Table = defineComponent({
+  name: 'UiTable',
+  inheritAttrs: false,
+  props: {
+    columns: { type: Array as PropType<UiColumn[]>, default: () => [] },
+    sort: { type: Object as PropType<SortState | null>, default: null },
+    /** 列 key → 排序 key（列 key 与排序字段不一致时用） */
+    sortKeys: { type: Object as PropType<Record<string, string>>, default: () => ({}) },
+  },
+  emits: ['update:sort'],
+  setup(props, { attrs, slots, emit }) {
+    const current = useUiPart('Table')
+    const root = ref<HTMLElement | null>(null)
+    /** 操作列不参与排序 */
+    const SKIP = new Set(['ops', 'actions'])
+
+    function sortKeyOf(col: UiColumn | undefined): string {
+      if (!col || col.key === '' || SKIP.has(col.key)) return ''
+      return props.sortKeys[col.key] ?? col.key
+    }
+
+    function headerIndexOf(th: HTMLElement): string | null {
+      const row = th.parentElement
+      if (!row) return null
+      const index = Array.from(row.children).indexOf(th)
+      const key = sortKeyOf(props.columns[index])
+      return key === '' ? null : key
+    }
+
+    function onRootClick(event: MouseEvent): void {
+      const target = event.target as HTMLElement | null
+      const th = target?.closest<HTMLElement>('th, [role="columnheader"]')
+      if (!th) return
+      const key = headerIndexOf(th)
+      if (key === null) return
+      const cur = props.sort
+      if (!cur || cur.key !== key) emit('update:sort', { key, dir: 'asc' })
+      else if (cur.dir === 'asc') emit('update:sort', { key, dir: 'desc' })
+      else emit('update:sort', null)
+    }
+
+    function paint(): void {
+      const host = root.value
+      if (!host) return
+      host.querySelectorAll<HTMLElement>('th, [role="columnheader"]').forEach((th) => {
+        // 标记挂在「表头文字容器」上，箭头才能紧跟文字；挂在 th 上会被排到最右侧
+        const cell = th.querySelector<HTMLElement>(
+          '.cell, .ant-table-column-title, .n-data-table-th__title, .arco-table-th-item-title',
+        ) ?? th
+        th.classList.remove('ui-th-sortable')
+        th.removeAttribute('data-sort')
+        cell.classList.remove('ui-th-sortable')
+        cell.removeAttribute('data-sort')
+        const key = headerIndexOf(th)
+        if (key === null) {
+          th.style.cursor = ''
+          return
+        }
+        th.style.cursor = 'pointer'
+        cell.classList.add('ui-th-sortable')
+        if (props.sort?.key === key) {
+          cell.setAttribute('data-sort', props.sort.dir === 'asc' ? 'asc' : 'desc')
+        }
+      })
+    }
+
+    watch(() => props.sort, () => nextTick(paint))
+    watch(() => props.columns, () => nextTick(paint))
+    onMounted(() => {
+      paint()
+      // 表头是异步渲染的：补几次即可。不用 MutationObserver / onUpdated——
+      // 之前那版在表头里插节点 + observer 会形成「改 DOM → 再标记 → 再改 DOM」的
+      // 死循环，整页直接卡死。
+      window.setTimeout(paint, 80)
+      window.setTimeout(paint, 400)
+      window.setTimeout(paint, 1200)
+    })
+
+    return () => {
+      const comp = current.value
+      if (!comp) return null
+      const { onClick: ownClick, ...rest } = attrs as Record<string, unknown> & { onClick?: (e: MouseEvent) => void }
+      return h('div', {
+        class: 'ui-table',
+        ref: root,
+        onClick: (e: MouseEvent) => {
+          ownClick?.(e)
+          onRootClick(e)
+        },
+      }, [h(comp as Component, { ...rest, columns: props.columns }, slots)])
+    }
+  },
+})
+
+export const UiTable = Table
 export const UiDescriptions = part('Descriptions')
 export const UiDescriptionItem = part('DescriptionItem')
 export const UiDialog = part('Dialog')

@@ -13,6 +13,8 @@ import { subscriptionApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import type { NoticeGroup, SubscriptionState, SubscriptionExplain, GroupOverride } from '@/types/api'
+import SortControl from '@/components/SortControl.vue'
+import { sortRows, type SortState } from '@/utils/sortRows'
 
 const toast = useToastStore()
 const auth = useAuthStore()
@@ -244,6 +246,24 @@ const overrideList = computed(() =>
   })),
 )
 
+/* 按群覆盖：搜索 + 排序（群号 / 静音状态） */
+const overrideSearch = ref('')
+const overrideSort = ref<SortState | null>(null)
+const overrideSortOptions = [
+  { key: 'group', label: '群号' },
+  { key: 'mute', label: '静音状态' },
+]
+const visibleOverrides = computed(() => {
+  const kw = overrideSearch.value.trim().toLowerCase()
+  const list = kw === ''
+    ? overrideList.value
+    : overrideList.value.filter((g) => g.groupId.toLowerCase().includes(kw))
+  return sortRows(list, overrideSort.value, {
+    group: (g) => g.groupId,
+    mute: (g) => g.mute,
+  })
+})
+
 function openGroupTypes(groupId: string, types: string[]): void {
   editingGroup.value = groupId
   editingTypes.value = [...types]
@@ -474,8 +494,19 @@ const CHANNELS = [
           <UiButton size="small" :loading="addingGroup" @click="addGroupOverride">添加群覆盖</UiButton>
         </div>
 
-        <div v-if="overrideList.length" class="override-list">
-          <div v-for="g in overrideList" :key="g.groupId" class="override-row">
+        <div v-if="overrideList.length" class="override-toolbar">
+          <UiInput
+            v-model="overrideSearch"
+            class="override-search"
+            placeholder="搜索群号…"
+            clearable
+          />
+          <span class="override-count"> {{ visibleOverrides.length }} / {{ overrideList.length }} </span>
+          <div class="spacer" />
+          <SortControl v-model="overrideSort" :options="overrideSortOptions" />
+        </div>
+        <div v-if="visibleOverrides.length" class="override-list">
+          <div v-for="g in visibleOverrides" :key="g.groupId" class="override-row">
             <span class="override-id">{{ g.groupId }}</span>
             <span class="override-tag" :class="{ on: g.mute }">{{ g.mute ? '静音' : '不静音' }}</span>
             <span class="override-hint">
@@ -496,7 +527,10 @@ const CHANNELS = [
             </UiButton>
           </div>
         </div>
-        <UiEmpty v-else description="还没有按群覆盖，所有群都跟随全局配置" />
+        <UiEmpty
+          v-else
+          :description="overrideList.length ? '没有匹配的群号' : '还没有按群覆盖，所有群都跟随全局配置'"
+        />
       </UiCard>
 
       <div class="section-title">
@@ -717,6 +751,16 @@ p.sub { margin: 3px 0 0; font-size: 12.5px; color: var(--text-faint); }
 .fine-hint { font-size: 11px; color: var(--text-faint); }
 
 .group-hint { margin-bottom: 10px; display: block; }
+.override-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.override-search { width: 200px; max-width: 100%; }
+.override-count { font-size: 11.5px; color: var(--text-faint); }
+.override-toolbar .spacer { flex: 1; }
 .override-list { display: flex; flex-direction: column; gap: 6px; }
 .override-row {
   display: flex;

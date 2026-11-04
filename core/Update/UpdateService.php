@@ -212,7 +212,9 @@ final class UpdateService
         $cloneUrl = $proxy !== '' && str_starts_with($url, 'http') ? rtrim($proxy, '/') . '/' . $url : $url;
 
         $tmp = self::path('tmp-' . date('YmdHis'));
-        @mkdir($tmp, 0775, true);
+        if (!is_dir($tmp)) {
+            @mkdir($tmp, 0775, true);
+        }
         $cmd = 'clone --depth 1' . ($branch !== '' ? ' --branch ' . escapeshellarg($branch) : '')
             . ' ' . escapeshellarg($cloneUrl) . ' ' . escapeshellarg($tmp . '/src');
         $result = self::run($cmd, 180);
@@ -260,7 +262,9 @@ final class UpdateService
             return ['ok' => false, 'msg' => '没有收到压缩包'];
         }
         $tmp = self::path('tmp-' . date('YmdHis'));
-        @mkdir($tmp, 0775, true);
+        if (!is_dir($tmp)) {
+            @mkdir($tmp, 0775, true);
+        }
 
         if (class_exists(\ZipArchive::class)) {
             $zip = new \ZipArchive();
@@ -444,10 +448,17 @@ final class UpdateService
             // 覆盖前备份旧文件
             if (is_file($target)) {
                 $bakFile = $backup . '/' . $rel;
-                @mkdir(dirname($bakFile), 0775, true);
+                $bakDir = dirname($bakFile);
+                // 目录多半已经建过：不判断就 mkdir 会刷一屏 "mkdir(): File exists"
+                if (!is_dir($bakDir)) {
+                    @mkdir($bakDir, 0775, true);
+                }
                 @copy($target, $bakFile);
             }
-            @mkdir(dirname($target), 0775, true);
+            $targetDir = dirname($target);
+            if (!is_dir($targetDir)) {
+                @mkdir($targetDir, 0775, true);
+            }
             if (!@copy($item->getPathname(), $target)) {
                 $warnings[] = '写入失败：' . $rel;
                 continue;

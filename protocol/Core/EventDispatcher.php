@@ -93,6 +93,14 @@ class EventDispatcher
             Logger::error('[事件分发] 消息落库失败：' . $e->getMessage());
         }
 
+        // 事件流落库（WebUI「事件」页 / 概览「实时事件」）：v2 重构时这一步丢了，
+        // 面板的事件页因此永远是空的。写在这里 = 订阅过滤之前，被丢的事件也查得到。
+        try {
+            \Core\Bot\EventLog::record($event);
+        } catch (\Throwable $e) {
+            Logger::error('[事件分发] 事件落库失败：' . $e->getMessage());
+        }
+
         try {
             $app = App::boot();
             // 插件钩子：分发前可以改事件（加字段、临时改类型、拒收）

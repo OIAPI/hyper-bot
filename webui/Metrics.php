@@ -329,25 +329,10 @@ final class Metrics {
         return $out;
     }
 
-    /** 记录一条事件（供协议层回调） */
+    /** 记录一条事件（写入逻辑统一放在 Core\Bot\EventLog，这里只补群元数据） */
     public function recordEvent(array $event): void {
-        $entry = [
-            'post_type'    => (string)($event['post_type'] ?? ''),
-            'message_type' => (string)($event['message_type'] ?? ''),
-            'notice_type'  => (string)($event['notice_type'] ?? ''),
-            'sub_type'     => (string)($event['sub_type'] ?? ''),
-            'self_id'      => (string)($event['self_id'] ?? ''),
-            'group_id'     => (string)($event['group_id'] ?? ''),
-            'user_id'      => (string)($event['user_id'] ?? ''),
-            'raw_message'  => mb_substr((string)($event['raw_message'] ?? ''), 0, 120),
-            'time'         => (int)($event['time'] ?? time()),
-            'protocol'     => (string)($event['protocol'] ?? 'onebot'),
-            'received'     => time(),
-        ];
-        $score = microtime(true);
-        $this->store->zadd('webui:events', $score, json_encode($entry, JSON_UNESCAPED_UNICODE));
-        $this->store->ztrim('webui:events', 2000);
-        $this->touchGroup($entry['group_id'], $event);
+        \Core\Bot\EventLog::record($event, $this->store);
+        $this->touchGroup((string)($event['group_id'] ?? ''), $event);
     }
 
     /**

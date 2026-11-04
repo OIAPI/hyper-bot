@@ -136,6 +136,9 @@ const Select = defineComponent({
         ...attrs,
         modelValue: props.modelValue,
         placeholder: props.placeholder,
+        // Element Plus 2.7+ 默认把 '' 也算「空值」：value 为 '' 的选项（如「全部级别」）
+        // 会被当成未选择，显示为空白。这里把 '' 排除，让 '' 作为正常值参与回显。
+        emptyValues: [undefined, null],
         'onUpdate:modelValue': (v: unknown) => emit('update:modelValue', v),
         onChange: (v: unknown) => emit('change', v),
       }, {

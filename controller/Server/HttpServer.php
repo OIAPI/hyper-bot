@@ -602,6 +602,9 @@ HELP;
 			);
 		});
 		set_error_handler(function (int $code, string $message, string $file, int $line) {
+			// 被 @ 抑制的错误不要刷日志：PHP 8 里 @ 只是把 error_reporting 置 0，
+			// 自定义 handler 仍会被调用——于是 @mkdir 之类的"已存在"警告会刷满日志。
+			if ((error_reporting() & $code) === 0) return true;
 			if(str_contains($file, 'Composer/Util/Silencer.php') !== false) return true; //插件的auto错误，不理会
 			Logger::error(
 				"PHP错误 | 代码: {$code} | 文件: {$file} | 行号: {$line} | 消息: {$message}"

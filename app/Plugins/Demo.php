@@ -58,7 +58,12 @@ class Demo extends BaseApp
                 if (!str_starts_with($action, 'send_')) {
                     return $params;
                 }
-                $text = (string)($params['message'] ?? '');
+                // message 可能是字符串，也可能是消息段数组（CQ 结构）；直接 (string) 会
+                // 触发 "Array to string conversion"（日志里那条 Demo.php:61 就是它）
+                $message = $params['message'] ?? '';
+                $text = is_array($message)
+                    ? (string)json_encode($message, JSON_UNESCAPED_UNICODE)
+                    : (string)$message;
                 if (str_contains($text, '[demo:block]')) {
                     return null;
                 }

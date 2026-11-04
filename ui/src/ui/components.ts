@@ -31,10 +31,28 @@ function part(name: UiPart): Component {
           },
         ),
       )
+      /**
+       * 选择器的点击不能再往外冒泡：视图里常见 <label class="field"> 包着 UiSelect，
+       * 浏览器的 label 激活行为会把这次点击再转给里面的 input，el-select 于是
+       * 刚展开就被第二次 click 收起。在壳层截断，所有视图一次修好。
+       */
+      const clickGuard =
+        name === 'Select'
+          ? (e: MouseEvent) => {
+              const own = attrs.onClick as ((ev: MouseEvent) => void) | undefined
+              if (typeof own === 'function') own(e)
+              e.stopPropagation()
+            }
+          : undefined
+
       return () => {
         const comp = current.value
         if (!comp) return null
-        return h(comp as Component, { ...attrs, ref: inner }, slots)
+        return h(
+          comp as Component,
+          { ...attrs, ref: inner, ...(clickGuard ? { onClick: clickGuard } : {}) },
+          slots,
+        )
       }
     },
   })

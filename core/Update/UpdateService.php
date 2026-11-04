@@ -157,7 +157,27 @@ final class UpdateService
         if ($reset['code'] !== 0) {
             return ['ok' => false, 'msg' => '对齐失败：' . self::shortError($reset)];
         }
-        self::run('branch -M ' . escapeshellarg($branch !== '' ? $branch : 'main'), 30, $root);
+
+        // 服务器连不上 GitHub 时，「检查更新」的 git fetch 也得走代理：
+        // 把代理记进仓库的 url.<代理前缀>.insteadOf，origin 仍保持官方地址。
+        if ($proxy !== '' && str_starts_with($url, 'http')) {
+            $prefix = (string)preg_replace('#^(https?://[^/]+/).*#', '$1', $url);
+            if ($prefix !== '' && $prefix !== $url) {
+                $mapped = rtrim($proxy, '/') . '/' . $prefix;
+                self::run('config ' . escapeshellarg('url.' . $mapped . '.insteadOf') . ' ' . escapeshellarg($prefix), 30, $root);
+            }
+        }
+
+        $branchName = $branch !== '' ? $branch : 'main';
+        // 显式 URL fetch 不会生成 remote-tracking ref；补上它，@{u} 才有意义
+        $fetched = trim((string)(self::run('rev-parse FETCH_HEAD', 30, $root)['out'] ?? ''));
+        if ($fetched !== '') {
+            self::run('update-ref ' . escapeshellarg('refs/remotes/origin/' . $branchName) . ' ' . escapeshellarg($fetched), 30, $root);
+        }
+        self::run('branch -M ' . escapeshellarg($branchName), 30, $root);
+        // 之前少了这两个配置：check() 里的 HEAD..@{u} 会报 no upstream，面板就永远显示「已是最新」
+        self::run('config ' . escapeshellarg('branch.' . $branchName . '.remote') . ' origin', 30, $root);
+        self::run('config ' . escapeshellarg('branch.' . $branchName . '.merge') . ' ' . escapeshellarg('refs/heads/' . $branchName), 30, $root);
         self::run('config user.name hyper-bot', 30, $root);
         self::run('config user.email hyper-bot@localhost', 30, $root);
         $head = trim(self::run('rev-parse --short HEAD', 30, $root)['out'] ?? '');
@@ -196,7 +216,7 @@ final class UpdateService
         self::rrmdir($tmp);
         if ($applied['ok'] && $attach) {
             // 顺手把这个目录变成仓库，否则「检查更新」永远显示不可用
-            $linked = self::attachRepo($url, $branch, '');
+            $linked = self::attachRepo($url, $branch, $proxy);
             $applied['attached'] = $linked['ok'];
             $applied['msg'] .= $linked['ok']
                 ? '；' . $linked['msg']

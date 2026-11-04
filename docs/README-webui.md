@@ -694,6 +694,19 @@ Swoole 架构是**另一层限制**：Swoole 自己解析 HTTP，PHP 的 `upload
 只写 `.git`，**不覆盖任何工作区文件**（`runtime/`、`vendor/`、`Config.ini` 都不会动）。
 「从 Git 链接更新」成功后会顺手做这件事，所以第一次更新完，「检查更新」就能用了。
 
+关联完成后会设置分支的 upstream（`branch.main.remote/merge`），否则「检查更新」里的
+`HEAD..@{u}` 会报 no upstream，界面永远显示「已是最新」。3.2.0 及更早版本绑定的仓库
+如果遇到这个现象，手动补一次：
+
+```bash
+git fetch --depth 1 origin main
+git branch --set-upstream-to=origin/main main
+```
+
+服务器直连不了 GitHub 时，填过的加速前缀会写进仓库的 `url.<前缀>.insteadOf`
+（origin 仍是官方地址），这样「检查更新」的 `git fetch` 也会自动走代理；
+换代理或改回直连用 `git config --unset url.<前缀>.insteadOf`。
+
 也可直接调接口：`POST /webui/api/update/attach`，body `{"url":"https://…","branch":"main"}`。
 
 **永远不会被覆盖**：`runtime/`、`vendor/`、`.git/`、`node_modules/`、`Config.ini`、`.env`。

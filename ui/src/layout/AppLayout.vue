@@ -7,12 +7,12 @@
  *  - 主题色（--brand-h/s/l 派生 --accent，适配器 applyTheme 再同步给各组件库）
  * 导航与外壳用自有标记 + CSS，不做成组件库控件——它是品牌骨架，切换框架时不应跳动。
  */
-import { ref, computed, nextTick, onMounted, onUnmounted, type Component } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Odometer, Connection, Download, Document, ChatDotRound, Grid, Box,
   Tickets, Setting, Cpu, Tools, User, Fold, Expand, Menu as MenuIcon, ArrowDown,
-  Postcard, Timer, Lock, Refresh,
+  Postcard, Timer, Lock, Refresh, Operation,
 } from '@element-plus/icons-vue'
 import {
   useThemeStore, THEME_PRESETS, FRAMEWORKS, type ThemeMode, type FrameworkId,
@@ -24,9 +24,200 @@ import { overviewApi, authApi, extApi } from '@/api'
 import { formatUptime } from '@/utils/format'
 import { ensurePluginHost, pluginRoutes } from '@/ext/host'
 import AppToast from '@/components/AppToast.vue'
+import { defaultNavPrefs, loadNavPrefs, saveNavPrefs, type NavPrefs } from './navPrefs'
 
 const route = useRoute()
 const router = useRouter()
+
+// 页面级通用布局：按路由记住顶层区块的顺序/隐藏；不需要每个 View 改代码
+const contentRef = ref<HTMLElement | null>(null)
+const pageEdit = ref(false)
+const pageBlocks = ref<Array<{ index: number; label: string }>>([])
+const pageOrder = ref<number[]>([])
+const pageHidden = ref<number[]>([])
+let pageDragFrom = -1
+let pageDragging = false
+
+const PAGE_PREF_PREFIX = 'hyper-page-blocks:'
+
+function loadPagePrefs(path: string): void {
+  try {
+    const raw = localStorage.getItem(PAGE_PREF_PREFIX + path)
+    if (!raw) {
+      pageOrder.value = []
+      pageHidden.value = []
+      return
+    }
+    const parsed = JSON.parse(raw) as { order?: number[]; hidden?: number[] }
+    pageOrder.value = Array.isArray(parsed.order) ? parsed.order.filter((n) => typeof n === 'number') : []
+    pageHidden.value = Array.isArray(parsed.hidden) ? parsed.hidden.filter((n) => typeof n === 'number') : []
+  } catch {
+    pageOrder.value = []
+    pageHidden.value = []
+  }
+}
+
+function savePagePrefs(): void {
+  try {
+    localStorage.setItem(
+      PAGE_PREF_PREFIX + route.path,
+      JSON.stringify({ order: pageOrder.value, hidden: pageHidden.value }),
+    )
+  } catch {
+    // 隐私模式写不进去就退化成默认布局
+  }
+}
+
+function viewRoot(): HTMLElement | null {
+  const host = contentRef.value
+  if (!host) return null
+  for (const child of Array.from(host.children)) {
+    if (child instanceof HTMLElement && !child.classList.contains('route-loading') && !child.classList.contains('ui-progress')) {
+      return child
+    }
+  }
+  return null
+}
+
+function blockLabel(el: HTMLElement, index: number): string {
+  const node = el.querySelector('h1,h2,h3,h4,.card-title,.title,.page-title,strong')
+  const text = (node?.textContent ?? '').replace(/\s+/g, ' ').trim()
+  return (text || '区块 ' + (index + 1)).slice(0, 16)
+}
+
+function collectPageBlocks(): void {
+  const root = viewRoot()
+  if (!root) {
+    pageBlocks.value = []
+    return
+  }
+  const children = Array.from(root.children).filter((el): el is HTMLElement =>
+    el instanceof HTMLElement && !el.matches('header,.page-head,.layout-bar,[data-layout-skip]'),
+  )
+  pageBlocks.value = children.map((el, index) => {
+    el.dataset.autoBlock = String(index)
+    return { index, label: blockLabel(el, index) }
+  })
+  const valid = new Set(pageBlocks.value.map((block) => block.index))
+  pageOrder.value = pageOrder.value.filter((index) => valid.has(index))
+  pageHidden.value = pageHidden.value.filter((index) => valid.has(index))
+  applyPageLayout()
+}
+
+function currentPageOrder(): number[] {
+  const order = pageOrder.value.length ? [...pageOrder.value] : pageBlocks.value.map((block) => block.index)
+  for (const block of pageBlocks.value) {
+    if (!order.includes(block.index)) order.push(block.index)
+  }
+  return order
+}
+
+function applyPageLayout(): void {
+  const root = viewRoot()
+  if (!root) return
+  const order = currentPageOrder()
+  const hidden = new Set(pageHidden.value)
+  for (const block of pageBlocks.value) {
+    const el = root.querySelector<HTMLElement>('[data-auto-block="' + block.index + '"]')
+    if (!el) continue
+    const pos = order.indexOf(block.index)
+    el.style.order = String(pos === -1 ? order.length : pos)
+    el.style.display = hidden.has(block.index) ? 'none' : ''
+  }
+}
+
+const pageRows = computed(() => {
+  const order = currentPageOrder()
+  return [...pageBlocks.value].sort((a, b) => order.indexOf(a.index) - order.indexOf(b.index))
+})
+
+function refreshPageLayout(): void {
+  if (route.path === '/') return
+  loadPagePrefs(route.path)
+  window.setTimeout(() => {
+    collectPageBlocks()
+    applyPageLayout()
+  }, 300)
+}
+
+function togglePageEdit(): void {
+  if (route.path === '/') return
+  pageEdit.value = !pageEdit.value
+  if (pageEdit.value) collectPageBlocks()
+}
+
+function shiftPageBlock(index: number, delta: number): void {
+  const order = currentPageOrder()
+  const from = order.indexOf(index)
+  const to = from + delta
+  if (from === -1 || to < 0 || to >= order.length) return
+  order.splice(from, 1)
+  order.splice(to, 0, index)
+  pageOrder.value = order
+  applyPageLayout()
+  savePagePrefs()
+}
+
+function togglePageHidden(index: number): void {
+  const hidden = new Set(pageHidden.value)
+  if (hidden.has(index)) hidden.delete(index)
+  else hidden.add(index)
+  pageHidden.value = [...hidden]
+  applyPageLayout()
+  savePagePrefs()
+}
+
+function resetPageLayout(): void {
+  pageOrder.value = []
+  pageHidden.value = []
+  collectPageBlocks()
+  savePagePrefs()
+}
+
+function onPagePointerDown(event: PointerEvent): void {
+  if (!pageEdit.value) return
+  const target = event.target as HTMLElement | null
+  if (!target) return
+  if (target.closest('button,a,input,select,textarea,label')) return
+  const block = target.closest<HTMLElement>('[data-auto-block]')
+  if (!block) return
+  event.preventDefault()
+  pageDragFrom = Number(block.dataset.autoBlock)
+  pageDragging = true
+  window.addEventListener('pointermove', onPagePointerMove)
+  window.addEventListener('pointerup', stopPageDrag, { once: true })
+  window.addEventListener('pointercancel', stopPageDrag, { once: true })
+}
+
+function onPagePointerMove(event: PointerEvent): void {
+  if (!pageDragging) return
+  const target = (document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-auto-block]')
+  if (!target) return
+  const to = Number(target.dataset.autoBlock)
+  if (to === pageDragFrom) return
+  const order = currentPageOrder()
+  const from = order.indexOf(pageDragFrom)
+  const dest = order.indexOf(to)
+  if (from === -1 || dest === -1) return
+  order.splice(from, 1)
+  order.splice(dest, 0, pageDragFrom)
+  pageOrder.value = order
+  applyPageLayout()
+  savePagePrefs()
+}
+
+function stopPageDrag(): void {
+  pageDragging = false
+  window.removeEventListener('pointermove', onPagePointerMove)
+}
+
+watch(
+  () => route.path,
+  () => {
+    pageEdit.value = false
+    refreshPageLayout()
+  },
+)
 const theme = useThemeStore()
 const auth = useAuthStore()
 const toast = useToastStore()
@@ -85,35 +276,342 @@ async function loadExtMenus(): Promise<void> {
 
 interface NavEntry { path: string; title: string; name: string; icon?: string }
 
-const navGroups = computed(() => {
+/**
+ * 分组顺序写死：路由是 router.getRoutes() 的注册顺序，插件还会往 Map 里追加组，
+ * 不显式排序的话侧边栏每次启动都可能变样。
+ */
+const GROUP_ORDER = ['总览', '机器人', '自动化', '运行', '插件', '系统']
+/** 组内顺序：常用页面靠前；插件动态页没列进来，按标题排在每组末尾 */
+const ITEM_ORDER = [
+  'overview', 'connections',
+  'accounts', 'groups', 'permissions',
+  'subscription', 'schedule',
+  'events', 'messages', 'logs', 'runtime',
+  'plugins',
+  'config', 'system', 'update', 'account',
+]
+
+/** 用户可自定义的排序/显示偏好（localStorage，见 navPrefs.ts） */
+const navPrefs = ref<NavPrefs>(loadNavPrefs())
+
+/** 原始分组：路由 + 插件页，按默认顺序排好；自定义顺序在 navGroups 里再套一层 */
+const baseGroups = computed<Array<{ name: string; items: NavEntry[] }>>(() => {
   const groups = new Map<string, NavEntry[]>()
+  const add = (group: string, entry: NavEntry): void => {
+    const list = groups.get(group) ?? []
+    if (!list.some((x) => x.path === entry.path)) list.push(entry)
+    groups.set(group, list)
+  }
   for (const r of router.getRoutes()) {
     const meta = r.meta as { title?: string; icon?: string; group?: string }
     if (!meta.title || !meta.group || !r.name) continue
     const path = r.path === '' ? '/' : r.path.startsWith('/') ? r.path : '/' + r.path
-    const list = groups.get(meta.group) ?? []
-    list.push({ path, title: meta.title, name: String(r.name), icon: meta.icon })
-    groups.set(meta.group, list)
+    add(meta.group, { path, title: meta.title, name: String(r.name), icon: meta.icon })
   }
   // 插件页面：router.addRoute 不会让 getRoutes() 的 computed 重新求值，
   // 所以另存一份响应式列表（host.ts 的 pluginRoutes）合并进来。
   for (const pr of pluginRoutes) {
-    const list = groups.get(pr.group) ?? []
-    if (!list.some((x) => x.path === pr.path)) {
-      list.push({ path: pr.path, title: pr.title, name: pr.name, icon: pr.icon })
-    }
-    groups.set(pr.group, list)
+    add(pr.group, { path: pr.path, title: pr.title, name: pr.name, icon: pr.icon })
   }
-  if (extMenus.value.length) {
-    const merged = groups.get('插件') ?? []
-    for (const m of extMenus.value) {
-      if (merged.some((x) => x.path === m.path)) continue
-      merged.push({ path: m.path, title: m.title, name: 'ext:' + m.plugin + ':' + m.path, icon: m.icon })
-    }
-    groups.set('插件', merged)
+  for (const m of extMenus.value) {
+    add('插件', { path: m.path, title: m.title, name: 'ext:' + m.plugin + ':' + m.path, icon: m.icon })
   }
-  return [...groups.entries()].map(([name, items]) => ({ name, items }))
+
+  const rank = (item: NavEntry): number => {
+    const i = ITEM_ORDER.indexOf(item.name)
+    return i === -1 ? ITEM_ORDER.length : i
+  }
+  const groupRank = (name: string): number => {
+    const i = GROUP_ORDER.indexOf(name)
+    return i === -1 ? GROUP_ORDER.length : i
+  }
+  return [...groups.entries()]
+    .filter(([, items]) => items.length > 0)
+    .map(([name, items]) => ({
+      name,
+      items: [...items].sort((a, b) => rank(a) - rank(b) || a.title.localeCompare(b.title, 'zh-CN')),
+    }))
+    .sort((a, b) => groupRank(a.name) - groupRank(b.name) || a.name.localeCompare(b.name, 'zh-CN'))
 })
+
+/** 侧边栏实际展示：按 itemGroup 归属建组、过滤隐藏项、套用组序与组内顺序 */
+const navGroups = computed(() => {
+  const prefs = navPrefs.value
+  // 编辑态把隐藏项也列出来（半透明），否则隐藏后没法在侧栏里恢复
+  const hidden = new Set(editNav.value ? [] : prefs.hidden)
+  const byLength = prefs.mode === 'len'
+  const custom = prefs.mode === 'custom'
+
+  const groupIndex = (name: string): number => {
+    const i = prefs.groupOrder.indexOf(name)
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i
+  }
+  const itemIndex = (group: string, path: string): number => {
+    const i = (prefs.itemOrder[group] ?? []).indexOf(path)
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i
+  }
+
+  const map = new Map<string, NavEntry[]>()
+  const ensure = (name: string): NavEntry[] => {
+    let list = map.get(name)
+    if (!list) { list = []; map.set(name, list) }
+    return list
+  }
+  for (const group of baseGroups.value) {
+    for (const item of group.items) {
+      if (hidden.has(item.path)) continue
+      ensure(prefs.itemGroup[item.path] ?? group.name).push(item)
+    }
+  }
+  // 自定义组即使为空也要显示（否则没法往里面拖东西）
+  for (const name of prefs.customGroups) ensure(name)
+
+  const groups = [...map.entries()]
+    .map(([name, items]) => {
+      items.sort((a, b) => {
+        if (byLength) return a.title.length - b.title.length || a.title.localeCompare(b.title, 'zh-CN')
+        if (custom) {
+          return (
+            itemIndex(name, a.path) - itemIndex(name, b.path) ||
+            a.title.localeCompare(b.title, 'zh-CN')
+          )
+        }
+        return 0
+      })
+      return { name, items }
+    })
+    .filter((group) => group.items.length > 0 || prefs.customGroups.includes(group.name))
+
+  if (!custom) return groups
+  return [...groups].sort(
+    (a, b) => groupIndex(a.name) - groupIndex(b.name) || a.name.localeCompare(b.name, 'zh-CN'),
+  )
+})
+
+/** 侧栏内联编辑：编辑模式下可拖动排序/隐藏；触屏用 pointer events（HTML5 DnD 在手机不触发） */
+const editNav = ref(false)
+const dragging = ref<{ type: 'item' | 'group'; group?: string; path?: string; name?: string } | null>(null)
+
+function persistNavPrefs(): void {
+  saveNavPrefs(navPrefs.value)
+}
+
+/** 当前实际展示的顺序（含跨组覆盖、自定义组），拖动/改名都以它为准 */
+function snapshotDisplay(): { groupOrder: string[]; itemOrder: Record<string, string[]> } {
+  const groupOrder: string[] = []
+  const itemOrder: Record<string, string[]> = {}
+  for (const group of navGroups.value) {
+    groupOrder.push(group.name)
+    itemOrder[group.name] = group.items.map((item) => item.path)
+  }
+  return { groupOrder, itemOrder }
+}
+
+/** 第一次拖动/改分组前，把当前看到的顺序固化成 custom 偏好 */
+function ensureCustomOrder(): void {
+  if (navPrefs.value.mode === 'custom') return
+  const { groupOrder, itemOrder } = snapshotDisplay()
+  navPrefs.value = { ...navPrefs.value, mode: 'custom', groupOrder, itemOrder }
+  persistNavPrefs()
+}
+
+function startGroupDrag(event: PointerEvent, name: string): void {
+  startDrag(event, { type: 'group', name })
+}
+
+function startItemDrag(event: PointerEvent, group: string, path: string): void {
+  startDrag(event, { type: 'item', group, path })
+}
+
+function startDrag(event: PointerEvent, payload: NonNullable<typeof dragging.value>): void {
+  if (!editNav.value) return
+  event.preventDefault()
+  ensureCustomOrder()
+  dragging.value = payload
+  window.addEventListener('pointermove', onDragMove)
+  window.addEventListener('pointerup', stopDrag, { once: true })
+  window.addEventListener('pointercancel', stopDrag, { once: true })
+}
+
+function onDragMove(event: PointerEvent): void {
+  const drag = dragging.value
+  if (!drag) return
+  const el = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
+  if (!el) return
+
+  if (drag.type === 'item') {
+    const path = drag.path as string
+    const from = drag.group as string
+    const target = el.closest<HTMLElement>('[data-nav-path]')
+    if (target) {
+      const to = target.dataset.navGroup
+      const before = target.dataset.navPath
+      if (!to || !before || before === path) return
+      moveItem(path, from, to, before)
+      drag.group = to
+      return
+    }
+    // 拖到组标题上：追加到该组末尾
+    const title = el.closest<HTMLElement>('[data-nav-group-title]')
+    const to = title?.dataset.navGroupTitle
+    if (!to || to === from) return
+    moveItem(path, from, to)
+    drag.group = to
+    return
+  }
+
+  const target = el.closest<HTMLElement>('[data-nav-group-title]')
+  const name = target?.dataset.navGroupTitle
+  if (!name || name === drag.name) return
+  const order = [...navPrefs.value.groupOrder]
+  const from = order.indexOf(drag.name as string)
+  if (from === -1) return
+  order.splice(from, 1)
+  const to = order.indexOf(name)
+  order.splice(to === -1 ? order.length : to, 0, drag.name as string)
+  navPrefs.value = { ...navPrefs.value, groupOrder: order }
+  persistNavPrefs()
+}
+
+function stopDrag(): void {
+  dragging.value = null
+  window.removeEventListener('pointermove', onDragMove)
+}
+
+/** 手机上没有拖拽柄，改用上下箭头（在组内挪一项） */
+function shiftItem(groupName: string, path: string, delta: number): void {
+  ensureCustomOrder()
+  const { groupOrder, itemOrder } = snapshotDisplay()
+  const list = itemOrder[groupName] ?? []
+  const index = list.indexOf(path)
+  const target = index + delta
+  if (index === -1 || target < 0 || target >= list.length) return
+  list.splice(index, 1)
+  list.splice(target, 0, path)
+  navPrefs.value = { ...navPrefs.value, mode: 'custom', groupOrder, itemOrder }
+  persistNavPrefs()
+}
+
+/** 手机端调整分组顺序 */
+function shiftGroup(name: string, delta: number): void {
+  ensureCustomOrder()
+  const { groupOrder, itemOrder } = snapshotDisplay()
+  const index = groupOrder.indexOf(name)
+  const target = index + delta
+  if (index === -1 || target < 0 || target >= groupOrder.length) return
+  groupOrder.splice(index, 1)
+  groupOrder.splice(target, 0, name)
+  navPrefs.value = { ...navPrefs.value, mode: 'custom', groupOrder, itemOrder }
+  persistNavPrefs()
+}
+
+/** 把一项移到目标组（同组内也走这里，beforePath 为空则追加到末尾） */
+function moveItem(path: string, fromGroup: string, toGroup: string, beforePath?: string): void {
+  const { groupOrder, itemOrder } = snapshotDisplay()
+  const src = itemOrder[fromGroup] ?? []
+  const index = src.indexOf(path)
+  if (index !== -1) src.splice(index, 1)
+  const dest = itemOrder[toGroup] ?? (itemOrder[toGroup] = [])
+  const at = beforePath ? dest.indexOf(beforePath) : -1
+  dest.splice(at === -1 ? dest.length : at, 0, path)
+  if (!groupOrder.includes(toGroup)) groupOrder.push(toGroup)
+  navPrefs.value = {
+    ...navPrefs.value,
+    mode: 'custom',
+    groupOrder,
+    itemOrder,
+    itemGroup: { ...navPrefs.value.itemGroup, [path]: toGroup },
+  }
+  persistNavPrefs()
+}
+
+function allGroupNames(): string[] {
+  return [...baseGroups.value.map((group) => group.name), ...navPrefs.value.customGroups]
+}
+
+function createGroup(): void {
+  const name = (window.prompt('新分组名称') ?? '').trim()
+  if (name === '') return
+  if (allGroupNames().includes(name)) {
+    window.alert('已经有同名分组了')
+    return
+  }
+  ensureCustomOrder()
+  const { groupOrder, itemOrder } = snapshotDisplay()
+  groupOrder.push(name)
+  itemOrder[name] = []
+  navPrefs.value = {
+    ...navPrefs.value,
+    mode: 'custom',
+    groupOrder,
+    itemOrder,
+    customGroups: [...navPrefs.value.customGroups, name],
+  }
+  persistNavPrefs()
+}
+
+function renameGroup(name: string): void {
+  const next = (window.prompt('分组名称', name) ?? '').trim()
+  if (next === '' || next === name) return
+  if (allGroupNames().some((item) => item === next)) {
+    window.alert('已经有同名分组了')
+    return
+  }
+  ensureCustomOrder()
+  const { groupOrder, itemOrder } = snapshotDisplay()
+  const index = groupOrder.indexOf(name)
+  if (index !== -1) groupOrder[index] = next
+  itemOrder[next] = itemOrder[name] ?? []
+  delete itemOrder[name]
+  const itemGroup = { ...navPrefs.value.itemGroup }
+  for (const [path, group] of Object.entries(itemGroup)) {
+    if (group === name) itemGroup[path] = next
+  }
+  navPrefs.value = {
+    ...navPrefs.value,
+    mode: 'custom',
+    groupOrder,
+    itemOrder,
+    itemGroup,
+    customGroups: navPrefs.value.customGroups.map((item) => (item === name ? next : item)),
+  }
+  persistNavPrefs()
+}
+
+function removeGroup(name: string): void {
+  if (!window.confirm('删除分组「' + name + '」？里面的项会回到默认分组。')) return
+  ensureCustomOrder()
+  const { groupOrder, itemOrder } = snapshotDisplay()
+  const index = groupOrder.indexOf(name)
+  if (index !== -1) groupOrder.splice(index, 1)
+  delete itemOrder[name]
+  const itemGroup = { ...navPrefs.value.itemGroup }
+  for (const [path, group] of Object.entries(itemGroup)) {
+    if (group === name) delete itemGroup[path]
+  }
+  navPrefs.value = {
+    ...navPrefs.value,
+    mode: 'custom',
+    groupOrder,
+    itemOrder,
+    itemGroup,
+    customGroups: navPrefs.value.customGroups.filter((item) => item !== name),
+  }
+  persistNavPrefs()
+}
+
+function toggleHidden(path: string): void {
+  const hidden = new Set(navPrefs.value.hidden)
+  if (hidden.has(path)) hidden.delete(path)
+  else hidden.add(path)
+  navPrefs.value = { ...navPrefs.value, hidden: [...hidden] }
+  persistNavPrefs()
+}
+
+function resetNavLayout(): void {
+  navPrefs.value = defaultNavPrefs()
+  persistNavPrefs()
+}
 
 const currentTitle = computed(() => (route.meta.title as string) ?? '')
 const currentGroup = computed(() => (route.meta.group as string) ?? '')
@@ -166,6 +664,7 @@ onMounted(async () => {
   // 插件自带脚本：注册注入块与页面（失败不影响面板本身）
   void ensurePluginHost()
   void refreshStatus()
+  refreshPageLayout()
   timer = window.setInterval(refreshStatus, 30_000)
 })
 
@@ -227,20 +726,74 @@ async function doLogout(): Promise<void> {
       </div>
 
       <nav class="nav-scroll">
+        <div v-if="!menuCollapsed" class="nav-edit-bar">
+          <button class="nav-edit-btn" type="button" @click="editNav = !editNav">
+            {{ editNav ? "完成" : "编辑侧栏" }}
+          </button>
+          <button v-if="editNav" class="nav-edit-btn" type="button" @click="createGroup">＋ 分组</button>
+          <button v-if="editNav" class="nav-edit-btn" type="button" @click="resetNavLayout">恢复默认</button>
+        </div>
+
         <div v-for="g in navGroups" :key="g.name" class="nav-group">
-          <div v-if="!menuCollapsed" class="nav-group-title">{{ g.name }}</div>
-          <RouterLink
-            v-for="item in g.items"
-            :key="item.name"
-            :to="item.path"
-            class="nav-item"
-            :class="{ active: activePath === item.path }"
-            :title="menuCollapsed ? item.title : undefined"
-            @click="mobileNav = false"
+          <div
+            v-if="!menuCollapsed"
+            class="nav-group-title"
+            :class="{ editing: editNav }"
+            :data-nav-group-title="editNav ? g.name : undefined"
+            @pointerdown="editNav ? startGroupDrag($event, g.name) : undefined"
           >
-            <span class="nav-ico"><component :is="NAV_ICONS[item.icon ?? item.name] ?? Grid" /></span>
-            <span v-if="!menuCollapsed" class="nav-label">{{ item.title }}</span>
-          </RouterLink>
+            <template v-if="editNav">
+              <template v-if="!narrow">
+                <span class="drag-dots">⋮⋮</span>
+              </template>
+              <template v-else>
+                <button class="nav-mini" type="button" title="上移分组" @click.stop="shiftGroup(g.name, -1)">↑</button>
+                <button class="nav-mini" type="button" title="下移分组" @click.stop="shiftGroup(g.name, 1)">↓</button>
+              </template>
+            </template>
+            <span class="nav-group-name">{{ g.name }}</span>
+            <template v-if="editNav && navPrefs.customGroups.includes(g.name)">
+              <button class="nav-mini" type="button" @pointerdown.stop @click.stop="renameGroup(g.name)">改名</button>
+              <button class="nav-mini" type="button" @pointerdown.stop @click.stop="removeGroup(g.name)">删</button>
+            </template>
+          </div>
+
+          <template v-for="item in g.items" :key="item.path">
+            <RouterLink
+              v-if="!editNav"
+              :to="item.path"
+              class="nav-item"
+              :class="{ active: activePath === item.path }"
+              :title="menuCollapsed ? item.title : undefined"
+              @click="mobileNav = false"
+            >
+              <span class="nav-ico"><component :is="NAV_ICONS[item.icon ?? item.name] ?? Grid" /></span>
+              <span v-if="!menuCollapsed" class="nav-label">{{ item.title }}</span>
+            </RouterLink>
+            <div
+              v-else
+              class="nav-item edit-item"
+              :class="{ off: navPrefs.hidden.includes(item.path) }"
+              :data-nav-group="g.name"
+              :data-nav-path="item.path"
+            >
+              <template v-if="narrow">
+                <button class="nav-mini" type="button" title="上移" @click.stop="shiftItem(g.name, item.path, -1)">↑</button>
+                <button class="nav-mini" type="button" title="下移" @click.stop="shiftItem(g.name, item.path, 1)">↓</button>
+              </template>
+              <span
+                v-else
+                class="drag-dots"
+                title="拖动排序"
+                @pointerdown="startItemDrag($event, g.name, item.path)"
+              >⋮⋮</span>
+              <span class="nav-ico"><component :is="NAV_ICONS[item.icon ?? item.name] ?? Grid" /></span>
+              <span class="nav-label">{{ item.title }}</span>
+              <button class="nav-eye" type="button" title="隐藏/显示" @click="toggleHidden(item.path)">
+                {{ navPrefs.hidden.includes(item.path) ? "显示" : "隐藏" }}
+              </button>
+            </div>
+          </template>
         </div>
       </nav>
 
@@ -269,6 +822,17 @@ async function doLogout(): Promise<void> {
           <span class="dot" :class="degraded ? 'warn' : 'ok'" />
           运行 {{ uptime }}
         </UiTag>
+
+        <button
+          v-if="route.path !== '/'"
+          class="icon-btn"
+          type="button"
+          :title="pageEdit ? '完成页面布局' : '页面布局'"
+          aria-label="页面布局"
+          @click="togglePageEdit"
+        >
+          <Operation />
+        </button>
 
         <UiPopover v-model="themePanel" placement="bottom-end" :width="panelWidth" trigger="click">
           <button class="icon-btn" type="button" title="外观与主题">
@@ -387,7 +951,7 @@ async function doLogout(): Promise<void> {
         <button type="button" class="ui-banner-btn" @click="retryUi">重试</button>
       </div>
 
-      <div class="content">
+      <div ref="contentRef" class="content" @pointerdown="onPagePointerDown">
         <div v-if="!uiReady" class="route-loading">
           <span class="route-spinner" />
           <span>正在加载界面组件…</span>
@@ -399,6 +963,25 @@ async function doLogout(): Promise<void> {
         </RouterView>
       </div>
     </main>
+
+    <div v-if="pageEdit" class="page-layout-panel">
+      <div class="plp-head">
+        <span class="plp-title">页面布局</span>
+        <span class="plp-hint">拖动区块，或用 ↑↓</span>
+        <button class="plp-btn" type="button" @click="resetPageLayout">恢复默认</button>
+        <button class="plp-btn primary" type="button" @click="pageEdit = false">完成</button>
+      </div>
+      <div class="plp-list">
+        <div v-for="block in pageRows" :key="block.index" class="plp-row">
+          <button class="plp-move" type="button" @click="shiftPageBlock(block.index, -1)">↑</button>
+          <button class="plp-move" type="button" @click="shiftPageBlock(block.index, 1)">↓</button>
+          <span class="plp-label">{{ block.label }}</span>
+          <button class="plp-btn" type="button" @click="togglePageHidden(block.index)">
+            {{ pageHidden.includes(block.index) ? "显示" : "隐藏" }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <AppToast />
 
@@ -460,8 +1043,13 @@ async function doLogout(): Promise<void> {
 }
 .shell.collapsed .nav-scroll { padding: 10px 6px; align-items: center; }
 .nav-group { display: flex; flex-direction: column; gap: 2px; width: 100%; }
-.nav-group + .nav-group { margin-top: 10px; }
+.nav-group + .nav-group { margin-top: 12px; }
+.shell.collapsed .nav-group + .nav-group { margin-top: 8px; }
 .nav-group-title {
+  /* 标题右侧拉到栏边：每组变成一条等宽的「带子」，比单纯加粗更像分区 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 4px 10px 5px;
   font-size: 10.5px;
   font-weight: 600;
@@ -469,6 +1057,63 @@ async function doLogout(): Promise<void> {
   text-transform: uppercase;
   color: var(--text-faint);
 }
+.nav-group-title::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border-soft);
+}
+.nav-group-title.editing { cursor: grab; }
+.nav-group-name { flex: none; }
+
+.nav-edit-bar { display: flex; gap: 6px; padding: 0 6px 8px; }
+.nav-edit-btn {
+  flex: 1;
+  height: 26px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.nav-edit-btn:hover { color: var(--text); border-color: var(--accent); }
+
+.drag-dots {
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: -3px;
+  padding: 0 2px 0 0;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.edit-item { cursor: default; }
+.edit-item:hover { background: var(--bg-rail-hover); }
+.nav-eye {
+  margin-left: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  height: 20px;
+  padding: 0 5px;
+  cursor: pointer;
+}
+.nav-eye:hover { color: var(--text); border-color: var(--border); }
+.nav-mini {
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 10px;
+  height: 18px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.nav-mini:hover { color: var(--text); border-color: var(--border); }
+.edit-item.off { opacity: 0.45; }
 .nav-item {
   display: flex;
   align-items: center;
@@ -512,6 +1157,53 @@ async function doLogout(): Promise<void> {
   white-space: nowrap;
 }
 .rail-foot:hover { background: var(--bg-rail-hover); color: var(--text); }
+
+/* 页面布局面板：固定在底部，任何页面都能用 */
+.page-layout-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 24px));
+  max-height: 46vh;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.16);
+  z-index: 60;
+}
+.plp-head { display: flex; align-items: center; gap: 8px; }
+.plp-title { font-size: 12.5px; font-weight: 600; }
+.plp-hint { flex: 1; font-size: 11px; color: var(--text-faint); }
+.plp-btn {
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.plp-btn:hover { color: var(--text); border-color: var(--border); }
+.plp-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.plp-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.plp-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; }
+.plp-row:hover { background: var(--bg-rail-hover); }
+.plp-move {
+  width: 26px;
+  height: 24px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.plp-label { flex: 1; font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shell.collapsed .rail-foot { justify-content: center; padding: 0; }
 
 /* ---------- 主区 ---------- */
@@ -559,6 +1251,7 @@ async function doLogout(): Promise<void> {
 .icon-btn {
   width: 30px;
   height: 30px;
+  flex: none;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-card);

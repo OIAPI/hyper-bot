@@ -376,14 +376,14 @@ onUnmounted(stopPoll)
             <span class="field-label">分支</span>
             <UiInput v-model="branch" placeholder="留空用默认分支" />
           </label>
-          <label class="field">
+          <div class="field">
             <span class="field-label">加速前缀</span>
             <UiSelect
               :model-value="proxy"
               :options="proxySelectOptions"
               @update:model-value="(v: string | number) => (proxy = String(v))"
             />
-          </label>
+          </div>
         </div>
         <div class="field-hint">
           用的是 <code>git clone --depth 1</code> 到临时目录再覆盖，不碰现有 .git 历史，也不产生合并冲突。
@@ -396,14 +396,14 @@ onUnmounted(stopPoll)
             <span class="field-label">压缩包直链（zip）</span>
             <UiInput v-model="zipUrl" placeholder="https://github.com/OIAPI/hyper-bot/archive/HEAD.zip" />
           </label>
-          <label class="field">
+          <div class="field">
             <span class="field-label">加速前缀</span>
             <UiSelect
               :model-value="zipUrlProxy"
               :options="proxySelectOptions"
               @update:model-value="(v: string | number) => (zipUrlProxy = String(v))"
             />
-          </label>
+          </div>
         </div>
         <div class="field-hint">
           服务器直接下载，浏览器只发一个很小的请求。仓库主页地址会自动换成

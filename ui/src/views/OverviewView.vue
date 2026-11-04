@@ -6,17 +6,108 @@
  * 视觉：贴近「轻」——少阴影、多留白、数字用等宽字形、只用一条强调色。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ChatDotRound, Connection, Cpu, DataLine, Refresh, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import { overviewApi } from '@/api'
 import { useMetricsStore } from '@/stores/metrics'
 import { useToastStore } from '@/stores/toast'
 import { formatBytes, formatRelative, formatUptime } from '@/utils/format'
 import StreamChart from '@/components/StreamChart.vue'
+import LayoutBlock from '@/components/LayoutBlock.vue'
+import { loadPageLayout, savePageLayout, type PageLayoutPrefs } from '@/layout/pageLayout'
 import ExtWidgets from '@/components/ExtWidgets.vue'
 import type { Overview, ProtocolStatus, TimelineEvent } from '@/types/api'
 
 const toast = useToastStore()
 const metrics = useMetricsStore()
+const route = useRoute()
+
+/** 页面区块：id 用于排序/隐藏，label 给「页面布局」弹窗显示 */
+const BLOCKS = [
+  { id: 'banner', label: '状态横幅' },
+  { id: 'kpis', label: '关键指标' },
+  { id: 'chart', label: '实时流量' },
+  { id: 'system', label: '健康检查 · 运行环境' },
+  { id: 'traffic', label: '协议连接 · 实时事件' },
+  { id: 'widgets', label: '插件注入块' },
+]
+/** 布局编辑模式：开启后每块前面出现拖动柄和隐藏按钮 */
+const layoutEdit = ref(false)
+const layout = ref<PageLayoutPrefs>(loadPageLayout(route.path))
+const draggingBlock = ref('')
+const narrow = ref(false)
+const mq = window.matchMedia('(max-width: 860px)')
+function syncNarrow(): void {
+  narrow.value = mq.matches
+}
+
+function fullOrder(): string[] {
+  const ids = BLOCKS.map((block) => block.id)
+  const order = layout.value.order.filter((id) => ids.includes(id))
+  for (const id of ids) if (!order.includes(id)) order.push(id)
+  return order
+}
+
+function blockStyle(id: string): Record<string, string | number | undefined> {
+  const order = fullOrder()
+  return {
+    order: order.indexOf(id),
+    display: layout.value.hidden.includes(id) && !layoutEdit.value ? 'none' : undefined,
+  }
+}
+
+function persistLayout(): void {
+  savePageLayout(route.path, { order: fullOrder(), hidden: [...layout.value.hidden] })
+}
+
+function moveBlock(id: string, delta: number): void {
+  const order = fullOrder()
+  const index = order.indexOf(id)
+  const target = index + delta
+  if (index === -1 || target < 0 || target >= order.length) return
+  order.splice(index, 1)
+  order.splice(target, 0, id)
+  layout.value = { ...layout.value, order }
+  persistLayout()
+}
+
+function toggleBlock(id: string): void {
+  const hidden = new Set(layout.value.hidden)
+  if (hidden.has(id)) hidden.delete(id)
+  else hidden.add(id)
+  layout.value = { ...layout.value, hidden: [...hidden] }
+  persistLayout()
+}
+
+function startBlockDrag(event: PointerEvent, id: string): void {
+  if (!layoutEdit.value) return
+  event.preventDefault()
+  draggingBlock.value = id
+  window.addEventListener('pointermove', onBlockDrag)
+  window.addEventListener('pointerup', stopBlockDrag, { once: true })
+  window.addEventListener('pointercancel', stopBlockDrag, { once: true })
+}
+
+function onBlockDrag(event: PointerEvent): void {
+  const id = draggingBlock.value
+  if (!id) return
+  const el = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
+  const target = el?.closest<HTMLElement>('[data-block]')?.dataset.block
+  if (!target || target === id) return
+  const order = fullOrder()
+  const from = order.indexOf(id)
+  const to = order.indexOf(target)
+  if (from === -1 || to === -1) return
+  order.splice(from, 1)
+  order.splice(to, 0, id)
+  layout.value = { ...layout.value, order }
+  persistLayout()
+}
+
+function stopBlockDrag(): void {
+  draggingBlock.value = ''
+  window.removeEventListener('pointermove', onBlockDrag)
+}
 
 const data = ref<Overview | null>(null)
 const loading = ref(true)
@@ -49,12 +140,15 @@ async function pollEvents(): Promise<void> {
 }
 
 onMounted(async () => {
+  syncNarrow()
+  mq.addEventListener('change', syncNarrow)
   await load()
   release = metrics.acquire()
   eventTimer = window.setInterval(pollEvents, 5000)
 })
 
 onUnmounted(() => {
+  mq.removeEventListener('change', syncNarrow)
   release?.()
   if (eventTimer) window.clearInterval(eventTimer)
 })
@@ -159,6 +253,13 @@ function eventTitle(e: TimelineEvent): string {
 </script>
 
 <template>
+  <div class="page-wrap">
+    <div class="layout-bar">
+      <UiButton size="small" @click="layoutEdit = !layoutEdit">
+        {{ layoutEdit ? "完成" : "编辑布局" }}
+      </UiButton>
+    </div>
+
   <div class="dash">
     <div v-if="loading" class="kpi-grid">
       <div v-for="i in 4" :key="i" class="kpi-card">
@@ -168,6 +269,18 @@ function eventTitle(e: TimelineEvent): string {
 
     <template v-else-if="data">
       <!-- 状态横幅：一条扁平信息带，不用卡片包 -->
+      <LayoutBlock
+        id="banner"
+        label="状态横幅"
+        :editing="layoutEdit"
+        :hidden="layout.hidden.includes('banner')"
+        :narrow="narrow"
+        @move-up="moveBlock('banner', -1)"
+        @move-down="moveBlock('banner', 1)"
+        :style="blockStyle('banner')"
+        @drag-start="startBlockDrag($event, 'banner')"
+        @toggle="toggleBlock('banner')"
+      >
       <section class="banner">
         <div class="banner-left">
           <div class="banner-title">
@@ -210,8 +323,21 @@ function eventTitle(e: TimelineEvent): string {
           </UiButton>
         </div>
       </section>
+      </LayoutBlock>
 
       <!-- KPI -->
+      <LayoutBlock
+        id="kpis"
+        label="关键指标"
+        :editing="layoutEdit"
+        :hidden="layout.hidden.includes('kpis')"
+        :narrow="narrow"
+        @move-up="moveBlock('kpis', -1)"
+        @move-down="moveBlock('kpis', 1)"
+        :style="blockStyle('kpis')"
+        @drag-start="startBlockDrag($event, 'kpis')"
+        @toggle="toggleBlock('kpis')"
+      >
       <div class="kpi-grid">
         <div v-for="k in kpis" :key="k.key" class="kpi-card">
           <div class="kpi-icon" :class="'tone-' + k.tone">
@@ -223,8 +349,21 @@ function eventTitle(e: TimelineEvent): string {
           </div>
         </div>
       </div>
+      </LayoutBlock>
 
       <!-- 实时流量 -->
+      <LayoutBlock
+        id="chart"
+        label="实时流量"
+        :editing="layoutEdit"
+        :hidden="layout.hidden.includes('chart')"
+        :narrow="narrow"
+        @move-up="moveBlock('chart', -1)"
+        @move-down="moveBlock('chart', 1)"
+        :style="blockStyle('chart')"
+        @drag-start="startBlockDrag($event, 'chart')"
+        @toggle="toggleBlock('chart')"
+      >
       <UiCard>
         <template #header>
           <div class="card-head-row">
@@ -246,7 +385,20 @@ function eventTitle(e: TimelineEvent): string {
         />
         <UiAlert v-if="metrics.error" type="warn" :title="'采样异常：' + metrics.error" />
       </UiCard>
+      </LayoutBlock>
 
+      <LayoutBlock
+        id="system"
+        label="健康检查 · 运行环境"
+        :editing="layoutEdit"
+        :hidden="layout.hidden.includes('system')"
+        :narrow="narrow"
+        @move-up="moveBlock('system', -1)"
+        @move-down="moveBlock('system', 1)"
+        :style="blockStyle('system')"
+        @drag-start="startBlockDrag($event, 'system')"
+        @toggle="toggleBlock('system')"
+      >
       <div class="two-col">
         <!-- 健康度 -->
         <UiCard>
@@ -287,7 +439,20 @@ function eventTitle(e: TimelineEvent): string {
           <UiDescriptions :items="envItems" :column="1" border size="small" />
         </UiCard>
       </div>
+      </LayoutBlock>
 
+      <LayoutBlock
+        id="traffic"
+        label="协议连接 · 实时事件"
+        :editing="layoutEdit"
+        :hidden="layout.hidden.includes('traffic')"
+        :narrow="narrow"
+        @move-up="moveBlock('traffic', -1)"
+        @move-down="moveBlock('traffic', 1)"
+        :style="blockStyle('traffic')"
+        @drag-start="startBlockDrag($event, 'traffic')"
+        @toggle="toggleBlock('traffic')"
+      >
       <div class="two-col">
         <!-- 协议 -->
         <UiCard>
@@ -331,6 +496,7 @@ function eventTitle(e: TimelineEvent): string {
           <UiEmpty v-else description="暂无事件" />
         </UiCard>
       </div>
+      </LayoutBlock>
     </template>
 
     <UiEmpty v-else description="没有取到概览数据">
@@ -338,11 +504,27 @@ function eventTitle(e: TimelineEvent): string {
     </UiEmpty>
 
     <!-- 插件注入块：插件实现 adminWidgets() 就能往这一页补内容，不用新开页面 -->
-    <ExtWidgets slot="overview" />
+    <LayoutBlock
+      id="widgets"
+      label="插件注入块"
+      :editing="layoutEdit"
+      :hidden="layout.hidden.includes('widgets')"
+      :narrow="narrow"
+      @move-up="moveBlock('widgets', -1)"
+      @move-down="moveBlock('widgets', 1)"
+      :style="blockStyle('widgets')"
+      @drag-start="startBlockDrag($event, 'widgets')"
+      @toggle="toggleBlock('widgets')"
+    >
+      <ExtWidgets slot="overview" />
+    </LayoutBlock>
+  </div>
   </div>
 </template>
 
 <style scoped>
+.page-wrap { display: flex; flex-direction: column; gap: 8px; }
+.layout-bar { display: flex; justify-content: flex-end; }
 .dash { display: flex; flex-direction: column; gap: 14px; }
 
 /* ---------- 状态带 ---------- */

@@ -46,6 +46,12 @@ $check('B 读不到 A 的群名', !isset(GroupState::meta($store)[$group]));
 GroupState::setInfo($store, $groupB, ['status' => 1, 'worker' => []]);
 $check('B 自己的群可写', (GroupState::getInfo($store, $groupB)['status'] ?? 0) === 1);
 
+// 移除墓碑：防止旧事件把已移除的群拉回来
+GroupState::markRemoved($store, $group, time());
+$check('A 的移除墓碑已写入', isset(GroupState::removed($store)[$group]));
+GroupState::clearRemoved($store, $group);
+$check('A 的移除墓碑可清除', !isset(GroupState::removed($store)[$group]));
+
 // 权限隔离
 AccountContext::use($a);
 MemberPermissions::set('123456', 'admin');

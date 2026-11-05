@@ -113,6 +113,7 @@ final class GroupsController extends Base {
             if (\Core\Bot\GroupState::getInfo($this->store, $id, $accountId) === null) {
                 \Core\Bot\GroupState::setInfo($this->store, $id, ['status' => 1, 'worker' => [], 'name' => $name], $accountId);
             }
+            \Core\Bot\GroupState::clearRemoved($this->store, $id, $accountId);
             $synced++;
         }
         \Core\Bot\GroupState::setMeta($this->store, $meta, $accountId);
@@ -177,6 +178,7 @@ final class GroupsController extends Base {
         $info['status'] = (int)($info['status'] ?? 0) === 1 ? 0 : 1;
         $info['updated_at'] = time();
         \Core\Bot\GroupState::setInfo($this->store, $groupId, $info, $accountId);
+        \Core\Bot\GroupState::clearRemoved($this->store, $groupId, $accountId);
         return $this->ok($this->metrics->group($groupId, $accountId) ?? ['group_id' => $groupId, 'status' => $info['status'] === 1]);
     }
 
@@ -230,6 +232,7 @@ final class GroupsController extends Base {
         $row['updated_at'] = time();
         $meta[$groupId] = $row;
         \Core\Bot\GroupState::setMeta($this->store, $meta, $accountId);
+        \Core\Bot\GroupState::clearRemoved($this->store, $groupId, $accountId);
         return $this->ok($this->metrics->group($groupId, $accountId), '已登记');
     }
 
@@ -247,6 +250,8 @@ final class GroupsController extends Base {
         $meta = \Core\Bot\GroupState::meta($this->store, $accountId);
         unset($meta[$groupId]);
         \Core\Bot\GroupState::setMeta($this->store, $meta, $accountId);
+        // 旧事件里仍有这个群，记一个墓碑，防止刷新后又被事件拉回来
+        \Core\Bot\GroupState::markRemoved($this->store, $groupId, time(), $accountId);
         return $this->ok(null, '已移除');
     }
 }

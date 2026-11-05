@@ -48,6 +48,14 @@ class EventDispatcher
         $pushed = false;
         if (AccountContext::current() === null) {
             $account = Accounts::bySelfId((string)($event['self_id'] ?? ''));
+            // 单账号：self_id 对不上（协议端没带、或历史账号没填）时也只能是它，
+            // 否则插件数据会掉回全局键，看起来像「账号隔离失效」。
+            if ($account === null) {
+                $enabled = Accounts::enabled();
+                if (count($enabled) === 1) {
+                    $account = $enabled[0];
+                }
+            }
             if ($account !== null) {
                 AccountContext::use($account);
                 $pushed = true;

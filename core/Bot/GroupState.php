@@ -46,6 +46,29 @@ final class GroupState
         return AccountScope::set($store, 'webui:groups', $meta, $accountId);
     }
 
+    /** 已从面板移除的群：group_id => 移除时间（用于压住旧事件的重现） */
+    public static function removed(Store $store, ?string $accountId = null): array
+    {
+        $rows = AccountScope::get($store, 'webui:groups:removed', [], $accountId);
+        return is_array($rows) ? $rows : [];
+    }
+
+    public static function markRemoved(Store $store, string $group, int $at, ?string $accountId = null): void
+    {
+        $rows = self::removed($store, $accountId);
+        $rows[$group] = $at;
+        AccountScope::set($store, 'webui:groups:removed', $rows, $accountId);
+    }
+
+    public static function clearRemoved(Store $store, string $group, ?string $accountId = null): void
+    {
+        $rows = self::removed($store, $accountId);
+        if (array_key_exists($group, $rows)) {
+            unset($rows[$group]);
+            AccountScope::set($store, 'webui:groups:removed', $rows, $accountId);
+        }
+    }
+
     /**
      * 当前账号下出现过的群 ID（合并群配置键 + 群元数据）。
      * @return list<string>

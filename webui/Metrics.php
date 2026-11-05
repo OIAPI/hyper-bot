@@ -155,6 +155,7 @@ final class Metrics {
         foreach ($items as $item) {
             $seen[$item['group_id']] = true;
         }
+        $removedGroups = \Core\Bot\GroupState::removed($this->store, $accountId);
         foreach ($this->recentEvents(500) as $event) {
             $eventAccount = (string)($event['account'] ?? '');
             // 旧事件没有 account 字段：单账号迁移时按当前账号处理
@@ -163,6 +164,13 @@ final class Metrics {
             }
             $groupId = (string)($event['group_id'] ?? '');
             if ($groupId === '' || isset($seen[$groupId])) {
+                continue;
+            }
+            // 用户已经从面板移除的群：旧事件不再把它拉回来；
+            // 移除之后又来了新消息，则允许重新出现（方便重新纳管）。
+            $removedAt = (int)($removedGroups[$groupId] ?? 0);
+            $eventAt = (int)($event['received'] ?? ($event['time'] ?? 0));
+            if ($removedAt > 0 && $eventAt <= $removedAt) {
                 continue;
             }
             $seen[$groupId] = true;

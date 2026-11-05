@@ -81,6 +81,22 @@ $check('无上下文时 Token 用启用账号 AppID', \Protocol\QqBot\Token::app
 $check('无上下文时 Token 用启用账号 AppSecret', \Protocol\QqBot\Token::secret() === 'new-secret');
 $check('无上下文时 Webhook 用启用账号 AppSecret', \Protocol\QqBot\Webhook::secret() === 'new-secret');
 
+// 官方消息事件的 self_id 必须是账号标识（AppID），不能拿 READY 的 openid 当 int
+AccountContext::use(Accounts::get($id));
+$converted = \Protocol\QqBot\Converter::toOneBot([
+    't' => 'GROUP_AT_MESSAGE_CREATE',
+    'd' => [
+        'group_openid' => '4982995E31B3D19A798977E3C2633AF1',
+        'author' => ['member_openid' => 'ABCDEF'],
+        'content' => 'hello',
+        'id' => 'msg-1',
+        'timestamp' => time(),
+    ],
+], null);
+$check('官方消息 self_id 用账号 AppID', (string)($converted['self_id'] ?? '') === '102030405');
+$check('官方群 group_id 保留 openid', ($converted['group_id'] ?? '') === '4982995E31B3D19A798977E3C2633AF1');
+AccountContext::reset();
+
 @unlink($tmp);
 echo PHP_EOL . ($fail === 0 ? '全部通过' : "失败 {$fail} 项") . "，通过 {$pass} 项" . PHP_EOL;
 exit($fail === 0 ? 0 : 1);

@@ -8,6 +8,8 @@ use Utils\Logger;
 use Utils\CoroutineCurl;
 use Protocol\Core\Config;
 use Protocol\Core\EventDispatcher;
+use Core\Bot\AccountContext;
+use Core\Bot\Accounts;
 
 /**
  * QQ 官方机器人事件接入
@@ -26,7 +28,7 @@ class EventClient {
 	private static int $lastSeq = 0;
 	private static int $heartbeatTimer = -1;
 	private static bool $identified = false;
-	private static ?int $selfId = null;
+	private static ?string $selfId = null;
 
 	/** @var array 被动回复上下文：会话键 => ['msg_id','event_id','expires','seq'] */
 	private static array $passive = [];
@@ -66,6 +68,8 @@ class EventClient {
 			return;
 		}
 		self::$running = true;
+		// 官方机器人的 self_id 用账号里的 AppID/self_id（不是 READY 里的 bot openid）
+		self::$selfId = self::accountIdentity();
 
 		Coroutine::create(function () {
 			$retry = 1;
@@ -377,15 +381,38 @@ class EventClient {
 		}
 	}
 
+	/** 当前官方机器人的账号标识：账号 self_id > AppID > Config.ini */
+	private static function accountIdentity(): string {
+		$account = AccountContext::current() ?? Accounts::firstEnabled('qqbot');
+		$self = $account !== null ? trim((string)($account['self_id'] ?? '')) : '';
+		if ($self === '' && $account !== null) {
+			$self = trim((string)($account['app_id'] ?? ''));
+		}
+		if ($self === '') {
+			$self = trim((string)Config::string('qqbot.self_id', ''));
+		}
+		if ($self === '') {
+			$self = trim((string)Config::string('qqbot.app_id', ''));
+		}
+		return $self;
+	}
+
 	private static function dispatch(array $payload, array $d, string $source): void {
 		$t = (string)($payload['t'] ?? '');
+		if (self::$selfId === null || self::$selfId === '') {
+			self::$selfId = self::accountIdentity();
+		}
 
 		// 记录会话与登录信息
 		if ($t === 'READY') {
 			self::$sessionId = (string)($d['session_id'] ?? '');
 			self::$lastSeq   = (int)($payload['s'] ?? 0);
-			self::$selfId    = (int)($d['user']['id'] ?? 0);
-			Logger::success('[QqBot] READY | session_id=' . substr(self::$sessionId, 0, 12) . '... | bot=' . (($d['user']['username'] ?? '')));
+			// READY 里的 user.id 是 bot 的 openid（32 位十六进制），不能当 int self_id；
+			// 账号标识继续用 AppID/self_id，确保事件能路由回账号
+			self::$selfId = self::accountIdentity();
+			$botOpenId = (string)($d['user']['id'] ?? '');
+			Logger::success('[QqBot] READY | session_id=' . substr(self::$sessionId, 0, 12) . '... | bot=' . (($d['user']['username'] ?? ''))
+				. ($botOpenId !== '' ? ' | openid=' . substr($botOpenId, 0, 8) . '...' : ''));
 			// 让代码以 OneBot 元事件形式感知上线
 			EventDispatcher::dispatch(Converter::toOneBot($payload, self::$selfId) ?? [], new Adapter());
 			return;

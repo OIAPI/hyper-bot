@@ -251,7 +251,8 @@ final class Rss extends BaseApp
         foreach ($groups as $group) {
             try {
                 $adapter->call('send_group_msg', [
-                    'group_id' => (int)$group,
+                    // 不能用 (int)：QQ 官方群的 group_id 是 openid（32 位十六进制）
+                    'group_id' => (string)$group,
                     'message'  => $message,
                 ]);
             } catch (\Throwable $e) {

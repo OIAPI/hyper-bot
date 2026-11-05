@@ -147,6 +147,7 @@ final class Metrics {
 
         // 只在事件里出现过的群（还没写过 {id}.info）也要能看到：
         // 否则「群里发过消息但面板不显示这个群」会让人以为数据丢了。
+        $groupMeta = (array)($this->store->get('webui:groups') ?? []);
         $seen = [];
         foreach ($items as $item) {
             $seen[$item['group_id']] = true;
@@ -157,10 +158,10 @@ final class Metrics {
                 continue;
             }
             $seen[$groupId] = true;
-            $items[] = $this->normalizeGroup($groupId, [], (array)($this->store->get('webui:groups') ?? [])[$groupId] ?? []);
+            $items[] = $this->normalizeGroup($groupId, [], (array)($groupMeta[$groupId] ?? []));
         }
 
-        foreach ((array)($this->store->get('webui:groups') ?? []) as $groupId => $meta) {
+        foreach ($groupMeta as $groupId => $meta) {
             $found = false;
             foreach ($items as &$item) {
                 if ($item['group_id'] === (string)$groupId) {

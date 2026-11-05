@@ -245,7 +245,8 @@ final class Github extends BaseApp
             try {
                 // 不等待实现端 echo：GitHub 回调只给 10 秒，等回执容易把投递拖超时
                 if (!$adapter->sendNoWait('send_group_msg', [
-                    'group_id' => (int)$group,
+                    // 不能用 (int)：QQ 官方群的 group_id 是 openid（32 位十六进制）
+                    'group_id' => (string)$group,
                     'message'  => $message,
                 ])) {
                     \Utils\Logger::warning('[github] 推送到群 ' . $group . ' 失败：没有可用的 WS/HTTP 通道');

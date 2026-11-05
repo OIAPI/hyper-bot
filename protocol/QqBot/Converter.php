@@ -25,12 +25,12 @@ class Converter {
 	 * @param array $payload {"op":0,"s":1,"t":"...","d":{...},"id":"..."}
 	 * @return array|null
 	 */
-	public static function toOneBot(array $payload, ?int $selfId = null): ?array {
+	public static function toOneBot(array $payload, int|string|null $selfId = null): ?array {
 		$t    = (string)($payload['t'] ?? '');
 		$d    = (array)($payload['d'] ?? []);
 		$time = time();
 		$self = $selfId;
-		if ($self === null || $self === 0) {
+		if ($self === null || $self === 0 || $self === '') {
 			[$hit, $accountSelf] = \Core\Bot\AccountContext::get('qqbot.self_id');
 			$self = (int)(($hit && (string)$accountSelf !== '') ? $accountSelf : Config::string('qqbot.self_id', '0'));
 			if (!$self) {
@@ -80,7 +80,7 @@ class Converter {
 
 	// ---------------- 消息 ----------------
 
-	private static function groupMessage(array $d, int $time, int $self, string $eventName): array {
+	private static function groupMessage(array $d, int $time, int|string $self, string $eventName): array {
 		$groupOpenid = (string)($d['group_openid'] ?? '');
 		$author      = (array)($d['author'] ?? []);
 		$userId      = (string)($author['member_openid'] ?? ($author['id'] ?? ''));
@@ -113,7 +113,7 @@ class Converter {
 		];
 	}
 
-	private static function c2cMessage(array $d, int $time, int $self): array {
+	private static function c2cMessage(array $d, int $time, int|string $self): array {
 		$author = (array)($d['author'] ?? []);
 		$userId = (string)($author['user_openid'] ?? ($author['id'] ?? ''));
 		$msgs   = self::buildMessage($d);
@@ -138,7 +138,7 @@ class Converter {
 		];
 	}
 
-	private static function channelMessage(array $d, int $time, int $self, string $eventName): array {
+	private static function channelMessage(array $d, int $time, int|string $self, string $eventName): array {
 		$author = (array)($d['author'] ?? []);
 		$userId = (string)($author['id'] ?? ($author['member_openid'] ?? ''));
 		$channelId = (string)($d['channel_id'] ?? '');
@@ -238,7 +238,7 @@ class Converter {
 	// ---------------- 通知 / 请求 / 元事件 ----------------
 
 	/** 机器人自身入群（GROUP_ADD_ROBOT）：user_id 是机器人自己，operator 是邀请人 */
-	private static function botJoinGroup(array $d, int $time, int $self): array {
+	private static function botJoinGroup(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'    => 'notice',
 			'notice_type'  => 'group_increase',
@@ -253,7 +253,7 @@ class Converter {
 	}
 
 	/** 机器人自身被移出群（GROUP_DEL_ROBOT） */
-	private static function botLeaveGroup(array $d, int $time, int $self): array {
+	private static function botLeaveGroup(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'    => 'notice',
 			'notice_type'  => 'group_decrease',
@@ -268,7 +268,7 @@ class Converter {
 	}
 
 	/** 消息接收开关（C2C_MSG_RECEIVE / GROUP_MSG_RECEIVE 等） */
-	private static function msgReceiveSwitch(array $d, int $time, int $self, string $scene, bool $enabled): array {
+	private static function msgReceiveSwitch(array $d, int $time, int|string $self, string $scene, bool $enabled): array {
 		$groupOpenid = (string)($d['group_openid'] ?? '');
 		return [
 			'post_type'    => 'notice',
@@ -284,7 +284,7 @@ class Converter {
 	}
 
 	/** 订阅消息授权状态变更 */
-	private static function subscribeStatus(array $d, int $time, int $self): array {
+	private static function subscribeStatus(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'    => 'notice',
 			'notice_type'  => 'subscribe_message_status',
@@ -298,7 +298,7 @@ class Converter {
 		];
 	}
 
-	private static function groupIncrease(array $d, int $time, int $self): array {
+	private static function groupIncrease(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'   => 'notice',
 			'notice_type' => 'group_increase',
@@ -312,7 +312,7 @@ class Converter {
 		];
 	}
 
-	private static function groupDecrease(array $d, int $time, int $self): array {
+	private static function groupDecrease(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'   => 'notice',
 			'notice_type' => 'group_decrease',
@@ -326,7 +326,7 @@ class Converter {
 		];
 	}
 
-	private static function groupJoinRequest(array $d, int $time, int $self): array {
+	private static function groupJoinRequest(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'    => 'request',
 			'request_type' => 'group',
@@ -342,7 +342,7 @@ class Converter {
 		];
 	}
 
-	private static function friendAdd(array $d, int $time, int $self): array {
+	private static function friendAdd(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'    => 'request',
 			'request_type' => 'friend',
@@ -354,7 +354,7 @@ class Converter {
 		];
 	}
 
-	private static function friendDel(array $d, int $time, int $self): array {
+	private static function friendDel(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'   => 'notice',
 			'notice_type' => 'friend_del',
@@ -364,7 +364,7 @@ class Converter {
 		];
 	}
 
-	private static function interaction(array $d, int $time, int $self): array {
+	private static function interaction(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'      => 'notice',
 			'notice_type'    => 'interaction',
@@ -379,19 +379,20 @@ class Converter {
 		];
 	}
 
-	private static function ready(array $d, int $time, int $self): array {
+	private static function ready(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'       => 'meta_event',
 			'meta_event_type' => 'lifecycle',
 			'sub_type'        => 'enable',
 			'time'            => $time,
-			'self_id'         => (int)($d['user']['id'] ?? $self),
+			'self_id'         => $self,
 			'session_id'      => (string)($d['session_id'] ?? ''),
+			'bot_openid'      => (string)($d['user']['id'] ?? ''),
 			'user'            => $d['user'] ?? new \stdClass(),
 		];
 	}
 
-	private static function resumed(array $d, int $time, int $self): array {
+	private static function resumed(array $d, int $time, int|string $self): array {
 		return [
 			'post_type'       => 'meta_event',
 			'meta_event_type' => 'lifecycle',
@@ -435,7 +436,7 @@ class Converter {
 	// ---------------- 频道附加事件 ----------------
 
 	/** 频道表情表态（MESSAGE_REACTION_ADD / REMOVE） */
-	private static function reaction(array $d, int $time, int $self, bool $added): array {
+	private static function reaction(array $d, int $time, int|string $self, bool $added): array {
 		$emoji = (array)($d['emoji'] ?? []);
 		return [
 			'post_type'   => 'notice',
@@ -455,7 +456,7 @@ class Converter {
 	}
 
 	/** 主动消息审核结果（MESSAGE_AUDIT_PASS / REJECT） */
-	private static function audit(array $d, int $time, int $self, bool $passed): array {
+	private static function audit(array $d, int $time, int|string $self, bool $passed): array {
 		return [
 			'post_type'   => 'notice',
 			'notice_type' => $passed ? 'message_audit_pass' : 'message_audit_reject',
@@ -471,7 +472,7 @@ class Converter {
 	}
 
 	/** 频道成员变更（GUILD_MEMBER_ADD / UPDATE / REMOVE） */
-	private static function guildMember(array $d, int $time, int $self, string $type): array {
+	private static function guildMember(array $d, int $time, int|string $self, string $type): array {
 		$user = (array)($d['user'] ?? []);
 		return [
 			'post_type'   => 'notice',
@@ -494,7 +495,7 @@ class Converter {
 	 * 插件也能先接住新事件，而不用改核心代码。
 	 */
 	/** 频道消息删除（MESSAGE_DELETE / PUBLIC_MESSAGE_DELETE） */
-	private static function channelMessageDelete(array $d, int $time, int $self): array {
+	private static function channelMessageDelete(array $d, int $time, int|string $self): array {
 		$operator = (string)($d['op_user']['id'] ?? '');
 		return [
 			'post_type'   => 'notice',
@@ -512,7 +513,7 @@ class Converter {
 	}
 
 	/** 频道语音（AUDIO_START / AUDIO_FINISH） */
-	private static function channelAudio(array $d, int $time, int $self, string $eventName): array {
+	private static function channelAudio(array $d, int $time, int|string $self, string $eventName): array {
 		$audio = (array)($d['audio'] ?? []);
 		return [
 			'post_type'   => 'notice',
@@ -529,7 +530,7 @@ class Converter {
 		];
 	}
 
-	private static function generic(string $t, array $d, int $time, int $self): ?array {
+	private static function generic(string $t, array $d, int $time, int|string $self): ?array {
 		if ($t === '') {
 			return null;
 		}

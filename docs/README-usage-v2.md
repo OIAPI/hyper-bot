@@ -81,6 +81,30 @@ php bin/hyper doctor                         # 环境体检
 php bin/hyper config runtime.arch php        # 读/写配置
 ```
 
+### 绑定 HTTPS 证书
+
+```bash
+# 绑定（校验证书/私钥是否匹配，然后复制到 runtime/ssl）
+php bin/hyper ssl:bind --cert=/path/fullchain.pem --key=/path/privkey.pem --domain=example.com
+
+php bin/hyper ssl:show      # 查看已绑定证书（域名 / 到期 / 指纹）
+php bin/hyper ssl:remove    # 删除绑定
+```
+
+- 每次启动都会自动读取 `runtime/ssl` 里的证书；
+- Swoole 架构会**额外**监听 HTTPS 端口（默认 443，可用 `--ssl-port=8443`
+  或 `Config.ini [http] ssl_port` 修改），原来的 HTTP 端口保持不变；
+- 临时覆盖已绑定证书（优先级更高，只影响本次启动）：
+
+```bash
+php bin/hyper serve --ssl-cert=/tmp/fullchain.pem --ssl-key=/tmp/privkey.pem
+php bin/hyper serve --no-ssl      # 忽略已绑定证书，只跑 HTTP
+```
+
+- PHP / webui 架构用的是 PHP 内置服务器，不支持 TLS；请用 `--arch=swoole`
+  或在前置 Nginx/Caddy 上终止 TLS；
+- 非 root 用户无法监听 443，请用 `--ssl-port` 选高位端口再交给反代。
+
 启动后会打印一段横幅，确认架构、存储、订阅、插件数量：
 
 ```

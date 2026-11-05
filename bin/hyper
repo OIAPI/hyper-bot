@@ -70,6 +70,17 @@ switch ($command) {
     case 'prune':
         commandWebuiPrune($args);
         break;
+    case 'ssl:bind':
+        commandSslBind($args);
+        break;
+    case 'ssl:show':
+    case 'ssl:status':
+    case 'ssl':
+        commandSslShow($args);
+        break;
+    case 'ssl:remove':
+        commandSslRemove($args);
+        break;
     case 'status':
         commandStatus($args);
         break;
@@ -145,10 +156,54 @@ function serveSwoole(\Core\App $app, array $ctx): void
         exit(1);
     }
     echo '  入口      http://' . Config::string('http.host', '127.0.0.1')
-        . ':' . Config::int('http.port', 9501) . '/webui/' . PHP_EOL . PHP_EOL;
+        . ':' . Config::int('http.port', 9501) . '/webui/' . PHP_EOL;
+    $ssl = serveSslOption($ctx);
+    if ($ssl !== null) {
+        echo '  HTTPS     https://' . Config::string('http.host', '127.0.0.1')
+            . ':' . $ssl['port'] . '/webui/'
+            . '  （证书：' . ($ssl['source'] === 'cli' ? '命令行指定' : 'runtime/ssl 已绑定')
+            . ($ssl['domain'] !== '' ? ' · ' . $ssl['domain'] : '') . '）' . PHP_EOL;
+    }
+    echo PHP_EOL;
 
-    $server = new \Controller\Server\HttpServer();
+    $server = new \Controller\Server\HttpServer($ssl);
     $server->start();
+}
+
+/**
+ * 解析本次启动的 SSL：命令行 > runtime/ssl 绑定。
+ * --no-ssl 可临时忽略已绑定证书。
+ */
+function serveSslOption(array $ctx): ?array
+{
+    if (option($ctx, 'no-ssl', false)) {
+        return null;
+    }
+    $cert = option($ctx, 'ssl-cert');
+    $key = option($ctx, 'ssl-key');
+    $resolved = \Core\Http\Tls::resolve(
+        is_string($cert) ? $cert : null,
+        is_string($key) ? $key : null,
+    );
+    if (!$resolved['ok']) {
+        if (($resolved['error'] ?? '') !== '未绑定证书') {
+            fwrite(STDERR, '  SSL      ' . $resolved['error'] . '（本次按 HTTP 启动）' . PHP_EOL);
+        }
+        return null;
+    }
+    $port = (int)option($ctx, 'ssl-port', Config::int('http.ssl_port', 443));
+    if ($port <= 0 || $port > 65535) {
+        fwrite(STDERR, '  SSL      端口不合法：' . $port . '（本次按 HTTP 启动）' . PHP_EOL);
+        return null;
+    }
+    return [
+        'cert'      => $resolved['cert'],
+        'key'       => $resolved['key'],
+        'port'      => $port,
+        'source'    => $resolved['source'],
+        'domain'    => $resolved['domain'],
+        'not_after' => $resolved['not_after'],
+    ];
 }
 
 /** PHP 架构：内置服务器 + 轮询 worker */
@@ -158,6 +213,9 @@ function servePhp(\Core\App $app, array $ctx): void
     $port = option($ctx, 'port', Config::int('http.port', 8080));
 
     echo '  入口      http://' . $host . ':' . $port . '/webui/' . PHP_EOL;
+    if (serveSslOption($ctx) !== null) {
+        fwrite(STDERR, '  SSL       PHP 内置服务器不支持 HTTPS，证书未启用；请用 --arch=swoole 或反向代理终止 TLS' . PHP_EOL);
+    }
     echo '  提示      PHP 架构单进程，事件串行处理；WebSocket 相关功能不可用' . PHP_EOL . PHP_EOL;
 
     // 同一进程内起一个轮询 worker（协程不可用，所以用「每次请求后顺带跑一次」的方案）
@@ -171,6 +229,9 @@ function serveWebui(\Core\App $app, array $ctx): void
     $port = option($ctx, 'port', Config::int('http.port', 8080));
 
     echo '  入口      http://' . $host . ':' . $port . '/webui/' . PHP_EOL;
+    if (serveSslOption($ctx) !== null) {
+        fwrite(STDERR, '  SSL       PHP 内置服务器不支持 HTTPS，证书未启用；请用 --arch=swoole 或反向代理终止 TLS' . PHP_EOL);
+    }
     echo '  提示      仅 WebUI 架构：不接收协议事件，不发消息' . PHP_EOL . PHP_EOL;
 
     serveWithBuiltinServer($app, (string)$host, (int)$port);
@@ -718,6 +779,19 @@ function commandDoctor(array $ctx): void
         ? '启用：监听 ' . \Core\Config::string('protocol.onebot.reverse.path', '/onebot/v11/ws')
         : '未启用：不监听 WS 端口（默认行为，需要反向 WS 时才打开）');
 
+    $tls = \Core\Http\Tls::bound();
+    if ($tls === null) {
+        $check('HTTPS 证书', true, '未绑定（绑定：php bin/hyper ssl:bind --cert=... --key=...）');
+    } else {
+        $check(
+            'HTTPS 证书',
+            empty($tls['expired']),
+            (empty($tls['expired']) ? '已绑定：' : '已过期：')
+            . (($tls['domain'] ?? '') !== '' ? $tls['domain'] : '—')
+            . ' · 到期 ' . date('Y-m-d', (int)($tls['not_after'] ?? 0)),
+        );
+    }
+
     $autoloadOk = is_file($root . '/vendor/autoload.php');
     $check('vendor/autoload.php', $autoloadOk, $autoloadOk ? '依赖已就绪' : '运行 php bin/hyper install');
 
@@ -1044,12 +1118,78 @@ function downloadComposer(string $root, callable $say): ?string
 
 // ---------------- help ----------------
 
+// ---------------- SSL ----------------
+
+function commandSslBind(array $ctx): void
+{
+    $cert = (string)option($ctx, 'cert', '');
+    $key = (string)option($ctx, 'key', '');
+    $domain = (string)option($ctx, 'domain', '');
+    $res = \Core\Http\Tls::bind($cert, $key, $domain);
+    if (!$res['ok']) {
+        fwrite(STDERR, '绑定失败：' . $res['msg'] . PHP_EOL);
+        exit(1);
+    }
+    $info = $res['data'] ?? [];
+    echo '证书已绑定' . PHP_EOL;
+    echo '  证书   ' . \Core\Http\Tls::certFile() . PHP_EOL;
+    echo '  私钥   ' . \Core\Http\Tls::keyFile() . PHP_EOL;
+    echo '  域名   ' . (($info['domain'] ?? '') !== '' ? $info['domain'] : '—') . PHP_EOL;
+    echo '  到期   ' . date('Y-m-d H:i:s', (int)($info['not_after'] ?? 0))
+        . (!empty($info['expired']) ? '（已过期）' : '') . PHP_EOL;
+    echo '  指纹   ' . ($info['fingerprint'] ?? '') . PHP_EOL;
+    echo PHP_EOL . '下次启动（swoole）会自动读取；serve 时可用 --ssl-cert/--ssl-key 临时覆盖。' . PHP_EOL;
+}
+
+function commandSslShow(array $ctx): void
+{
+    $bound = \Core\Http\Tls::bound();
+    if ($bound === null) {
+        echo '未绑定证书。' . PHP_EOL;
+        echo '绑定：php bin/hyper ssl:bind --cert=/path/fullchain.pem --key=/path/privkey.pem [--domain=example.com]' . PHP_EOL;
+        return;
+    }
+    echo '已绑定证书' . PHP_EOL;
+    echo '  证书   ' . $bound['cert'] . PHP_EOL;
+    echo '  私钥   ' . $bound['key'] . PHP_EOL;
+    echo '  域名   ' . (($bound['domain'] ?? '') !== '' ? $bound['domain'] : '—') . PHP_EOL;
+    echo '  主体   ' . ($bound['subject'] ?? '') . PHP_EOL;
+    echo '  到期   ' . date('Y-m-d H:i:s', (int)($bound['not_after'] ?? 0))
+        . (!empty($bound['expired']) ? '（已过期）' : '') . PHP_EOL;
+    echo '  指纹   ' . ($bound['fingerprint'] ?? '') . PHP_EOL;
+    if ((int)($bound['bound_at'] ?? 0) > 0) {
+        echo '  绑定于 ' . date('Y-m-d H:i:s', (int)$bound['bound_at']) . PHP_EOL;
+    }
+    echo PHP_EOL . '启动：php bin/hyper serve（swoole 另开 HTTPS 端口，默认 443；'
+        . '可用 --ssl-port 或 Config.ini [http] ssl_port 修改）' . PHP_EOL;
+}
+
+function commandSslRemove(array $ctx): void
+{
+    if (!is_file(\Core\Http\Tls::certFile()) && !is_file(\Core\Http\Tls::metaFile())) {
+        echo '没有已绑定的证书。' . PHP_EOL;
+        return;
+    }
+    if (!\Core\Http\Tls::remove()) {
+        fwrite(STDERR, '删除失败，请检查 runtime/ssl 权限。' . PHP_EOL);
+        exit(1);
+    }
+    echo '已删除 runtime/ssl 下的证书绑定。' . PHP_EOL;
+}
+
 function printHelp(): void
 {
     echo PHP_EOL . '  Hyper Bot ' . Version::current() . ' — OneBot11 / Milky / QQ 官方机器人' . PHP_EOL;
     echo '  ' . str_repeat('─', 62) . PHP_EOL . PHP_EOL;
     echo '  php bin/hyper serve [--arch=swoole|php|webui] [--port=8080] [--host=127.0.0.1]' . PHP_EOL;
+    echo '      [--ssl-cert=... --ssl-key=...] [--ssl-port=443] [--no-ssl]' . PHP_EOL;
     echo '      启动服务。不传 --arch 则读 Config.ini [runtime] arch（默认 swoole）' . PHP_EOL;
+    echo '      --ssl-cert/--ssl-key 只影响本次启动，优先于已绑定的证书' . PHP_EOL;
+    echo PHP_EOL;
+    echo '  php bin/hyper ssl:bind --cert=/path/fullchain.pem --key=/path/privkey.pem [--domain=example.com]' . PHP_EOL;
+    echo '      绑定面板 HTTPS 证书：校验后复制到 runtime/ssl，之后每次启动自动读取' . PHP_EOL;
+    echo '  php bin/hyper ssl:show | ssl:remove' . PHP_EOL;
+    echo '      查看 / 删除已绑定证书' . PHP_EOL;
     echo PHP_EOL;
     echo '  php bin/hyper worker [--once]' . PHP_EOL;
     echo '      只跑调度队列（定时/延迟任务），与 serve 分离部署时用' . PHP_EOL;

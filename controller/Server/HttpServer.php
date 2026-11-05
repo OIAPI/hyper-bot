@@ -30,12 +30,18 @@ class HttpServer {
 	/** 是否需要 WebSocket 服务端（只由配置决定，默认不启动） */
 	private bool $wsEnabled = false;
 	private array $config = [];
+	/** 本次启动的 HTTPS 证书：['cert'=>..., 'key'=>..., 'port'=>..., 'source'=>'cli'|'bound'] */
+	private ?array $ssl = null;
+	private int $sslPort = 0;
 	private const MASTER_PID_KEY = 'master_pid';
 
 	/**
 	 * 构造函数：初始化服务配置
+	 *
+	 * @param array|null $ssl 由 bin/hyper 解析好的证书（命令行优先，其次 runtime/ssl 绑定）
 	 */
-	public function __construct() {
+	public function __construct(?array $ssl = null) {
+		$this->ssl = $ssl;
 		$this->initConfig();
 		$this->initGLOBALSCache();
 	}
@@ -105,6 +111,33 @@ class HttpServer {
 			? new Server($this->config['host'], $this->config['port'], SWOOLE_PROCESS)
 			: new SwooleHttpServer($this->config['host'], $this->config['port'], SWOOLE_PROCESS);
 		$this->server->set($this->config['swoole']);
+
+		// HTTPS：额外监听一个端口，HTTP 保持原样，避免绑证书后原有地址打不开。
+		// 证书由 Core\Http\Tls 解析（命令行 > runtime/ssl 绑定），配置错误时只是不加监听。
+		if ($this->ssl !== null) {
+			$port = (int)($this->ssl['port'] ?? 0);
+			$cert = (string)($this->ssl['cert'] ?? '');
+			$key = (string)($this->ssl['key'] ?? '');
+			if ($port > 0 && $port <= 65535 && $cert !== '' && $key !== '') {
+				try {
+					$listen = $this->server->addListener($this->config['host'], $port, SWOOLE_SOCK_TCP);
+					$listen->set([
+						'open_http_protocol' => true,
+						'enable_static_handler' => true,
+						'document_root' => __root__ . '/public',
+						'package_max_length' => $this->config['swoole']['package_max_length'],
+						'ssl_cert_file' => $cert,
+						'ssl_key_file' => $key,
+					]);
+					$this->sslPort = $port;
+				} catch (\Throwable $e) {
+					// 端口被占用 / 非 root 绑 443：不影响 HTTP 启动，只记一条告警
+					Logger::warning('[https] 监听 ' . $port . ' 失败：' . $e->getMessage() . '（HTTP 仍可用）');
+					$this->sslPort = 0;
+				}
+			}
+		}
+
 		Cache::$http = $this->server;
 	}
 
@@ -136,6 +169,13 @@ class HttpServer {
 		Logger::success(
 			"HTTP服务启动成功 | Host: {$this->config['host']} | Port: {$this->config['port']}"
 		);
+		if ($this->sslPort > 0 && $this->ssl !== null) {
+			Logger::success(
+				"HTTPS服务已启用 | Port: {$this->sslPort} | 证书来源: "
+				. (($this->ssl['source'] ?? '') === 'cli' ? '本次命令行' : '已绑定证书')
+				. (($this->ssl['domain'] ?? '') !== '' ? ' | 域名: ' . $this->ssl['domain'] : '')
+			);
+		}
 		Logger::success("Master PID: " . constant(self::MASTER_PID_KEY));
 		Logger::info($this->wsEnabled
 			? 'WebSocket 服务端已启用（OneBot 反向 WS / Milky WS 接入）'

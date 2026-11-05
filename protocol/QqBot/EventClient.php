@@ -71,11 +71,17 @@ class EventClient {
 			$retry = 1;
 			while (self::$running) {
 				$connected = false;
+				$connectedAt = 0.0;
 				try {
 					$connected = self::connectGateway();
 					if ($connected) {
-						$retry = 1;
+						$connectedAt = microtime(true);
 						self::gatewayLoop();
+						// 连接活过 10 秒才重置退避；刚连上就断时保持指数退避，
+						// 否则会每 2 秒重连一次并把 /gateway 打到频率限制
+						if (microtime(true) - $connectedAt > 10.0) {
+							$retry = 1;
+						}
 					}
 				} catch (\Throwable $e) {
 					Logger::error('[QqBot] Gateway 异常：' . $e->getMessage() . ' | ' . $e->getFile() . ':' . $e->getLine());
@@ -90,7 +96,7 @@ class EventClient {
 					}
 				}
 				if (!self::$running) break;
-				$delay = min(30, $retry * 2);
+				$delay = min(60, $retry * 2);
 				$retry++;
 				Logger::warning("[QqBot] Gateway 断开，{$delay} 秒后重连");
 				Coroutine::sleep($delay);
@@ -153,13 +159,21 @@ class EventClient {
 		return true;
 	}
 
+	/** recv 的读超时 errno（Linux ETIMEDOUT=110）：这是空闲，不是断线 */
+	private static function readTimeoutCode(): int {
+		return defined('SOCKET_ETIMEDOUT') ? (int)SOCKET_ETIMEDOUT : 110;
+	}
+
 	/** 读取第一个 Hello 包 */
 	private static function waitHello(): int {
 		$deadline = time() + 10;
 		while (time() < $deadline && self::$ws !== null) {
 			$frame = self::$ws->recv(1.0);
 			if (!$frame instanceof \Swoole\WebSocket\Frame) {
-				if (self::$ws !== null && self::$ws->errCode) return -1;
+				if (self::$ws === null) return -1;
+				$err = (int)self::$ws->errCode;
+				if ($err === self::readTimeoutCode()) continue;
+				if ($err !== 0 || !self::$ws->connected) return -1;
 				continue;
 			}
 			$payload = json_decode((string)$frame->data, true);
@@ -196,8 +210,18 @@ class EventClient {
 		while (self::$running && self::$ws !== null) {
 			$frame = self::$ws->recv(1.0);
 			if ($frame === false || $frame === null) {
-				if (self::$ws->errCode) {
-					Logger::warning('[QqBot] 网关断开 | errCode=' . self::$ws->errCode);
+				$client = self::$ws;
+				if ($client === null) break;
+				$err = (int)$client->errCode;
+				// 110=ETIMEDOUT：1 秒 recv 超时只说明暂时没包（心跳间隔几十秒），
+				// 之前把它当断线，导致 RESUMED 后 1 秒就重连、并发起频率限制
+				if ($err === self::readTimeoutCode()) continue;
+				if (!$client->connected) {
+					Logger::info('[QqBot] 网关连接已关闭');
+					break;
+				}
+				if ($err !== 0) {
+					Logger::warning('[QqBot] 网关断开 | errCode=' . $err);
 					break;
 				}
 				continue;
@@ -249,7 +273,11 @@ class EventClient {
 	}
 
 	private static function heartbeat(): void {
-		self::sendPayload(['op' => 1, 'd' => self::$lastSeq > 0 ? self::$lastSeq : null]);
+		if (!self::sendPayload(['op' => 1, 'd' => self::$lastSeq > 0 ? self::$lastSeq : null])) {
+			// 写不出去说明连接已经坏了：主动关闭，让 recv 循环退出并重连
+			Logger::warning('[QqBot] 心跳发送失败，关闭连接');
+			self::reconnect();
+		}
 	}
 
 	private static function sendPayload(array $payload): bool {

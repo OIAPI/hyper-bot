@@ -203,6 +203,9 @@ export const groupApi = {
   list: (q?: string, account?: string) => http.get<GroupList>('/groups', { query: { q, account } }),
   show: (id: string, account?: string) => http.get<Group>('/groups/' + encodeURIComponent(id), { query: { account } }),
   create: (payload: Record<string, unknown>) => http.post<Group>('/groups', payload),
+  /** 群名 / 备注 / 标签：官方机器人没有群列表接口时靠这里手动命名 */
+  updateMeta: (id: string, payload: { name?: string; note?: string; tags?: string[] }, account?: string) =>
+    http.patch<Group>('/groups/' + encodeURIComponent(id) + '/meta', { ...payload, account }),
   /** 让协议端 get_group_list 拉一次，把群名回填到面板 */
   sync: (account?: string) => http.post<{ synced: number; total: number }>('/groups/sync', {}, { query: { account } }),
   toggleStatus: (id: string, account?: string) =>

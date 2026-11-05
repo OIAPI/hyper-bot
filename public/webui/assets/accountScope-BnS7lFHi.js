@@ -1,1 +1,0 @@
-import{a as c}from"./vendor-Dj5rxJIJ.js";const t="hyper-account-scope",a=c(localStorage.getItem(t)??"");function s(o){const e=o??"";a.value=e,e!==""?localStorage.setItem(t,e):localStorage.removeItem(t),window.dispatchEvent(new CustomEvent("hyper:account-changed",{detail:e}))}export{s as a,a as s};

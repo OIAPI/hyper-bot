@@ -174,7 +174,12 @@ final class Metrics {
                 continue;
             }
             $seen[$groupId] = true;
-            $items[] = $this->normalizeGroup($groupId, [], (array)($groupMeta[$groupId] ?? []));
+            $eventMeta = (array)($groupMeta[$groupId] ?? []);
+            // 事件里带 group_name 时直接显示（官方机器人没有群列表接口，通常为空）
+            if (($eventMeta['name'] ?? '') === '' && (string)($event['group_name'] ?? '') !== '') {
+                $eventMeta['name'] = (string)$event['group_name'];
+            }
+            $items[] = $this->normalizeGroup($groupId, [], $eventMeta);
         }
 
         foreach ($groupMeta as $groupId => $meta) {

@@ -45,6 +45,8 @@ final class EventLog
             'group_id'     => (string)($event['group_id'] ?? ''),
             'user_id'      => (string)($event['user_id'] ?? ''),
             'raw_message'  => mb_substr(self::text($event['raw_message'] ?? ''), 0, 120),
+            // 有些协议会在事件里带群名；官方机器人目前没有，只能靠手动命名
+            'group_name'   => (string)($event['group_name'] ?? ($event['groupName'] ?? '')),
             'time'         => (int)($event['time'] ?? time()),
             'protocol'     => (string)($event['protocol'] ?? 'onebot'),
             'account'      => \Core\Bot\AccountContext::id(),

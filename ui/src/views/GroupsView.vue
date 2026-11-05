@@ -38,9 +38,9 @@ const accountOptions = computed(() =>
     value: a.id,
   })),
 )
-const canSyncGroups = computed(() =>
-  (accounts.value.find((a) => a.id === selectedAccount.value)?.protocol ?? 'onebot') === 'onebot',
-)
+const selectedAccountMeta = computed(() => accounts.value.find((a) => a.id === selectedAccount.value))
+const canSyncGroups = computed(() => (selectedAccountMeta.value?.protocol ?? 'onebot') === 'onebot')
+const isOfficialAccount = computed(() => selectedAccountMeta.value?.protocol === 'qqbot')
 watch(selectedAccount, (v) => {
   setScopedAccount(v)
   void load()
@@ -69,6 +69,39 @@ const visibleItems = computed(() => {
 
 const manage = ref<Group | null>(null)
 const pluginBusy = ref<string | null>(null)
+const metaName = ref('')
+const metaNote = ref('')
+const metaTags = ref('')
+const metaSaving = ref(false)
+
+function openManage(g: Group): void {
+  manage.value = g
+  metaName.value = g.name ?? ''
+  metaNote.value = g.note ?? ''
+  metaTags.value = (g.tags ?? []).join(', ')
+}
+
+async function saveMeta(): Promise<void> {
+  if (!manage.value || metaSaving.value) return
+  metaSaving.value = true
+  try {
+    const tags = metaTags.value
+      .split(/[,，\s]+/)
+      .map((v) => v.trim())
+      .filter((v) => v !== '')
+    const updated = await groupApi.updateMeta(
+      manage.value.group_id,
+      { name: metaName.value.trim(), note: metaNote.value.trim(), tags },
+      selectedAccount.value || undefined,
+    )
+    applyUpdate(updated)
+    toast.ok('群资料已保存')
+  } catch (e) {
+    toast.fromError(e, '保存群资料失败')
+  } finally {
+    metaSaving.value = false
+  }
+}
 
 const syncing = ref(false)
 
@@ -234,7 +267,12 @@ async function confirmRemove(): Promise<void> {
     <header class="page-head">
       <div>
         <h1>群组</h1>
-        <p class="sub">群配置按机器人账号隔离；先选择账号，再管理该账号下的群与插件开关。</p>
+        <p class="sub">
+          群配置按机器人账号隔离；先选择账号，再管理该账号下的群与插件开关。
+          <template v-if="isOfficialAccount">
+            官方机器人没有群列表接口，群通过消息事件发现；群名需在「管理」里手动填写。
+          </template>
+        </p>
       </div>
       <div class="row gap-8">
         <UiSelect v-model="selectedAccount" :options="accountOptions" class="account-select" />
@@ -302,7 +340,7 @@ async function confirmRemove(): Promise<void> {
             </span>
           </template>
           <template #cell-actions="{ row }">
-            <UiButton size="small" type="text" @click="manage = asGroup(row)">管理</UiButton>
+            <UiButton size="small" type="text" @click="openManage(asGroup(row))">管理</UiButton>
           </template>
         </UiTable>
 
@@ -317,6 +355,26 @@ async function confirmRemove(): Promise<void> {
 
     <UiDialog v-model="manageOpen" :title="'群 ' + (manage?.group_id ?? '')" width="560px">
       <div v-if="manage" class="manage">
+        <div class="meta-form">
+          <label class="meta-field">
+            <span class="field-label">群名</span>
+            <UiInput v-model="metaName" placeholder="官方群没有名称接口，可在这里手动命名" />
+          </label>
+          <label class="meta-field">
+            <span class="field-label">备注</span>
+            <UiInput v-model="metaNote" placeholder="例如：内测群 / 客户群" />
+          </label>
+          <label class="meta-field">
+            <span class="field-label">标签（逗号分隔）</span>
+            <UiInput v-model="metaTags" placeholder="技术, 内测" />
+          </label>
+          <div class="meta-actions">
+            <UiButton size="small" type="primary" :loading="metaSaving" @click="saveMeta">保存群资料</UiButton>
+          </div>
+        </div>
+
+        <UiDivider />
+
         <div class="row-between">
           <span class="field-label">该群启用状态</span>
           <UiSwitch
@@ -414,6 +472,14 @@ p.sub { margin: 3px 0 0; font-size: 12.5px; color: var(--text-faint); }
 .dim { color: var(--text-faint); }
 
 .manage { display: flex; flex-direction: column; gap: 10px; }
+.meta-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.meta-field { display: flex; flex-direction: column; gap: 5px; }
+.meta-field:first-child { grid-column: span 2; }
+.meta-actions { grid-column: span 2; display: flex; justify-content: flex-end; }
+@media (max-width: 520px) {
+  .meta-form { grid-template-columns: 1fr; }
+  .meta-field:first-child, .meta-actions { grid-column: span 1; }
+}
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .plugin-list { display: flex; flex-direction: column; gap: 12px; }
 .plugin-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }

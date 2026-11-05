@@ -32,7 +32,7 @@ final class Github extends BaseApp
                 [
                     'type' => 'text',
                     'text' => '在 GitHub 仓库 Settings → Webhooks 里添加：Payload URL = 本站地址 + /webhook/github/<订阅 id>，Content type 选 application/json，Secret 与下表一致。支持 push / issues / pull_request / release / star 等事件。通知群可填多个（逗号分隔）；模板留空用默认 [GitHub] 摘要。'
-                        . '事件过滤支持 event、event.action、push:分支、push.created/deleted/forced、release.*；留空表示全部。'
+                        . '事件过滤支持 event、event.action、push:分支、push:tag:v1.2.3、push:refs/tags/v*、push.created/deleted/forced、release.*；留空表示全部。'
                         . '内置变量：{event} {repo} {sender} {hook} {summary} {action} {branch} {tag} {number} {title} {url} {commits} {delivery}。'
                         . '也支持任意 JSON 路径：{json.issue.title}、{json.commits[0].message}、{json.head_commit.author.name}；{json} 输出整段 payload，取不到的字段为空。',
                 ],
@@ -71,7 +71,7 @@ final class Github extends BaseApp
                         ['key' => 'id', 'label' => '订阅 ID', 'placeholder' => '留空自动生成，如 hyper-bot'],
                         ['key' => 'secret', 'label' => 'Secret', 'type' => 'password', 'placeholder' => 'GitHub 里填同一个值；修改时留空沿用原 Secret'],
                         ['key' => 'note', 'label' => '备注', 'placeholder' => 'OIAPI/hyper-bot'],
-                        ['key' => 'events', 'label' => '事件', 'placeholder' => '逗号分隔，留空为全部；支持 release.published、issues.opened、push:main、push.created、release.*'],
+                        ['key' => 'events', 'label' => '事件', 'placeholder' => '逗号分隔，留空为全部；支持 release.published、push:main、push:tag:v1.2.3、push:refs/tags/v*、release.*'],
                         ['key' => 'groups', 'label' => '通知到群（可多个）', 'placeholder' => '群号，多个用逗号分隔；留空只记日志'],
                         ['key' => 'template', 'label' => '消息模板', 'type' => 'textarea', 'placeholder' => '留空默认 [GitHub] {summary}；可用 {event} {repo} {branch} {title} {url}，自定义字段写 {json.issue.title}、{json.commits[0].message}'],
                     ],

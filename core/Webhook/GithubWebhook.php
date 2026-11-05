@@ -115,7 +115,9 @@ final class GithubWebhook
         }
         $action = strtolower(trim((string)($payload['action'] ?? '')));
         $ref = strtolower((string)($payload['ref'] ?? ''));
-        $branch = strtolower(str_replace('refs/heads/', '', $ref));
+        $isTag = str_starts_with($ref, 'refs/tags/');
+        $branch = $isTag ? '' : (string)preg_replace('#^refs/heads/#', '', $ref);
+        $tag = $isTag ? substr($ref, strlen('refs/tags/')) : '';
 
         foreach ($list as $item) {
             if ($item === $event) {
@@ -136,12 +138,68 @@ final class GithubWebhook
                     return true;
                 }
             }
-            // event:ref / event#ref（push 分支过滤）
+            // event:ref / event#ref（push 分支 / 标签过滤，支持通配符）
             if (preg_match('/^' . preg_quote($event, '/') . '[:#](.+)$/', $item, $m)) {
-                $target = $m[1];
-                if ($target === '*' || $target === $branch || $target === $ref) {
+                if (self::refMatches($m[1], $ref, $branch, $tag, $isTag)) {
                     return true;
                 }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * push 的 ref 过滤。
+     *
+     *   push:main                 短分支名
+     *   push:heads/main           等价写法
+     *   push:refs/heads/main      完整 ref
+     *   push:tag / push:tags      任意标签推送
+     *   push:tag:v3.2.20          标签名
+     *   push:tags/v3.2.20         同上
+     *   push:refs/tags/v3.2.20    完整标签 ref
+     *   push:refs/tags/v*         通配符（fnmatch）
+     */
+    private static function refMatches(string $target, string $ref, string $branch, string $tag, bool $isTag): bool
+    {
+        $target = trim($target);
+        if ($target === '') {
+            return false;
+        }
+        if ($target === '*') {
+            return true;
+        }
+        if (in_array($target, ['tag', 'tags'], true)) {
+            return $isTag;
+        }
+        $patterns = [];
+        if (str_starts_with($target, 'tag:')) {
+            $patterns[] = 'refs/tags/' . substr($target, 4);
+        } elseif (str_starts_with($target, 'tags/')) {
+            $patterns[] = 'refs/tags/' . substr($target, 5);
+        } elseif (str_starts_with($target, 'branch:')) {
+            $patterns[] = 'refs/heads/' . substr($target, 7);
+        } elseif (str_starts_with($target, 'heads/')) {
+            $patterns[] = 'refs/heads/' . substr($target, 6);
+        } else {
+            $patterns[] = $target;
+        }
+        // 同时匹配完整 ref、短分支名、短标签名
+        foreach ($patterns as $pattern) {
+            foreach ([$ref, $branch, $tag] as $subject) {
+                if ($subject === '') {
+                    continue;
+                }
+                if ($pattern === $subject || fnmatch($pattern, $subject)) {
+                    return true;
+                }
+            }
+            // tag:v3.2.20 这种展开成完整 ref 后，subject 只可能是完整 ref
+            if (str_starts_with($pattern, 'refs/tags/') && fnmatch($pattern, $ref)) {
+                return true;
+            }
+            if (str_starts_with($pattern, 'refs/heads/') && fnmatch($pattern, $ref)) {
+                return true;
             }
         }
         return false;

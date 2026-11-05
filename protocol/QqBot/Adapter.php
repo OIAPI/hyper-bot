@@ -103,10 +103,12 @@ class Adapter extends BaseAdapter {
 		[$msgType, $extra] = $this->buildMessageBody($segments, $isGroup, $p);
 
 		// 被动回复上下文（msg_id + msg_seq）
+		$passive = false;
 		$ctx = EventClient::passiveContext(($isGroup ? 'group:' : 'user:') . $target);
 		if ($ctx !== null && empty($extra['msg_id'])) {
 			$extra['msg_id']  = $ctx['msg_id'];
 			$extra['msg_seq'] = $ctx['msg_seq'];
+			$passive = true;
 		}
 
 		$path = $isGroup
@@ -115,8 +117,12 @@ class Adapter extends BaseAdapter {
 
 		$result = $this->request('POST', $path, array_merge(['msg_type' => $msgType], $extra));
 		if (($result['code'] ?? 0) !== 0 && isset($result['code'])) {
-			return $this->fail((int)$result['code'], (string)($result['message'] ?? '发送失败'));
+			$code = (int)$result['code'];
+			$msg  = (string)($result['message'] ?? '发送失败');
+			Logger::warning("[QqBot] 消息发送失败 | {$path} | passive=" . ($passive ? '1' : '0') . " | code={$code} | {$msg}");
+			return $this->fail($code, $msg);
 		}
+		Logger::debug("[QqBot] 消息已发送 | {$path} | passive=" . ($passive ? '1' : '0') . " | id=" . (string)($result['id'] ?? ''));
 		return $this->ok([
 			'message_id' => $result['id'] ?? '',
 			'timestamp'  => $result['timestamp'] ?? '',

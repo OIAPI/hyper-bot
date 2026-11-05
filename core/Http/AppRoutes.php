@@ -194,7 +194,7 @@ final class AppRoutes
             ],
             'qqbot' => [
                 'enable'  => Config::bool('protocol.qqbot.enable', false),
-                'api'     => Config::string('protocol.qqbot.api', ''),
+                'api'     => \Protocol\QqBot\Token::apiBase(),
                 'gateway' => QqBotClient::status(),
             ],
         ]);

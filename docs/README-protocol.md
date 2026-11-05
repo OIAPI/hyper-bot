@@ -100,13 +100,14 @@ ws.server_path = /milky/event
 
 ### 2.3 QQ 官方机器人
 
+QQ 官方机器人的 API 域名固定：生产 `https://api.bot.qq.com`，沙箱
+`https://sandbox.api.sgroup.qq.com`；在「机器人账号」页勾选「沙箱模式」即可切换。
+
 ```ini
 [protocol.qqbot]
 enable = true
-app_id = 你的AppID
-client_secret = 你的AppSecret
-api = https://api.bot.qq.com
-token_url = https://api.bot.qq.com/app/getAppAccessToken
+; AppID / AppSecret 在「机器人账号」页添加（生产/沙箱在账号里切换）；
+; 这里的 app_id / client_secret 只作为旧配置迁移回落，api 域名固定不再配置
 ; 事件接入方式：webhook / ws
 event.mode = ws
 webhook.path = /api/protocol/qqbot/webhook

@@ -117,7 +117,7 @@ final class Metrics {
                 'enabled' => Config::bool('qqbot.enable', false),
                 'mode'    => Config::string('qqbot.event.mode', 'ws'),
                 'detail'  => [
-                    'api'     => Config::string('qqbot.api', ''),
+                    'api'     => \Protocol\QqBot\Token::apiBase(),
                     'app_id'  => Config::string('qqbot.app_id', ''),
                     'status'  => QqBotClient::status(),
                 ],

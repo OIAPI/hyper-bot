@@ -171,7 +171,8 @@ final class Bootstrap
                             break;
                         case 'qqbot':
                             \Protocol\QqBot\EventClient::start();
-                            $started[] = 'QQ 官方机器人[' . $label . '] → ' . \Core\Config::string('protocol.qqbot.api', 'https://api.bot.qq.com')
+                            $started[] = 'QQ 官方机器人[' . $label . '] → ' . \Protocol\QqBot\Token::apiBase()
+                                . (\Protocol\QqBot\Token::sandbox() ? '（沙箱）' : '')
                                 . '（事件：' . \Core\Config::string('protocol.qqbot.event.mode', 'ws') . '）';
                             break;
                         default:
@@ -219,7 +220,8 @@ final class Bootstrap
         // ---------- QQ 官方机器人 ----------
         if (\Core\Config::bool('protocol.qqbot.enable', false)) {
             \Protocol\QqBot\EventClient::start();
-            $started[] = 'QQ 官方机器人 → ' . \Core\Config::string('protocol.qqbot.api', 'https://api.bot.qq.com')
+            $started[] = 'QQ 官方机器人 → ' . \Protocol\QqBot\Token::apiBase()
+                . (\Protocol\QqBot\Token::sandbox() ? '（沙箱）' : '')
                 . '（事件：' . \Core\Config::string('protocol.qqbot.event.mode', 'ws') . '）';
         }
     }

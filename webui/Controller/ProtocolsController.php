@@ -162,7 +162,8 @@ final class ProtocolsController extends Base {
             ],
             'qqbot' => [
                 ['label' => 'WebHook（管理端填这个，需公网 HTTPS）', 'url' => 'https://<公网域名>' . Config::string('qqbot.webhook.path', '/api/protocol/qqbot/webhook'), 'kind' => 'http'],
-                ['label' => 'Gateway（出站长连接）', 'url' => Config::string('qqbot.api', 'https://api.bot.qq.com') . '/gateway', 'kind' => 'ws'],
+                ['label' => 'Gateway（生产）', 'url' => \Core\Bot\Accounts::QQ_PROD_API . '/gateway', 'kind' => 'ws'],
+                ['label' => 'Gateway（沙箱，在机器人账号里开启）', 'url' => \Core\Bot\Accounts::QQ_SANDBOX_API . '/gateway', 'kind' => 'ws'],
             ],
         ];
         return $map[$name] ?? [];
@@ -173,7 +174,7 @@ final class ProtocolsController extends Base {
         return match ($name) {
             'onebot' => ['enable', 'forward.enable', 'forward.url', 'forward.token', 'reverse.enable', 'reverse.path', 'reverse.token', 'self_id'],
             'milky'  => ['enable', 'api', 'token', 'timeout', 'event.mode', 'webhook.path', 'ws.url', 'sse.url', 'ws.server_path'],
-            'qqbot'  => ['enable', 'app_id', 'client_secret', 'api', 'token_url', 'event.mode', 'webhook.path', 'webhook.verify', 'intents', 'gateway.shard', 'gateway.shard_id', 'gateway.shard_count', 'gateway.resume', 'self_id'],
+            'qqbot'  => ['enable', 'event.mode', 'webhook.path', 'webhook.verify', 'intents', 'gateway.shard', 'gateway.shard_id', 'gateway.shard_count', 'gateway.resume', 'self_id'],
             default  => [],
         };
     }

@@ -2,7 +2,6 @@
 namespace Api;
 
 use Utils\CoroutineCurl;
-use Utils\Env;
 
 class app {
 	protected $config, $api;
@@ -19,13 +18,13 @@ class app {
 		if ($this->api === '') {
 			$this->api = match ($protocol) {
 				'qqbot' => \Protocol\QqBot\Token::apiBase(),
-				'milky' => (string)(\Core\Config::string('protocol.milky.api', '') ?: Env::get('cq.api')),
-				default => (string)Env::get('cq.api'),
+				'milky' => (string)\Core\Config::string('protocol.milky.api', ''),
+				default => '',
 			};
 		}
 		$this->curl = new CoroutineCurl();
 		$this->curl->timeout(120);
-		$this->curl->addheaders('Authorization', 'Bearer ' . ((($account['token'] ?? '') ?: Env::get('cq.auth'))));
+		$this->curl->addheaders('Authorization', 'Bearer ' . ((string)($account['token'] ?? '')));
 		$this->curl->addheaders('content-type', 'application/json');
 	}
 	/**
@@ -59,7 +58,7 @@ class app {
 	/**
 	 * 这个 URL 是否属于「当前账号的协议端」。
 	 *
-	 * 不能只看 {cq.api}：QQ 官方机器人 / Milky 的 api 是账号自己的地址。
+	 * 只看机器人账号里配置的 api（OneBot / Milky），不再使用历史 [cq] 配置。
 	 * 有事件上下文时，回复必须交给来源适配器，不能直连 HTTP。
 	 */
 	protected function shouldBridge(string $url) : bool {
@@ -74,7 +73,7 @@ class app {
 	}
 
 	/**
-	 * 从完整 URL 提取 OneBot action 名（{cq.api}/send_group_msg → send_group_msg）
+	 * 从完整 URL 提取 OneBot action 名（{账号 api}/send_group_msg → send_group_msg）
 	 */
 	protected function actionOf(string $url) : string {
 		$path = parse_url($url, PHP_URL_PATH) ?: $url;

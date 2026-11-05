@@ -133,6 +133,7 @@ const form = ref({
   forward_token: '',
   app_id: '',
   client_secret: '',
+  sandbox: false,
   remark: '',
   enable: true,
 })
@@ -150,6 +151,7 @@ function openCreate(): void {
     forward_token: '',
     app_id: '',
     client_secret: '',
+    sandbox: false,
     remark: '',
     enable: true,
   }
@@ -171,6 +173,7 @@ function openEdit(row: BotAccount): void {
     forward_token: '',
     app_id: row.app_id ?? '',
     client_secret: '',
+    sandbox: Boolean(row.sandbox),
     remark: row.remark ?? '',
     enable: row.enable,
   }
@@ -202,6 +205,7 @@ async function save(): Promise<void> {
     }
     if (isQqbot) {
       payload.app_id = form.value.app_id.trim()
+      payload.sandbox = form.value.sandbox
       // 空 secret 表示「不修改」，复用已保存的 AppSecret
       if (form.value.client_secret) payload.client_secret = form.value.client_secret
     } else {
@@ -330,7 +334,7 @@ onMounted(load)
         <template #cell-endpoint="{ row }">
           <template v-if="row.protocol === 'qqbot'">
             <div class="mono ellipsis">{{ row.app_id ? 'AppID ' + row.app_id : '未配置 AppID' }}</div>
-            <div class="mono ellipsis dim">QQ 开放平台</div>
+            <div class="mono ellipsis dim">{{ row.sandbox ? '沙箱环境' : '生产环境' }} · QQ 开放平台</div>
           </template>
           <template v-else>
             <div class="mono ellipsis">{{ row.api || '—' }}</div>
@@ -384,10 +388,14 @@ onMounted(load)
               :placeholder="editing ? '留空表示不修改' : 'QQ 开放平台的 AppSecret'"
             />
           </label>
+          <label class="field inline span-2">
+            <UiSwitch v-model="form.sandbox" />
+            <span class="field-label">沙箱模式（使用 sandbox.api.sgroup.qq.com）</span>
+          </label>
           <div class="field span-2 field-hint">
-            官方机器人只需要 AppID + AppSecret，不需要 API 地址 / Token；
-            请同时在「账号连接」页打开 QQ 官方机器人总开关。回调地址、端口与事件接入方式
-            在 <code>Config.ini</code> 的 <code>[protocol.qqbot]</code> 里配置。
+            官方机器人只需要 AppID + AppSecret，API 域名固定（生产 / 沙箱二选一），
+            不需要填 API 地址 / Token；请同时在「账号连接」页打开 QQ 官方机器人总开关。
+            回调地址与事件接入方式在 <code>Config.ini</code> 的 <code>[protocol.qqbot]</code> 里配置。
           </div>
         </template>
         <template v-else>

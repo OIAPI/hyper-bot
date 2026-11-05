@@ -38,6 +38,24 @@ $check('AppID 已保存', ($row['app_id'] ?? '') === '102030405');
 $pub = Accounts::publicRow($row);
 $check('publicRow 不回显 AppSecret', !array_key_exists('client_secret', $pub));
 $check('publicRow 标记 secret 已配置', ($pub['client_secret_set'] ?? false) === true);
+$check('默认使用生产 API', ($row['api'] ?? '') === Accounts::QQ_PROD_API);
+$check('默认不是沙箱', ($row['sandbox'] ?? true) === false);
+$check('Token 默认生产 API', \Protocol\QqBot\Token::apiBase() === Accounts::QQ_PROD_API);
+
+// 沙箱开关：固定切到沙箱域名；自定义 api 一律忽略
+$r = Accounts::upsert([
+    'id' => $id, 'protocol' => 'qqbot', 'app_id' => '102030405',
+    'sandbox' => true, 'api' => 'https://evil.example.com',
+]);
+$row = Accounts::get($id);
+$check('沙箱开关已保存', ($row['sandbox'] ?? false) === true);
+$check('沙箱 API 固定', ($row['api'] ?? '') === Accounts::QQ_SANDBOX_API);
+$check('Token 跟随沙箱', \Protocol\QqBot\Token::apiBase() === Accounts::QQ_SANDBOX_API);
+Accounts::upsert([
+    'id' => $id, 'protocol' => 'qqbot', 'app_id' => '102030405', 'sandbox' => false,
+]);
+$row = Accounts::get($id);
+$check('关闭沙箱回到生产', ($row['api'] ?? '') === Accounts::QQ_PROD_API);
 
 // 编辑时 secret 留空 = 沿用
 $r = Accounts::upsert([

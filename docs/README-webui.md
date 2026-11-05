@@ -284,7 +284,7 @@ WebSocket 服务端**不再默认启动**。只有当下面任一条件成立时
 
 1. `[protocol.onebot] api` 没填或端口不对（默认 `http://127.0.0.1:3001`）
 2. 实现端的 HTTP 服务没开，或 token 与 `[protocol.onebot] token` 不一致
-3. 用的是旧配置里的 `[cq] api` —— 仍然支持，`cq.api` 会映射到 `protocol.onebot.api`（2.1.8 修正：之前误当成纯遗留隐藏了）
+3. 还在等旧配置 `[cq]` —— 现在发送只读「机器人账号」；`[cq]` 仅在首次建账号时作为迁移来源，改它不会再影响发送
 
 面板「连接」页选 OneBot，点 **测试发送**，会真的调一次 `get_login_info` 并显示：
 

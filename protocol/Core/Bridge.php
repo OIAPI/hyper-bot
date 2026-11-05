@@ -12,8 +12,7 @@ use Utils\Logger;
  * 默认后端由 [protocol] default 决定（http / onebot / milky / qqbot）：
  *  - 有事件上下文时永远优先用事件来源适配器（保证回复回到同一条连接/同一个账号）；
  *  - 没有事件上下文时（定时任务、WebUI 主动发消息、CLI 工具），
- *    以前固定回落 {cq.api} HTTP，导致「已经改用 Milky / 官方机器人」的部署
- *    在这类主动发送场景仍然把消息发给旧协议端。现在按配置选择。
+ *    按 [protocol] default 选择后端；不再回落到历史 [cq] 配置。
  */
 class Bridge {
 	private static ?Adapter $fallback = null;
@@ -170,33 +169,6 @@ class Bridge {
 			'qqbot'  => new \Protocol\QqBot\Adapter(),
 			default  => new HttpAdapter(),
 		};
-	}
-
-	/**
-	 * 该 URL 是否指向协议端自身（{cq.api} 前缀）
-	 *
-	 * 只有协议端的调用才是 OneBot action，第三方 HTTP 接口必须直连。
-	 */
-	public static function isProtocolUrl(string $url): bool {
-		$base = rtrim((string)\Utils\Env::get('cq.api', ''), '/');
-		if ($base === '') {
-			return false;
-		}
-		return str_starts_with($url, $base);
-	}
-
-	/**
-	 * 这次调用是否需要经协议桥
-	 *
-	 * 命中条件：URL 属于协议端，并且
-	 *  - 当前事件有来源适配器（事件驱动的回复），或
-	 *  - 默认后端不是 http（主动发送场景也应走新协议）
-	 */
-	public static function routes(string $url): bool {
-		if (!self::isProtocolUrl($url)) {
-			return false;
-		}
-		return self::hasAdapter() || self::fallback()->name() !== 'http';
 	}
 
 	/** 当前是否绑定了非 HTTP 适配器（协程安全：读的是协程上下文） */

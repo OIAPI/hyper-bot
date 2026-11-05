@@ -2,11 +2,10 @@
 namespace Protocol\Core;
 
 use Utils\CoroutineCurl;
-use Utils\Env;
 
 /**
  * 传统 HTTP OneBot/CQ 协议端适配器（基线能力）
- * 直接以 HTTP 调用 ${cq.api}，兼容原有 webhook-only 部署。
+ * 直接以 HTTP 调用机器人账号里配置的 api，兼容原有 webhook-only 部署。
  */
 class HttpAdapter extends Adapter {
 	protected string $name = 'http';
@@ -18,12 +17,15 @@ class HttpAdapter extends Adapter {
 		// 多账号：优先用当前事件所属账号的 api / token；
 		// 没有事件上下文时，如果该协议只有一个启用账号也用它，最后才回落配置。
 		$account = \Core\Bot\AccountContext::current() ?? \Core\Bot\Accounts::forProtocol('onebot');
-		$this->base  = rtrim((string)(($account['api'] ?? '') ?: Env::get('cq.api', '')), '/');
-		$this->token = (string)(($account['token'] ?? '') ?: Env::get('cq.auth', ''));
+		$this->base  = rtrim((string)($account['api'] ?? ''), '/');
+		$this->token = (string)($account['token'] ?? '');
 		parent::__construct($config);
 	}
 
 	public function call(string $action, array $params = [], string $method = 'POST'): object {
+		if ($this->base === '') {
+			return $this->fail(-1, '未配置 OneBot 账号的 API 地址（请到「机器人账号」页填写）');
+		}
 		$curl = new CoroutineCurl();
 		$curl->timeout(120);
 		if ($this->token !== '') {

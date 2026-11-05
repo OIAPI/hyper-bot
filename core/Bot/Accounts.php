@@ -22,6 +22,10 @@ final class Accounts
         'qqbot'  => 'QQ 官方机器人',
     ];
 
+    /** QQ 官方机器人固定域名：生产 / 沙箱（不允许自定义） */
+    public const QQ_PROD_API = 'https://api.bot.qq.com';
+    public const QQ_SANDBOX_API = 'https://sandbox.api.sgroup.qq.com';
+
     private static string $path = '';
     /** @var array<int, array<string, mixed>>|null */
     private static ?array $cache = null;
@@ -159,6 +163,7 @@ final class Accounts
         $selfId = trim((string)($data['self_id'] ?? ''));
         $appId = $isQqbot ? trim((string)($data['app_id'] ?? '')) : '';
         $clientSecret = $isQqbot ? trim((string)($data['client_secret'] ?? '')) : '';
+        $sandbox = $isQqbot && (bool)($data['sandbox'] ?? false);
         // 官方机器人没有 QQ 号：没填 self_id 时用 AppID 做账号标识（事件/回包都按它路由）
         if ($isQqbot && $selfId === '' && $appId !== '') {
             $selfId = $appId;
@@ -170,8 +175,9 @@ final class Accounts
             return self::fail('AppID 只能包含字母、数字、下划线、短横线，最长 64 字符');
         }
 
-        $api = trim((string)($data['api'] ?? ''));
-        if ($api !== '' && preg_match('#^https?://#i', $api) !== 1) {
+        // QQ 官方机器人的 API 固定为生产/沙箱域名，不接受自定义地址
+        $api = $isQqbot ? '' : trim((string)($data['api'] ?? ''));
+        if (!$isQqbot && $api !== '' && preg_match('#^https?://#i', $api) !== 1) {
             return self::fail('API 地址必须以 http:// 或 https:// 开头');
         }
 
@@ -202,16 +208,17 @@ final class Accounts
         // 更新时，未提交的字段沿用原值：面板只改一个开关不会把 token / api 清空
         if ($existing !== null) {
             $prev = $rows[$existing];
-            foreach (['name', 'self_id', 'enable', 'api', 'token', 'forward_url', 'forward_token', 'remark', 'app_id', 'client_secret'] as $key) {
+            foreach (['name', 'self_id', 'enable', 'api', 'token', 'forward_url', 'forward_token', 'remark', 'app_id', 'client_secret', 'sandbox'] as $key) {
                 if (!array_key_exists($key, $data)) {
                     $data[$key] = $prev[$key] ?? '';
                 }
             }
             $selfId = trim((string)($data['self_id'] ?? ''));
-            $api = trim((string)($data['api'] ?? ''));
+            $api = $isQqbot ? '' : trim((string)($data['api'] ?? ''));
             if ($isQqbot) {
                 $appId = trim((string)($data['app_id'] ?? ''));
                 $clientSecret = trim((string)($data['client_secret'] ?? ''));
+                $sandbox = (bool)($data['sandbox'] ?? false);
             }
         }
         if ($isQqbot) {
@@ -223,9 +230,7 @@ final class Accounts
             if ($clientSecret === '' && $existing === null) {
                 return self::fail('官方机器人需要 AppSecret');
             }
-            if ($api === '') {
-                $api = 'https://api.bot.qq.com';
-            }
+            $api = $sandbox ? self::QQ_SANDBOX_API : self::QQ_PROD_API;
         }
 
         $name = trim((string)($data['name'] ?? ''));
@@ -241,6 +246,7 @@ final class Accounts
             'forward_token' => (string)($data['forward_token'] ?? ''),
             'app_id'        => $appId,
             'client_secret' => $clientSecret,
+            'sandbox'       => $sandbox,
             'remark'        => trim((string)($data['remark'] ?? '')),
             'updated_at'    => date('c'),
         ];
@@ -361,12 +367,13 @@ final class Accounts
                 'protocol'      => 'qqbot',
                 'self_id'       => $self !== '' ? $self : trim(Config::string('protocol.qqbot.app_id', '')),
                 'enable'        => true,
-                'api'           => Config::string('protocol.qqbot.api', 'https://api.bot.qq.com'),
+                'api'           => self::QQ_PROD_API,
                 'token'         => '',
                 'forward_url'   => '',
                 'forward_token' => '',
                 'app_id'        => trim(Config::string('protocol.qqbot.app_id', '')),
                 'client_secret' => Config::string('protocol.qqbot.client_secret', ''),
+                'sandbox'       => false,
                 'remark'        => '由 Config.ini 迁移',
                 'created_at'    => $now,
                 'updated_at'    => $now,
@@ -406,6 +413,7 @@ final class Accounts
                 'forward_token' => (string)($row['forward_token'] ?? ''),
                 'app_id'        => (string)($row['app_id'] ?? ''),
                 'client_secret' => (string)($row['client_secret'] ?? ''),
+                'sandbox'       => (bool)($row['sandbox'] ?? str_contains(strtolower((string)($row['api'] ?? '')), 'sandbox')),
                 'remark'        => (string)($row['remark'] ?? ''),
                 'created_at'    => (string)($row['created_at'] ?? ''),
                 'updated_at'    => (string)($row['updated_at'] ?? ''),
@@ -422,6 +430,8 @@ final class Accounts
                 if ($normalized['client_secret'] === '') {
                     $normalized['client_secret'] = Config::string('protocol.qqbot.client_secret', '');
                 }
+                // API 域名固定：老数据里自定义的地址一律归一化（沙箱只认 sandbox 标记）
+                $normalized['api'] = $normalized['sandbox'] ? self::QQ_SANDBOX_API : self::QQ_PROD_API;
             }
             $rows[] = $normalized;
         }

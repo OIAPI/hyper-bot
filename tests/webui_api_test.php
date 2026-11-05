@@ -392,12 +392,15 @@ $ok('viewer 可读账号', $viewerAcc['status'] === 200);
 $viewerWrite = $call('POST', '/webui/api/accounts', ['protocol' => 'qqbot', 'self_id' => '1004004'], $viewerToken);
 $ok('viewer 建号 → 403', $viewerWrite['status'] === 403);
 
-$ac2 = $call('POST', '/webui/api/accounts', ['protocol' => 'qqbot', 'self_id' => '1002002', 'name' => '第二个号'], $token);
+$ac2 = $call('POST', '/webui/api/accounts', [
+    'protocol' => 'qqbot', 'self_id' => '1002002', 'name' => '第二个号',
+    'app_id' => '1002002', 'client_secret' => 'test-secret',
+], $token);
 $ok('同一机器人可加多个协议账号', ($ac2['json']['code'] ?? 0) === 1);
 
 $ad = $call('DELETE', '/webui/api/accounts/onebot-1001', [], $token);
 $ok('删除账号', ($ad['json']['code'] ?? 0) === 1);
-$adLast = $call('DELETE', '/webui/api/accounts/1002002', [], $token);
+$adLast = $call('DELETE', '/webui/api/accounts/qqbot-1002002', [], $token);
 $ok('删到剩一个 → 拒绝（至少保留一个账号）', $adLast['status'] === 400);
 
 echo "== 第三方登录 ==\n";

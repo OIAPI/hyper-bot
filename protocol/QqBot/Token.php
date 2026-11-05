@@ -8,7 +8,7 @@ use Protocol\Core\Config;
 /**
  * QQ 官方机器人 AccessToken 管理
  *
- * POST https://api.bot.qq.com/app/getAppAccessToken
+ * POST https://api.bot.qq.com/app/getAppAccessToken（生产/沙箱共用）
  *   body: {"appId":"...","clientSecret":"..."}
  *   成功: {"access_token":"...","expires_in":"7200"}（expires_in 是字符串）
  *   失败: {"code":100007,...,"message":"..."} —— 失败时 HTTP 仍是 200，必须按 body.code 判断
@@ -49,17 +49,19 @@ class Token {
 		return (string)(Config::string('qqbot.client_secret', '') ?: getenv('QQ_BOT_CLIENT_SECRET'));
 	}
 
-	public static function apiBase(): string {
-		$fromAccount = self::fromAccount('qqbot.api');
-		if ($fromAccount !== '') return rtrim($fromAccount, '/');
-		$fromEnabled = self::fromEnabledAccount('api');
-		if ($fromEnabled !== '') return rtrim($fromEnabled, '/');
-		return rtrim((string)Config::string('qqbot.api', 'https://api.bot.qq.com'), '/');
+	/** 当前账号是否沙箱模式（QQ 官方只允许生产/沙箱两个固定域名） */
+	public static function sandbox(): bool {
+		$account = \Core\Bot\AccountContext::current() ?? \Core\Bot\Accounts::firstEnabled('qqbot');
+		return $account !== null && (bool)($account['sandbox'] ?? false);
 	}
 
-	/** token 接口地址（允许独立配置，便于沙箱/代理） */
+	public static function apiBase(): string {
+		return self::sandbox() ? \Core\Bot\Accounts::QQ_SANDBOX_API : \Core\Bot\Accounts::QQ_PROD_API;
+	}
+
+	/** token 接口固定（生产/沙箱共用同一个发 token 的入口） */
 	private static function tokenUrl(): string {
-		return (string)Config::string('qqbot.token_url', 'https://api.bot.qq.com/app/getAppAccessToken');
+		return 'https://api.bot.qq.com/app/getAppAccessToken';
 	}
 
 	/**

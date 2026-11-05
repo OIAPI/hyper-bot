@@ -86,6 +86,7 @@ final class AccountContext
             $map['qqbot.app_id'] = (string)($account['app_id'] ?? ($account['self_id'] ?? ''));
             $map['qqbot.client_secret'] = (string)($account['client_secret'] ?? '');
             $map['qqbot.self_id'] = (string)($account['self_id'] ?? '');
+            $map['qqbot.sandbox'] = (bool)($account['sandbox'] ?? false);
         }
 
         if (array_key_exists($key, $map)) {

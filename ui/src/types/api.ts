@@ -428,6 +428,8 @@ export interface BotAccount {
   remark?: string
   /** QQ 官方机器人：AppID（self_id 缺省时也用它做账号标识） */
   app_id?: string
+  /** QQ 官方机器人：沙箱环境开关（固定切到 sandbox.api.sgroup.qq.com） */
+  sandbox?: boolean
   /** 只写：提交时带上表示要改 AppSecret，响应里永远不回显 */
   client_secret?: string
   client_secret_set?: boolean

@@ -33,27 +33,9 @@ function with_config(string $ini, callable $fn): void {
     }
 }
 
-echo "== 1. 第三方 URL 不能被当成 OneBot action ==\n";
-
-with_config("[cq]\napi = \"http://127.0.0.1:5700\"\nauth = token\n", function () {
-    ok('isProtocolUrl 识别协议端 URL', \Protocol\Core\Bridge::isProtocolUrl('http://127.0.0.1:5700/send_group_msg'));
-    ok('isProtocolUrl 拒绝第三方 URL', !\Protocol\Core\Bridge::isProtocolUrl('http://oiapi.net/api/Protobuf/'));
-
-    // 绑定假适配器后：协议端 URL 应走桥，第三方 URL 不应走桥
-    \Core\Bot\Context::bind(new class extends \Protocol\Core\Adapter {
-        protected string $name = 'spy';
-        public function call(string $action, array $params = [], string $method = 'POST'): object {
-            return (object)['status' => 'ok', 'retcode' => 0, 'data' => null, 'message' => ''];
-        }
-    });
-    ok('协议端 URL 走桥', \Protocol\Core\Bridge::routes('http://127.0.0.1:5700/send_group_msg'));
-    ok('第三方 URL 不走桥', !\Protocol\Core\Bridge::routes('http://oiapi.net/api/Protobuf/'));
-    ok('带路径斜杠的协议端 URL 也走桥', \Protocol\Core\Bridge::routes('http://127.0.0.1:5700/send_group_msg/'));
-
-    // actionOf 仍然能取末尾段（供桥使用）
-    $actionOf = new ReflectionMethod(\Api\app::class, 'actionOf');
-    ok('actionOf 取末尾段', $actionOf->invoke(new \Api\app(), 'http://127.0.0.1:5700/send_group_msg') === 'send_group_msg');
-});
+echo "== 1. action 名解析（机器人账号 API 前缀由 Api\\app::shouldBridge 判断） ==\n";
+$actionOf = new ReflectionMethod(\Api\app::class, 'actionOf');
+ok('actionOf 取末尾段', $actionOf->invoke(new \Api\app(), 'http://127.0.0.1:5700/send_group_msg') === 'send_group_msg');
 
 echo "\n== 2. WS 超时不能回落 HTTP（send_* 非幂等） ==\n";
 $ws = (string)file_get_contents(dirname(__DIR__) . '/protocol/OneBot/WsHub.php');
@@ -106,7 +88,8 @@ $b = (string)file_get_contents(dirname(__DIR__) . '/protocol/Core/Bridge.php');
 ok('Bridge::fallback() 存在', str_contains($b, 'public static function fallback()'));
 ok('按 defaultBackend 构造', str_contains($b, 'Config::defaultBackend()'));
 ok('未启用时回落 HTTP', str_contains($b, '未启用，回落 HTTP'));
-ok('默认后端非 http 时主动发送也走桥', str_contains($b, "self::fallback()->name() !== 'http'"));
+$appSrc = (string)file_get_contents(dirname(__DIR__) . '/api/app.php');
+ok('默认后端非 http 时主动发送也走桥', str_contains($appSrc, "Bridge::fallback()->name() !== 'http'"));
 
 with_config("[protocol]\ndefault = milky\n[protocol.milky]\nenable = false\n", function () {
     ok('milky 未启用 → 默认后端 http', \Protocol\Core\Bridge::fallback()->name() === 'http');

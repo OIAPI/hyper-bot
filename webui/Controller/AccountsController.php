@@ -64,7 +64,7 @@ final class AccountsController extends Base
         $payload = $this->payload($request);
         $payload['id'] = $id;
         // 未提交的字段沿用原值，避免面板只改一个开关时把 token 清空
-        foreach (['protocol', 'self_id', 'api', 'token', 'forward_url', 'forward_token', 'remark', 'name', 'app_id', 'client_secret'] as $key) {
+        foreach (['protocol', 'self_id', 'api', 'token', 'forward_url', 'forward_token', 'remark', 'name', 'app_id', 'client_secret', 'sandbox'] as $key) {
             if (!array_key_exists($key, $payload)) {
                 $payload[$key] = $current[$key] ?? '';
             }
@@ -99,7 +99,7 @@ final class AccountsController extends Base
     private function payload(Request $request): array
     {
         $input = $request->params();
-        $keys = ['id', 'name', 'protocol', 'self_id', 'enable', 'api', 'token', 'forward_url', 'forward_token', 'app_id', 'client_secret', 'remark'];
+        $keys = ['id', 'name', 'protocol', 'self_id', 'enable', 'api', 'token', 'forward_url', 'forward_token', 'app_id', 'client_secret', 'sandbox', 'remark'];
         $out = [];
         foreach ($keys as $key) {
             if (array_key_exists($key, $input)) {

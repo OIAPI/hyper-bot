@@ -15,8 +15,8 @@ $ok = function (string $name, bool $cond, string $detail = '') use (&$fail) {
 echo "== Core\\Config ==\n";
 $ok('读取 app.debug', \Core\Config::bool('app.debug', false) === true, 'got ' . var_export(\Core\Config::get('app.debug'), true));
 $ok('读取 protocol.default', \Core\Config::string('protocol.default') === 'http');
-$ok('带点号小节名 [protocol.qqbot]', \Core\Config::string('protocol.qqbot.api') === 'https://api.bot.qq.com');
-$ok('不带前缀等价', \Core\Config::string('qqbot.api') === 'https://api.bot.qq.com');
+$ok('带点号小节名 [protocol.qqbot]', \Core\Config::string('protocol.qqbot.event.mode') === 'ws');
+$ok('不带前缀等价', \Core\Config::string('qqbot.event.mode') === 'ws');
 $ok('int 转换', \Core\Config::int('http.port', 0) === 8008);
 $ok('section 读取', \Core\Config::section('protocol.qqbot') !== []);
 $ok('脱敏后不含明文 secret', !array_key_exists('client_secret', \Core\Config::all(true)['protocol']['qqbot'] ?? []) || (\Core\Config::all(true)['protocol']['qqbot']['client_secret'] ?? '') === '');

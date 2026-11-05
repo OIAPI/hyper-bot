@@ -11,9 +11,8 @@ final class SettingsController extends Base {
     /** 整棵配置树（敏感字段已脱敏） */
     public function index(Request $request): Response {
         $config = Config::all(true);
-        // 历史遗留小节。注意：[cq] 不是纯遗留——cq.api / cq.auth 仍被
-        // HttpAdapter、api/app.php 通过 core/Config.php 的别名映射读取，
-        // 隐藏它只会让「能收不能发」这类问题无从下手，所以这里不再过滤 [cq]。
+        // [cq] 只作为旧配置迁移别名保留（首次建账号时读一次），
+        // 运行期发送已全部走「机器人账号」，不再读取 cq.api / cq.auth。
         $legacy = [];
         return $this->ok([
             'config'   => $config,

@@ -286,6 +286,8 @@ export interface Group {
 export interface GroupList {
   items: Group[]
   total: number
+  account?: string
+  accounts?: Array<{ id: string; name: string; protocol: string }>
 }
 
 // ---------------- 插件 ----------------
@@ -518,6 +520,8 @@ export interface PermissionsModel {
 export interface PermissionsData {
   items: MemberPermission[]
   levels: Record<string, string>
+  account?: string
+  accounts?: Array<{ id: string; name: string; protocol: string }>
   model?: PermissionsModel
   stats: { total: number; by_role?: Record<string, number>; by_level?: Record<string, number> }
   diagnose?: {

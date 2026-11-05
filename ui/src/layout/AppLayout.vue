@@ -20,7 +20,8 @@ import {
 import { useUiRuntime, loadFramework } from '@/ui/provider'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
-import { overviewApi, authApi, extApi } from '@/api'
+import { overviewApi, authApi, extApi, accountApi } from '@/api'
+import { scopedAccount, setScopedAccount } from '@/stores/accountScope'
 import { formatUptime } from '@/utils/format'
 import { ensurePluginHost, pluginRoutes } from '@/ext/host'
 import AppToast from '@/components/AppToast.vue'
@@ -953,11 +954,35 @@ function onPluginsChanged(): void {
   void ensurePluginHost(true)
 }
 
+const accountOptions = ref<Array<{ label: string; value: string }>>([])
+
+function switchAccount(id: string): void {
+  if (id === scopedAccount.value) return
+  setScopedAccount(id)
+  // 各页面数据都带账号上下文，切换后整页刷新最稳，也避免旧请求回填
+  window.location.reload()
+}
+
 onMounted(async () => {
   startLayoutSync()
   syncNarrow()
   mq.addEventListener('change', syncNarrow)
   await auth.loadMe()
+  try {
+    const res = await accountApi.list()
+    accountOptions.value = (res.accounts ?? []).map((a) => ({
+      label: a.name ? a.name + '（' + a.id + '）' : a.id,
+      value: a.id,
+    }))
+    if (accountOptions.value.length > 0) {
+      const exists = accountOptions.value.some((a) => a.value === scopedAccount.value)
+      if (!scopedAccount.value || !exists) {
+        setScopedAccount(accountOptions.value[0].value)
+      }
+    }
+  } catch {
+    // 没有账号或没权限时不显示选择器，页面仍可用单账号旧逻辑
+  }
   void loadExtMenus()
   // 插件自带脚本：注册注入块与页面（失败不影响面板本身）
   void ensurePluginHost()
@@ -1118,6 +1143,15 @@ async function doLogout(): Promise<void> {
         </div>
 
         <div class="spacer" />
+
+        <UiSelect
+          v-if="accountOptions.length"
+          :model-value="scopedAccount"
+          :options="accountOptions"
+          size="small"
+          class="topbar-account"
+          @update:model-value="switchAccount"
+        />
 
         <UiTag :type="degraded ? 'warn' : 'ok'" round size="small" class="uptime">
           <span class="dot" :class="degraded ? 'warn' : 'ok'" />
@@ -1502,6 +1536,7 @@ async function doLogout(): Promise<void> {
   justify-content: center;
   cursor: pointer;
 }
+.topbar-account { width: 210px; max-width: 28vw; }
 .title-block { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
 .crumb { font-size: 10.5px; color: var(--text-faint); letter-spacing: 0.04em; }
 .page-title {

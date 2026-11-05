@@ -71,9 +71,11 @@ export const scheduleApi = {
 
 /** QQ 成员权限（机器人使用权限） */
 export const permissionApi = {
-  list: () => http.get<PermissionsData>('/permissions'),
-  save: (qq: string, level: string) => http.post<PermissionsData>('/permissions', { qq, level }),
-  remove: (qq: string) => http.del<PermissionsData>('/permissions/' + encodeURIComponent(qq)),
+  list: (account?: string) => http.get<PermissionsData>('/permissions', { query: { account } }),
+  save: (qq: string, level: string, account?: string) =>
+    http.post<PermissionsData>('/permissions', { qq, level }, { query: { account } }),
+  remove: (qq: string, account?: string) =>
+    http.del<PermissionsData>('/permissions/' + encodeURIComponent(qq), { query: { account } }),
 }
 
 /** 程序更新（仅主人） */
@@ -162,6 +164,11 @@ export const settingsApi = {
   /** 新增配置项：section 可以是不存在的小节（含 plugin.xxx 这种带点的） */
   add: (section: string, key: string, value: unknown) =>
     http.put<SettingsUpdateResult>('/settings', { section, key, value }),
+  /** 删除配置项；whole=true 删整个小节 */
+  remove: (path: string, whole = false) =>
+    http.del<{ path: string; whole: boolean; backup?: string; warnings: string[] }>('/settings', {
+      query: { path, whole: whole ? '1' : '0' },
+    }),
   reload: () => http.post<{ warnings: string[] }>('/settings/reload'),
 }
 
@@ -193,17 +200,19 @@ export const subscriptionApi = {
 
 /** 群 */
 export const groupApi = {
-  list: (q?: string) => http.get<GroupList>('/groups', { query: { q } }),
-  show: (id: string) => http.get<Group>('/groups/' + id),
+  list: (q?: string, account?: string) => http.get<GroupList>('/groups', { query: { q, account } }),
+  show: (id: string, account?: string) => http.get<Group>('/groups/' + encodeURIComponent(id), { query: { account } }),
   create: (payload: Record<string, unknown>) => http.post<Group>('/groups', payload),
   /** 让协议端 get_group_list 拉一次，把群名回填到面板 */
-  sync: () => http.post<{ synced: number; total: number }>('/groups/sync'),
-  toggleStatus: (id: string) => http.post<Group>('/groups/' + id + '/status'),
+  sync: (account?: string) => http.post<{ synced: number; total: number }>('/groups/sync', {}, { query: { account } }),
+  toggleStatus: (id: string, account?: string) =>
+    http.post<Group>('/groups/' + encodeURIComponent(id) + '/status', {}, { query: { account } }),
   /** 群级插件开关：必须显式带 enabled，后端默认值是 false（不带等于「关闭」） */
-  togglePlugin: (id: string, plugin: string, enabled: boolean) =>
+  togglePlugin: (id: string, plugin: string, enabled: boolean, account?: string) =>
     // 插件类是 App\Plugins\Xxx：URL 里反斜杠会被浏览器当成 /，必须编码
-    http.post<Group>('/groups/' + encodeURIComponent(id) + '/plugins/' + encodeURIComponent(plugin), { enabled }),
-  destroy: (id: string) => http.del<null>('/groups/' + id),
+    http.post<Group>('/groups/' + encodeURIComponent(id) + '/plugins/' + encodeURIComponent(plugin), { enabled }, { query: { account } }),
+  destroy: (id: string, account?: string) =>
+    http.del<null>('/groups/' + encodeURIComponent(id), { query: { account } }),
 }
 
 /** 插件 */

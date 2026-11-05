@@ -25,6 +25,15 @@ final class MemberPermissions
 {
     private const PREFIX = 'memberPermission.';
 
+    private static function accountId(): string {
+        return AccountScope::id();
+    }
+
+    /** 账号作用域前缀（含 acct:） */
+    private static function scopedPrefix(): string {
+        return AccountScope::prefix();
+    }
+
     /** 面板可选的等级（顺序 = 从高到低） */
     public const LEVELS = [
         'super'   => '主人（最高权限）',
@@ -120,23 +129,36 @@ final class MemberPermissions
         return $out;
     }
 
-    /** 从 key 里取出 QQ（兼容 dbN: 前缀与各种分隔） */
+    /** 从 key 里取出 QQ（兼容 acct:/dbN: 前缀） */
     private static function qqOf(string $key): string
     {
+        $key = preg_replace('/^acct:[^:]+:/', '', $key) ?? $key;
         $key = preg_replace('/^db\d+:/', '', $key) ?? $key;
         $qq = substr($key, strlen(self::PREFIX));
-        return ctype_digit($qq) ? $qq : '';
+        return preg_match('/^[A-Za-z0-9_-]{1,64}$/', $qq) === 1 ? $qq : '';
     }
 
     /** @return array<string, string> qq => 原始值 */
     private static function readStore(): array
     {
         $out = [];
-        foreach ([self::PREFIX . '*', 'db*:' . self::PREFIX . '*'] as $pattern) {
+        $prefix = self::scopedPrefix();
+        $patterns = $prefix !== ''
+            ? [$prefix . self::PREFIX . '*', $prefix . 'db*:' . self::PREFIX . '*']
+            : [self::PREFIX . '*', 'db*:' . self::PREFIX . '*'];
+        if ($prefix !== '' && AccountScope::legacyAllowed()) {
+            $patterns[] = self::PREFIX . '*';
+            $patterns[] = 'db*:' . self::PREFIX . '*';
+        }
+        foreach ($patterns as $pattern) {
             foreach (self::store()->keys($pattern) as $key) {
-                $qq = self::qqOf((string)$key);
+                $key = (string)$key;
+                if ($prefix !== '' && str_starts_with($key, 'acct:') && !str_starts_with($key, $prefix)) {
+                    continue;
+                }
+                $qq = self::qqOf($key);
                 if ($qq !== '' && !isset($out[$qq])) {
-                    $out[$qq] = (string)self::store()->get((string)$key);
+                    $out[$qq] = (string)self::store()->get($key);
                 }
             }
         }
@@ -152,7 +174,17 @@ final class MemberPermissions
         }
         $out = [];
         try {
-            $keys = $client->keys(self::PREFIX . '*') ?: [];
+            $prefix = self::scopedPrefix();
+            $patterns = [$prefix . self::PREFIX . '*'];
+            if ($prefix !== '' && AccountScope::legacyAllowed()) {
+                $patterns[] = self::PREFIX . '*';
+            }
+            $keys = [];
+            foreach ($patterns as $pattern) {
+                foreach ($client->keys($pattern) ?: [] as $key) {
+                    $keys[] = $key;
+                }
+            }
             foreach ($keys as $key) {
                 $qq = self::qqOf((string)$key);
                 if ($qq === '') {
@@ -207,8 +239,8 @@ final class MemberPermissions
     public static function set(string $qq, string $role): array
     {
         $qq = trim($qq);
-        if (!ctype_digit($qq) || strlen($qq) < 5 || strlen($qq) > 12) {
-            return ['ok' => false, 'msg' => 'QQ 号必须是 5-12 位数字'];
+        if (preg_match('/^[A-Za-z0-9_-]{5,64}$/', $qq) !== 1) {
+            return ['ok' => false, 'msg' => 'QQ 号 / 官方成员 openid 格式不正确'];
         }
         if (!MemberRoles::known($role)) {
             return ['ok' => false, 'msg' => '角色只能是 ' . implode(' / ', array_keys(MemberRoles::ROLES)) . '（也接受旧等级名）'];
@@ -218,18 +250,25 @@ final class MemberPermissions
             return ['ok' => false, 'msg' => '角色只能是 ' . implode(' / ', array_keys(MemberRoles::ROLES)) . '（也接受旧等级名）'];
         }
 
-        // 1) store：不带前缀 + 当前 select 对应的 dbN: 前缀都写一份
-        self::store()->set(self::PREFIX . $qq, $normalized);
+        // 1) store：账号作用域键；单账号同时写旧键兼容旧插件
+        $prefix = self::scopedPrefix();
+        self::store()->set($prefix . self::PREFIX . $qq, $normalized);
         $select = Config::int('Redis.select', 0);
         if ($select > 0) {
-            self::store()->set('db' . $select . ':' . self::PREFIX . $qq, $normalized);
+            self::store()->set($prefix . 'db' . $select . ':' . self::PREFIX . $qq, $normalized);
+        }
+        if ($prefix !== '' && AccountScope::legacyAllowed()) {
+            self::store()->set(self::PREFIX . $qq, $normalized);
         }
 
         // 2) 真 Redis：v1 插件读的是它
         $client = self::realRedis();
         if ($client !== null) {
             try {
-                $client->set(self::PREFIX . $qq, $normalized);
+                $client->set($prefix . self::PREFIX . $qq, $normalized);
+                if ($prefix !== '' && AccountScope::legacyAllowed()) {
+                    $client->set(self::PREFIX . $qq, $normalized);
+                }
             } catch (\Throwable $e) {
                 self::$redisError = $e->getMessage();
             } finally {
@@ -246,14 +285,26 @@ final class MemberPermissions
             return false;
         }
         $existed = false;
-        $key = self::PREFIX . $qq;
+        $prefix = self::scopedPrefix();
+        $key = $prefix . self::PREFIX . $qq;
         if (self::store()->has($key)) {
             $existed = true;
             self::store()->del($key);
         }
-        foreach (self::store()->keys('db*:' . $key) as $prefixed) {
+        foreach (self::store()->keys($prefix . 'db*:' . self::PREFIX . $qq) as $prefixed) {
             $existed = true;
             self::store()->del((string)$prefixed);
+        }
+        if ($prefix !== '' && AccountScope::legacyAllowed()) {
+            $legacy = self::PREFIX . $qq;
+            if (self::store()->has($legacy)) {
+                $existed = true;
+                self::store()->del($legacy);
+            }
+            foreach (self::store()->keys('db*:' . $legacy) as $prefixed) {
+                $existed = true;
+                self::store()->del((string)$prefixed);
+            }
         }
         $client = self::realRedis();
         if ($client !== null) {
@@ -261,6 +312,10 @@ final class MemberPermissions
                 if ($client->exists($key)) {
                     $existed = true;
                     $client->del($key);
+                }
+                if ($prefix !== '' && AccountScope::legacyAllowed() && $client->exists(self::PREFIX . $qq)) {
+                    $existed = true;
+                    $client->del(self::PREFIX . $qq);
                 }
             } catch (\Throwable $e) {
                 self::$redisError = $e->getMessage();

@@ -87,9 +87,16 @@ final class PluginsController extends Base {
         if ($groupId === '' || $plugins === []) {
             return $this->fail('参数缺失', -1, 400);
         }
-        $key = $groupId . '.info';
-        $info = $this->store->get($key);
-        $info = is_array($info) ? $info : ['status' => 0, 'worker' => []];
+        $accountId = trim((string)$request->input('account', ''));
+        if ($accountId === '') {
+            $enabledAccounts = \Core\Bot\Accounts::enabled();
+            $accountId = $enabledAccounts === [] ? '' : (string)($enabledAccounts[0]['id'] ?? '');
+        }
+        if ($accountId !== '' && \Core\Bot\Accounts::get($accountId) === null) {
+            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        }
+        $info = \Core\Bot\GroupState::getInfo($this->store, $groupId, $accountId)
+            ?? ['status' => 0, 'worker' => []];
         $info['worker'] = is_array($info['worker'] ?? null) ? $info['worker'] : [];
         $changed = [];
         foreach ($plugins as $plugin) {
@@ -100,8 +107,8 @@ final class PluginsController extends Base {
             $info['worker'][$plugin] = $enabled;
             $changed[] = $plugin;
         }
-        $this->store->set($key, $info);
-        return $this->ok(['group_id' => $groupId, 'changed' => $changed, 'enabled' => $enabled]);
+        \Core\Bot\GroupState::setInfo($this->store, $groupId, $info, $accountId);
+        return $this->ok(['group_id' => $groupId, 'account' => $accountId, 'changed' => $changed, 'enabled' => $enabled]);
     }
 
     /**

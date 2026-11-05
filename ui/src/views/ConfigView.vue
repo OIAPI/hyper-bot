@@ -124,7 +124,7 @@ const columns: UiColumn[] = [
   { key: 'nodeKey', title: '配置项', minWidth: 240 },
   { key: 'display', title: '值', minWidth: 220 },
   { key: 'type', title: '类型', width: 90 },
-  { key: 'actions', title: '操作', width: 86, align: 'right' },
+  { key: 'actions', title: '操作', width: 130, align: 'right' },
 ]
 
 async function load(): Promise<void> {
@@ -286,6 +286,18 @@ function onEditClick(row: unknown): void {
   openEdit(row as TreeRow)
 }
 
+/** 删除配置项；whole=true 表示删掉整个小节 */
+async function removeRow(row: unknown, whole: boolean): Promise<void> {
+  const target = row as TreeRow
+  try {
+    await settingsApi.remove(target.path, whole)
+    toast.ok('已删除 ' + (whole ? '小节 ' : '配置项 ') + target.path)
+    await load()
+  } catch (e) {
+    toast.fromError(e, '删除失败')
+  }
+}
+
 function closeEdit(): void {
   editOpen.value = false
   editing.value = null
@@ -427,14 +439,28 @@ const warnings = computed(() => data.value?.warnings ?? [])
             <span class="tiny faint">{{ row.type }}</span>
           </template>
           <template #cell-actions="{ row }">
-            <UiButton
-              v-if="row.leaf"
-              type="text"
-              size="small"
-              @click="onEditClick(row)"
-            >
-              修改
-            </UiButton>
+            <div class="row-actions">
+              <UiButton
+                v-if="row.leaf"
+                type="text"
+                size="small"
+                @click="onEditClick(row)"
+              >
+                修改
+              </UiButton>
+              <UiPopconfirm
+                v-if="row.leaf || row.depth === 0"
+                :title="row.leaf
+                  ? '删除配置项 ' + row.path + ' ？'
+                  : '删除整个小节 [' + row.path + '] 及其所有配置？'"
+                confirm-text="删除"
+                cancel-text="取消"
+                :width="260"
+                @confirm="removeRow(row, !row.leaf)"
+              >
+                <UiButton type="text" size="small" class="danger-text">删除</UiButton>
+              </UiPopconfirm>
+            </div>
           </template>
           <template #empty>
             <UiEmpty description="没有匹配的配置项" />
@@ -512,6 +538,8 @@ const warnings = computed(() => data.value?.warnings ?? [])
   gap: 14px;
 }
 .page-head { margin-bottom: 0; align-items: flex-end; }
+.row-actions { display: inline-flex; gap: 2px; justify-content: flex-end; }
+.danger-text { color: var(--danger, #d33); }
 h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 .sub { margin: 4px 0 0; color: var(--text-faint); font-size: 12.5px; }
 

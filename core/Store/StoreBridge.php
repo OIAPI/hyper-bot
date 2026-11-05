@@ -29,6 +29,10 @@ final class StoreBridge
     public function get(string $key): string|false
     {
         $value = $this->store->get($this->scope($key));
+        // 单账号迁移：scoped 没有时读一次旧全局键
+        if ($value === null && $this->account() !== '' && \Core\Bot\AccountScope::legacyAllowed()) {
+            $value = $this->store->get($this->legacyScope($key));
+        }
         if ($value === null) {
             return false;
         }
@@ -38,21 +42,27 @@ final class StoreBridge
 
     public function set(string $key, mixed $value, int $ttl = 0): bool
     {
-        // 老代码传的是 json_encode 后的字符串，原样存即可
-        return $this->store->set($this->scope($key), $value, $ttl);
+        // 老代码传的是 json_encode 后的字符串，原样存即可。
+        // 单账号部署同时写旧键，兼容还没加账号作用域的旧插件/外部脚本。
+        $ok = $this->store->set($this->scope($key), $value, $ttl);
+        if ($this->account() !== '' && \Core\Bot\AccountScope::legacyAllowed()) {
+            $this->store->set($this->legacyScope($key), $value, $ttl);
+        }
+        return $ok;
     }
 
     /** 兼容 setex / psetex 之类 */
     public function setex(string $key, int $ttl, mixed $value): bool
     {
-        return $this->store->set($this->scope($key), $value, $ttl);
+        return $this->set($key, $value, $ttl);
     }
 
     public function exists(string ...$keys): int|bool
     {
         $count = 0;
         foreach ($keys as $key) {
-            if ($this->store->has($this->scope($key))) {
+            if ($this->store->has($this->scope($key))
+                || ($this->account() !== '' && \Core\Bot\AccountScope::legacyAllowed() && $this->store->has($this->legacyScope($key)))) {
                 $count++;
             }
         }
@@ -63,12 +73,27 @@ final class StoreBridge
     public function del(string ...$keys): int
     {
         $scoped = array_map(fn($k) => $this->scope($k), $keys);
-        return $this->store->del(...$scoped);
+        $count = $this->store->del(...$scoped);
+        if ($this->account() !== '' && \Core\Bot\AccountScope::legacyAllowed()) {
+            $legacy = array_map(fn($k) => $this->legacyScope($k), $keys);
+            $count += $this->store->del(...$legacy);
+        }
+        return $count;
     }
 
     public function keys(string $pattern = '*'): array
     {
-        return array_map(fn($k) => $this->unscope($k), $this->store->keys($this->scope($pattern)));
+        $out = array_map(fn($k) => $this->unscope($k), $this->store->keys($this->scope($pattern)));
+        if ($this->account() !== '' && \Core\Bot\AccountScope::legacyAllowed()) {
+            foreach ($this->store->keys($this->legacyScope($pattern)) as $key) {
+                // 旧键扫描会同时扫到其它账号的 scoped 键，排除掉
+                if (str_starts_with((string)$key, 'acct:')) {
+                    continue;
+                }
+                $out[] = $this->unscope($key);
+            }
+        }
+        return array_values(array_unique($out));
     }
 
     public function incr(string $key, int $by = 1): int
@@ -150,13 +175,27 @@ final class StoreBridge
 
     // ---------------- 内部：逻辑库前缀 ----------------
 
-    private function scope(string $key): string
+    private function account(): string
+    {
+        return \Core\Bot\AccountContext::id();
+    }
+
+    /** 只带逻辑库前缀（不含账号前缀） */
+    private function legacyScope(string $key): string
     {
         return $this->db > 0 ? "db{$this->db}:{$key}" : $key;
     }
 
+    private function scope(string $key): string
+    {
+        $key = $this->legacyScope($key);
+        $account = $this->account();
+        return $account === '' ? $key : 'acct:' . $account . ':' . $key;
+    }
+
     private function unscope(string $key): string
     {
+        $key = preg_replace('/^acct:[^:]+:/', '', $key) ?? $key;
         return $this->db > 0 ? preg_replace('/^db' . $this->db . ':/', '', $key) : $key;
     }
 }

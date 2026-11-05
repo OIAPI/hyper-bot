@@ -103,7 +103,10 @@ final class SystemController extends Base {
         if ($request->input('confirm') !== true) {
             return $this->fail('请传 confirm=true 以确认清理', -1, 400);
         }
-        $this->store->del('webui:events');
+        $this->store->del(\Core\Bot\EventLog::key());
+        if (\Core\Bot\AccountScope::legacyAllowed()) {
+            $this->store->del(\Core\Bot\EventLog::KEY);
+        }
         $this->store->del('webui:messages');
         // 插件注册表一并失效（下次访问会重新扫描）
         \Core\App::boot()->container->get(\Core\Bot\Registry::class)->invalidate();

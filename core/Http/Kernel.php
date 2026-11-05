@@ -66,6 +66,15 @@ final class Kernel {
 
     public function handle(Request $request): Response {
         $started = microtime(true);
+        // WebUI 全局账号作用域：前端选中哪个机器人，后端所有带账号语义的数据
+        // （群、权限、订阅覆盖、Webhook、RSS、事件/消息、定时任务）都按它读写。
+        $requestedAccount = trim($request->header('x-account-id', ''));
+        if ($requestedAccount !== '') {
+            $account = \Core\Bot\Accounts::get($requestedAccount);
+            if ($account !== null) {
+                \Core\Bot\AccountContext::use($account);
+            }
+        }
         try {
             // 插件中间件包在最外层：它们能看到 404，也能决定根本不进路由
             $runner = fn(Request $req): Response => $this->resolve($req);
@@ -85,6 +94,7 @@ final class Kernel {
             }
             return Response::fail($e->getMessage(), -1, 500);
         } finally {
+            \Core\Bot\AccountContext::reset();
             $this->logger?->debug('http request', [
                 'method' => $request->method,
                 'path'   => $request->path,

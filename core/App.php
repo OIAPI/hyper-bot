@@ -159,7 +159,7 @@ final class App {
         if ($group === '') {
             return true;
         }
-        $raw = $this->store->get("{$group}.info");
+        $raw = \Core\Bot\AccountScope::get($this->store, "{$group}.info");
         if ($raw === null) {
             // 未登记的群：视为关闭（首次必须在群里用管理命令/面板打开）
             return false;
@@ -175,7 +175,7 @@ final class App {
         if ($group === '') {
             return true;
         }
-        $raw = $this->store->get("{$group}.info");
+        $raw = \Core\Bot\AccountScope::get($this->store, "{$group}.info");
         $info = is_string($raw) ? json_decode($raw, true) : $raw;
         if (!is_array($info)) {
             return true;
@@ -199,8 +199,7 @@ final class App {
             }
         }
 
-        $key = "memberPermission.{$userId}";
-        $stored = $this->store->get($key);
+        $stored = \Core\Bot\AccountScope::get($this->store, "memberPermission.{$userId}");
         $role = is_scalar($stored) && $stored !== null ? strtolower((string)$stored) : $event->role();
 
         // 角色 -> 等级由 MemberRoles 统一维护（v1 的 supervisor/director/manager 自动映射）

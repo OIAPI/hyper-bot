@@ -8,10 +8,11 @@
  * 视图只用 UiXxx（框架无关层）：表格走 UiTable 的 #cell-<key> 插槽，
  * 移除确认用 UiPopconfirm，图标用纯 SVG 图标（与界面框架无关）。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Search, Plus } from '@element-plus/icons-vue'
 import { groupApi, pluginApi } from '@/api'
 import { useToastStore } from '@/stores/toast'
+import { scopedAccount, setScopedAccount } from '@/stores/accountScope'
 import { formatTime } from '@/utils/format'
 import type { Group, Plugin } from '@/types/api'
 import type { UiColumn } from '@/ui/types'
@@ -29,6 +30,21 @@ const items = ref<Group[]>([])
 const plugins = ref<Plugin[]>([])
 const query = ref('')
 const busy = ref(false)
+const selectedAccount = scopedAccount
+const accounts = ref<Array<{ id: string; name: string; protocol: string }>>([])
+const accountOptions = computed(() =>
+  accounts.value.map((a) => ({
+    label: a.name ? a.name + '（' + a.id + '）' : a.id,
+    value: a.id,
+  })),
+)
+const canSyncGroups = computed(() =>
+  (accounts.value.find((a) => a.id === selectedAccount.value)?.protocol ?? 'onebot') === 'onebot',
+)
+watch(selectedAccount, (v) => {
+  setScopedAccount(v)
+  void load()
+})
 
 /* ---------------- 筛选 / 排序 ---------------- */
 const statusFilter = ref('all')
@@ -58,10 +74,14 @@ const syncing = ref(false)
 
 /** 协议端支持 get_group_list，主动拉一次能补上「没发过言的群」的名字 */
 async function syncNames(): Promise<void> {
+  if (!canSyncGroups.value) {
+    toast.warn('只有 OneBot 账号支持从协议端同步群列表')
+    return
+  }
   if (syncing.value) return
   syncing.value = true
   try {
-    const res = await groupApi.sync()
+    const res = await groupApi.sync(selectedAccount.value || undefined)
     toast.ok('已同步 ' + res.synced + ' 个群，共 ' + res.total + ' 个')
     await load()
   } catch (e) {
@@ -96,11 +116,15 @@ async function load(): Promise<void> {
   loading.value = true
   try {
     const [groupRes, pluginRes] = await Promise.all([
-      groupApi.list(query.value.trim() || undefined),
+      groupApi.list(query.value.trim() || undefined, selectedAccount.value || undefined),
       pluginApi.list(),
     ])
     items.value = groupRes.items ?? []
     plugins.value = pluginRes.items ?? []
+    accounts.value = groupRes.accounts ?? accounts.value
+    if (!selectedAccount.value && groupRes.account) {
+      selectedAccount.value = groupRes.account
+    }
   } catch (e) {
     toast.fromError(e, '加载群列表失败')
   } finally {
@@ -131,7 +155,7 @@ function applyUpdate(g: Group): void {
 async function toggleStatus(g: Group): Promise<void> {
   busy.value = true
   try {
-    const updated = await groupApi.toggleStatus(g.group_id)
+    const updated = await groupApi.toggleStatus(g.group_id, selectedAccount.value || undefined)
     applyUpdate(updated)
     toast.ok(updated.status ? '已开启该群' : '已关闭该群')
   } catch (e) {
@@ -150,7 +174,7 @@ async function togglePlugin(g: Group, p: Plugin): Promise<void> {
   const next = !pluginOn(g, p)
   pluginBusy.value = p.class
   try {
-    const updated = await groupApi.togglePlugin(g.group_id, p.class, next)
+    const updated = await groupApi.togglePlugin(g.group_id, p.class, next, selectedAccount.value || undefined)
     applyUpdate(updated)
     toast.ok(next ? '已在本群开启 ' + p.name : '已在本群关闭 ' + p.name)
   } catch (e) {
@@ -172,7 +196,11 @@ async function submitAdd(): Promise<void> {
   }
   adding.value = true
   try {
-    await groupApi.create({ group_id: addGroupId.value.trim(), name: addName.value.trim() })
+    await groupApi.create({
+      group_id: addGroupId.value.trim(),
+      name: addName.value.trim(),
+      account: selectedAccount.value || undefined,
+    })
     toast.ok('已添加')
     addVisible.value = false
     addGroupId.value = ''
@@ -187,7 +215,7 @@ async function submitAdd(): Promise<void> {
 
 async function remove(g: Group): Promise<void> {
   try {
-    await groupApi.destroy(g.group_id)
+    await groupApi.destroy(g.group_id, selectedAccount.value || undefined)
     toast.ok('已移除')
     manage.value = null
     await load()
@@ -206,9 +234,10 @@ async function confirmRemove(): Promise<void> {
     <header class="page-head">
       <div>
         <h1>群组</h1>
-        <p class="sub">机器人收到群消息后会自动纳管；状态与插件开关即时热重载。</p>
+        <p class="sub">群配置按机器人账号隔离；先选择账号，再管理该账号下的群与插件开关。</p>
       </div>
       <div class="row gap-8">
+        <UiSelect v-model="selectedAccount" :options="accountOptions" class="account-select" />
         <UiInput
           v-model="query"
           size="small"
@@ -221,7 +250,7 @@ async function confirmRemove(): Promise<void> {
           <template #prefix><UiIcon><Search /></UiIcon></template>
         </UiInput>
         <UiButton size="small" @click="load">搜索</UiButton>
-        <UiButton size="small" :loading="syncing" @click="syncNames">同步群名</UiButton>
+        <UiButton size="small" :loading="syncing" :disabled="!canSyncGroups" @click="syncNames">同步群名</UiButton>
         <UiTag size="small" type="plain">{{ items.length }} 个群</UiTag>
         <UiButton size="small" type="primary" @click="addVisible = true">
           <template #icon><UiIcon><Plus /></UiIcon></template>

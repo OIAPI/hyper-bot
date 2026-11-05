@@ -20,6 +20,8 @@ final class SubscriptionOverride
 
     /** @var array<string, array<string, mixed>>|null */
     private static ?array $cache = null;
+    /** @var array<string, array<string, array<string, mixed>>> 按账号缓存 */
+    private static array $cacheByAccount = [];
 
     /** 数据文件路径（测试可改） */
     public static function path(?string $path = null): string
@@ -27,6 +29,7 @@ final class SubscriptionOverride
         if ($path !== null) {
             self::$path = $path;
             self::$cache = null;
+            self::$cacheByAccount = [];
             return $path;
         }
         if (self::$path === '') {
@@ -35,14 +38,32 @@ final class SubscriptionOverride
         return self::$path;
     }
 
+    /** 当前账号的数据文件（单账号仍回退旧的全局文件） */
+    private static function scopedPath(): string
+    {
+        $basePath = self::path();
+        $id = AccountScope::id();
+        if ($id === '') {
+            return $basePath;
+        }
+        $safe = preg_replace('/[^A-Za-z0-9_-]/', '_', $id) ?? $id;
+        return preg_replace('/\.json$/', '.' . $safe . '.json', $basePath) ?? $basePath;
+    }
+
     /** @return array<string, array<string, mixed>> */
     public static function all(): array
     {
-        if (self::$cache !== null) {
-            return self::$cache;
+        $id = AccountScope::id();
+        if (isset(self::$cacheByAccount[$id])) {
+            return self::$cacheByAccount[$id];
         }
-        self::$cache = self::load();
-        return self::$cache;
+        $data = self::load(self::scopedPath());
+        if ($data === [] && $id !== '' && AccountScope::legacyAllowed()) {
+            $data = self::load(self::path());
+        }
+        self::$cacheByAccount[$id] = $data;
+        self::$cache = $data;
+        return $data;
     }
 
     /** @return array<string, mixed>|null */
@@ -100,6 +121,7 @@ final class SubscriptionOverride
         if (!self::persist($all)) {
             return ['ok' => false, 'msg' => '写入失败：runtime 目录不可写', 'data' => null];
         }
+        self::$cacheByAccount[AccountScope::id()] = $all;
         self::$cache = $all;
         return ['ok' => true, 'msg' => '已保存群 ' . $groupId . ' 的覆盖配置', 'data' => $entry];
     }
@@ -116,14 +138,15 @@ final class SubscriptionOverride
         if (!self::persist($all)) {
             return ['ok' => false, 'msg' => '写入失败：runtime 目录不可写'];
         }
+        self::$cacheByAccount[AccountScope::id()] = $all;
         self::$cache = $all;
         return ['ok' => true, 'msg' => '已删除群 ' . $groupId . ' 的覆盖配置'];
     }
 
     /** @return array<string, array<string, mixed>> */
-    private static function load(): array
+    private static function load(string $path): array
     {
-        $path = self::path();
+        $path = $path;
         if (!is_file($path)) {
             return [];
         }
@@ -155,7 +178,7 @@ final class SubscriptionOverride
 
     private static function persist(array $groups): bool
     {
-        $path = self::path();
+        $path = self::scopedPath();
         $dir = dirname($path);
         if (!is_dir($dir) && !Fs::ensureDir($dir)) {
             return false;
@@ -164,6 +187,11 @@ final class SubscriptionOverride
         if ($json === false) {
             return false;
         }
-        return Fs::write($path, $json);
+        $ok = Fs::write($path, $json);
+        // 单账号：同时写旧文件，旧插件/外部脚本仍能读到
+        if (AccountScope::legacyAllowed() && $path !== self::path()) {
+            Fs::write(self::path(), $json);
+        }
+        return $ok;
     }
 }

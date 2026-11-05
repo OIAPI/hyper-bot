@@ -82,7 +82,7 @@ final class Metrics {
             'groups'      => count($groups['items']),
             'plugins'     => count($plugins['items']),
             'plugins_on'  => count(array_filter($plugins['items'], fn($p) => ($p['enabled'] ?? false) === true)),
-            'events'      => $this->store->zcard('webui:events'),
+            'events'      => $this->store->zcard(\Core\Bot\EventLog::key()),
             'messages'    => $this->store->zcard('webui:messages'),
             'protocols'   => count(array_filter($this->protocols(), fn($p) => ($p['enabled'] ?? false) === true)),
         ];
@@ -134,25 +134,33 @@ final class Metrics {
      *  2. `webui:groups` 索引（WebUI 自己维护的元数据）。
      * 合并后输出统一结构，避免 WebUI 直接依赖 Redis 键的命名细节。
      */
-    public function groups(): array {
+    public function groups(?string $accountId = null): array {
+        if ($accountId === null) {
+            $enabled = \Core\Bot\Accounts::enabled();
+            $accountId = count($enabled) === 1 ? (string)($enabled[0]['id'] ?? '') : null;
+        }
         $items = [];
-        foreach ($this->store->keys('*.info') as $key) {
-            $groupId = substr((string)$key, 0, -5);
+        foreach (\Core\Bot\GroupState::ids($this->store, $accountId) as $groupId) {
             if ($groupId === '' || !preg_match('/^[0-9a-zA-Z_-]+$/', $groupId)) {
                 continue;
             }
-            $info = $this->store->get((string)$key);
-            $items[] = $this->normalizeGroup($groupId, is_array($info) ? $info : []);
+            $info = \Core\Bot\GroupState::getInfo($this->store, $groupId, $accountId);
+            $items[] = $this->normalizeGroup($groupId, $info ?? []);
         }
 
         // 只在事件里出现过的群（还没写过 {id}.info）也要能看到：
         // 否则「群里发过消息但面板不显示这个群」会让人以为数据丢了。
-        $groupMeta = (array)($this->store->get('webui:groups') ?? []);
+        $groupMeta = \Core\Bot\GroupState::meta($this->store, $accountId);
         $seen = [];
         foreach ($items as $item) {
             $seen[$item['group_id']] = true;
         }
         foreach ($this->recentEvents(500) as $event) {
+            $eventAccount = (string)($event['account'] ?? '');
+            // 旧事件没有 account 字段：单账号迁移时按当前账号处理
+            if ($accountId !== null && $accountId !== '' && $eventAccount !== '' && $eventAccount !== $accountId) {
+                continue;
+            }
             $groupId = (string)($event['group_id'] ?? '');
             if ($groupId === '' || isset($seen[$groupId])) {
                 continue;
@@ -180,8 +188,8 @@ final class Metrics {
         return ['items' => $items, 'total' => count($items)];
     }
 
-    public function group(string $groupId): ?array {
-        foreach ($this->groups()['items'] as $item) {
+    public function group(string $groupId, ?string $accountId = null): ?array {
+        foreach ($this->groups($accountId)['items'] as $item) {
             if ($item['group_id'] === $groupId) {
                 return $item;
             }
@@ -319,7 +327,8 @@ final class Metrics {
 
     /** 最近事件时间线 */
     public function recentEvents(int $limit = 20, ?string $type = null): array {
-        $members = $this->store->zrange('webui:events', 0, max(0, $limit - 1), true);
+        $key = \Core\Bot\EventLog::key();
+        $members = $this->store->zrange($key, 0, max(0, $limit - 1), true);
         $out = [];
         foreach ($members as $member) {
             $decoded = json_decode((string)$member, true);
@@ -346,7 +355,7 @@ final class Metrics {
         if ($groupId === '' || !preg_match('/^[0-9A-Za-z_-]+$/', $groupId)) {
             return;
         }
-        $all = (array)($this->store->get('webui:groups') ?? []);
+        $all = \Core\Bot\GroupState::meta($this->store);
         $meta = is_array($all[$groupId] ?? null) ? $all[$groupId] : [];
         $name = '';
         foreach (['group_name', 'groupName', 'group_name_card', 'name'] as $key) {
@@ -362,7 +371,7 @@ final class Metrics {
             $meta['name'] = '';
         }
         $all[$groupId] = $meta;
-        $this->store->set('webui:groups', $all);
+        \Core\Bot\GroupState::setMeta($this->store, $all);
     }
 
     public function phpInfo(): array {

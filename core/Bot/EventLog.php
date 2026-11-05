@@ -17,6 +17,21 @@ final class EventLog
     public const KEY = 'webui:events';
     public const MAX = 2000;
 
+    /**
+     * 当前账号的事件流键。
+     *
+     * 单账号继续用旧全局键：这样升级后历史事件不会消失，也不会出现
+     * 「scoped 和 legacy 各写一份、计数翻倍」。启用第二个账号后才切换成
+     * acct:{id}:webui:events。
+     */
+    public static function key(?string $accountId = null): string {
+        $id = \Core\Bot\AccountScope::id($accountId);
+        if ($id !== '' && \Core\Bot\AccountScope::legacyAllowed($id)) {
+            return self::KEY;
+        }
+        return \Core\Bot\AccountScope::key(self::KEY, $accountId);
+    }
+
     /** 记录一条标准 OneBot11 事件（协议无关，字段缺失即空串） */
     public static function record(array $event, ?Store $store = null): void
     {
@@ -32,10 +47,12 @@ final class EventLog
             'raw_message'  => mb_substr(self::text($event['raw_message'] ?? ''), 0, 120),
             'time'         => (int)($event['time'] ?? time()),
             'protocol'     => (string)($event['protocol'] ?? 'onebot'),
+            'account'      => \Core\Bot\AccountContext::id(),
             'received'     => time(),
         ];
-        $store->zadd(self::KEY, microtime(true), (string)json_encode($entry, JSON_UNESCAPED_UNICODE));
-        $store->ztrim(self::KEY, self::MAX);
+        $key = self::key();
+        $store->zadd($key, microtime(true), (string)json_encode($entry, JSON_UNESCAPED_UNICODE));
+        $store->ztrim($key, self::MAX);
     }
 
     /** 某些协议把 raw_message 给成消息段数组，这里统一成文本，避免 Array to string */

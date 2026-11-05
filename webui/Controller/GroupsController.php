@@ -6,8 +6,26 @@ use Core\Http\Response;
 
 /** 群管理：列表 / 详情 / 插件开关 / 启停 / 元数据 / 删除 */
 final class GroupsController extends Base {
+    /** 请求里指定的账号；未指定时用第一个启用账号（单账号/旧部署回退全局） */
+    private function accountId(Request $request): string {
+        $id = trim((string)$request->input('account', ''));
+        if ($id !== '') {
+            return $id;
+        }
+        $all = \Core\Bot\Accounts::enabled();
+        return $all === [] ? '' : (string)($all[0]['id'] ?? '');
+    }
+
+    private function accountExists(string $id): bool {
+        return $id === '' || \Core\Bot\Accounts::get($id) !== null;
+    }
+
     public function index(Request $request): Response {
-        $groups = $this->metrics->groups()['items'];
+        $accountId = $this->accountId($request);
+        if (!$this->accountExists($accountId)) {
+            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        }
+        $groups = $this->metrics->groups($accountId)['items'];
         $keyword = (string)$request->input('q', '');
         if ($keyword !== '') {
             $groups = array_values(array_filter($groups, fn($g) =>
@@ -15,7 +33,13 @@ final class GroupsController extends Base {
             ));
         }
         [$page, $size] = $this->page($request);
-        return $this->ok($this->paginate($groups, $page, $size));
+        $data = $this->paginate($groups, $page, $size);
+        $data['account'] = $accountId;
+        $data['accounts'] = array_map(
+            static fn(array $a): array => ['id' => $a['id'], 'name' => $a['name'], 'protocol' => $a['protocol']],
+            \Core\Bot\Accounts::publicList()
+        );
+        return $this->ok($data);
     }
 
     /**
@@ -40,6 +64,7 @@ final class GroupsController extends Base {
         if ($accountId !== '' && $account === null) {
             return $this->fail('账号不存在：' . $accountId, -1, 404);
         }
+        $accountId = (string)($account['id'] ?? $accountId);
         $api = (string)(($account['api'] ?? '') ?: \Protocol\Core\Config::string('onebot.api', ''));
         $hasWs = \Protocol\OneBot\WsHub::hasForward() || \Protocol\OneBot\WsHub::hasReverse();
         if ($api === '' && !$hasWs) {
@@ -67,7 +92,7 @@ final class GroupsController extends Base {
             return $this->fail('协议端返回的群列表格式不对（data 不是数组）', -4, 502);
         }
 
-        $meta = is_array($this->store->get('webui:groups')) ? (array)$this->store->get('webui:groups') : [];
+        $meta = \Core\Bot\GroupState::meta($this->store, $accountId);
         $synced = 0;
         foreach ($list as $group) {
             if (!is_array($group)) {
@@ -85,20 +110,24 @@ final class GroupsController extends Base {
             $row['updated_at'] = time();
             $meta[$id] = $row;
             // 没有 {id}.info 的群在列表里根本不会出现，这里补一条空白开关
-            if (!is_array($this->store->get($id . '.info'))) {
-                $this->store->set($id . '.info', ['status' => 1, 'worker' => [], 'name' => $name]);
+            if (\Core\Bot\GroupState::getInfo($this->store, $id, $accountId) === null) {
+                \Core\Bot\GroupState::setInfo($this->store, $id, ['status' => 1, 'worker' => [], 'name' => $name], $accountId);
             }
             $synced++;
         }
-        $this->store->set('webui:groups', $meta);
+        \Core\Bot\GroupState::setMeta($this->store, $meta, $accountId);
         return $this->ok([
             'synced' => $synced,
-            'total'  => count($this->metrics->groups()['items']),
+            'total'  => count($this->metrics->groups($accountId)['items']),
         ], '已同步 ' . $synced . ' 个群');
     }
 
     public function show(Request $request, array $params): Response {
-        $group = $this->metrics->group((string)($params['group_id'] ?? ''));
+        $accountId = $this->accountId($request);
+        if (!$this->accountExists($accountId)) {
+            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        }
+        $group = $this->metrics->group((string)($params['group_id'] ?? ''), $accountId);
         return $group === null ? $this->fail('群不存在', -404, 404) : $this->ok($group);
     }
 
@@ -120,14 +149,17 @@ final class GroupsController extends Base {
             return $this->fail('该插件不可关闭', -3, 400);
         }
 
-        $key = $groupId . '.info';
-        $info = $this->store->get($key);
-        $info = is_array($info) ? $info : ['status' => 0, 'worker' => []];
+        $accountId = $this->accountId($request);
+        if (!$this->accountExists($accountId)) {
+            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        }
+        $info = \Core\Bot\GroupState::getInfo($this->store, $groupId, $accountId)
+            ?? ['status' => 0, 'worker' => []];
         $info['worker'] = is_array($info['worker'] ?? null) ? $info['worker'] : [];
         $info['worker'][$plugin] = $enabled;
-        $this->store->set($key, $info);
+        \Core\Bot\GroupState::setInfo($this->store, $groupId, $info, $accountId);
         // 返回完整群对象：前端原来拿这个局部对象覆盖整行，结果 name / updated_at 被抹掉
-        return $this->ok($this->metrics->group($groupId) ?? ['group_id' => $groupId, 'plugin' => $plugin, 'enabled' => $enabled]);
+        return $this->ok($this->metrics->group($groupId, $accountId) ?? ['group_id' => $groupId, 'plugin' => $plugin, 'enabled' => $enabled]);
     }
 
     /** 群总开关 */
@@ -136,13 +168,16 @@ final class GroupsController extends Base {
             return $deny;
         }
         $groupId = (string)($params['group_id'] ?? '');
-        $key = $groupId . '.info';
-        $info = $this->store->get($key);
-        $info = is_array($info) ? $info : ['status' => 0, 'worker' => []];
+        $accountId = $this->accountId($request);
+        if (!$this->accountExists($accountId)) {
+            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        }
+        $info = \Core\Bot\GroupState::getInfo($this->store, $groupId, $accountId)
+            ?? ['status' => 0, 'worker' => []];
         $info['status'] = (int)($info['status'] ?? 0) === 1 ? 0 : 1;
         $info['updated_at'] = time();
-        $this->store->set($key, $info);
-        return $this->ok($this->metrics->group($groupId) ?? ['group_id' => $groupId, 'status' => $info['status'] === 1]);
+        \Core\Bot\GroupState::setInfo($this->store, $groupId, $info, $accountId);
+        return $this->ok($this->metrics->group($groupId, $accountId) ?? ['group_id' => $groupId, 'status' => $info['status'] === 1]);
     }
 
     /** 更新 WebUI 维护的元数据（备注 / 标签 / 名称） */
@@ -154,15 +189,19 @@ final class GroupsController extends Base {
         if ($groupId === '') {
             return $this->fail('缺少群号', -1, 400);
         }
-        $meta = (array)($this->store->get('webui:groups') ?? []);
+        $accountId = $this->accountId($request);
+        if (!$this->accountExists($accountId)) {
+            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        }
+        $meta = \Core\Bot\GroupState::meta($this->store, $accountId);
         $meta[$groupId] = array_merge((array)($meta[$groupId] ?? []), [
             'name'       => (string)$request->input('name', (string)($meta[$groupId]['name'] ?? '')),
             'note'       => (string)$request->input('note', (string)($meta[$groupId]['note'] ?? '')),
             'tags'       => (array)$request->input('tags', (array)($meta[$groupId]['tags'] ?? [])),
             'updated_at' => time(),
         ]);
-        $this->store->set('webui:groups', $meta);
-        return $this->ok($this->metrics->group($groupId));
+        \Core\Bot\GroupState::setMeta($this->store, $meta, $accountId);
+        return $this->ok($this->metrics->group($groupId, $accountId));
     }
 
     /** 新建/登记一个群 */
@@ -174,21 +213,24 @@ final class GroupsController extends Base {
         if ($groupId === '' || !preg_match('/^[0-9a-zA-Z_-]+$/', $groupId)) {
             return $this->fail('群号格式不正确', -1, 400);
         }
-        $key = $groupId . '.info';
-        if ($this->store->get($key) === null) {
-            $this->store->set($key, ['status' => 0, 'worker' => [], 'updated_at' => time()]);
+        $accountId = $this->accountId($request);
+        if (!$this->accountExists($accountId)) {
+            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        }
+        if (\Core\Bot\GroupState::getInfo($this->store, $groupId, $accountId) === null) {
+            \Core\Bot\GroupState::setInfo($this->store, $groupId, ['status' => 0, 'worker' => [], 'updated_at' => time()], $accountId);
         }
         // 手动添加时填的群名要落库，否则列表里永远显示不出来
         $name = trim((string)$request->input('name', ''));
-        $meta = (array)($this->store->get('webui:groups') ?? []);
+        $meta = \Core\Bot\GroupState::meta($this->store, $accountId);
         $row = is_array($meta[$groupId] ?? null) ? $meta[$groupId] : [];
         if ($name !== '') {
             $row['name'] = $name;
         }
         $row['updated_at'] = time();
         $meta[$groupId] = $row;
-        $this->store->set('webui:groups', $meta);
-        return $this->ok($this->metrics->group($groupId), '已登记');
+        \Core\Bot\GroupState::setMeta($this->store, $meta, $accountId);
+        return $this->ok($this->metrics->group($groupId, $accountId), '已登记');
     }
 
     /** 移除群的配置（不影响 QQ 侧） */
@@ -197,10 +239,14 @@ final class GroupsController extends Base {
             return $deny;
         }
         $groupId = (string)($params['group_id'] ?? '');
-        $this->store->del($groupId . '.info');
-        $meta = (array)($this->store->get('webui:groups') ?? []);
+        $accountId = $this->accountId($request);
+        if (!$this->accountExists($accountId)) {
+            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        }
+        \Core\Bot\GroupState::delInfo($this->store, $groupId, $accountId);
+        $meta = \Core\Bot\GroupState::meta($this->store, $accountId);
         unset($meta[$groupId]);
-        $this->store->set('webui:groups', $meta);
+        \Core\Bot\GroupState::setMeta($this->store, $meta, $accountId);
         return $this->ok(null, '已移除');
     }
 }

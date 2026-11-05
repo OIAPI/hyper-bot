@@ -73,6 +73,9 @@ async function request<T>(method: Method, path: string, opts: RequestOptions = {
   const headers: Record<string, string> = { Accept: 'application/json' }
   const token = getToken()
   if (token && !opts.anonymous) headers.Authorization = 'Bearer ' + token
+  // 全局机器人账号：后端按该账号隔离群、权限、订阅、Webhook、RSS、定时任务等
+  const scopedAccount = localStorage.getItem('hyper-account-scope') ?? ''
+  if (scopedAccount !== '') headers['X-Account-Id'] = scopedAccount
 
   let payloadBody: BodyInit | undefined
   if (opts.raw !== undefined) {

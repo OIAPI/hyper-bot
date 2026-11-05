@@ -86,6 +86,30 @@ final class SettingsController extends Base {
         ]);
     }
 
+    /** 删除配置项 / 整个小节 */
+    public function destroy(Request $request): Response {
+        if ($deny = $this->guard($request, 'settings.write')) {
+            return $deny;
+        }
+        $path = trim((string)$request->input('path', ''));
+        $whole = (bool)$request->input('whole', false);
+        if ($path === '' || str_contains($path, '..') || !preg_match('/^[A-Za-z0-9_.\-\[\]]{1,160}$/', $path)) {
+            return $this->fail('配置路径不合法', -1, 400);
+        }
+        $ok = $whole ? Config::removeSection($path) : Config::remove($path);
+        if (!$ok) {
+            $warnings = Config::warnings();
+            $reason = $warnings === [] ? '删除失败：路径不存在或 Config.ini 不可写' : (string)end($warnings);
+            return $this->fail($reason, -2, 400);
+        }
+        return $this->ok([
+            'path'     => $path,
+            'whole'    => $whole,
+            'backup'   => Config::lastBackup(),
+            'warnings' => Config::warnings(),
+        ], '已删除 ' . ($whole ? '小节 ' : '配置项 ') . $path);
+    }
+
     /** 重新加载配置缓存 */
     public function reload(Request $request): Response {
         if ($deny = $this->guard($request, 'settings.write')) {

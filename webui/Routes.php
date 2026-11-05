@@ -139,6 +139,7 @@ final class Routes {
                 $r->get('/settings/raw', [$settings, 'raw'], 'settings.raw');
                 $r->post('/settings/reload', [$settings, 'reload'], 'settings.reload');
                 $r->put('/settings', [$settings, 'update'], 'settings.update');
+                $r->delete('/settings', [$settings, 'destroy'], 'settings.destroy');
 
                 // 定时任务（管理面；执行在 Core\Schedule\Runner）
                 $r->get('/schedule', [$schedule, 'index'], 'schedule.index');

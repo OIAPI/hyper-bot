@@ -342,6 +342,112 @@ final class Config {
     private const UNSET = "\0__config_unset__\0";
 
     /**
+     * 删除一个配置项（按完整路径，自动定位所属小节）。
+     */
+    public static function remove(string $path): bool {
+        $segments = array_values(array_filter(explode('.', trim($path)), fn($v) => $v !== ''));
+        if ($segments === []) {
+            return false;
+        }
+        [$section, $rest] = self::splitSection($segments);
+        $inFile = implode('.', $rest);
+        if ($inFile === '') {
+            return false;
+        }
+        return self::deleteKey($section, $inFile);
+    }
+
+    /** 删除整个小节（含小节头与其中所有键） */
+    public static function removeSection(string $section): bool {
+        $section = trim($section);
+        if ($section === '') {
+            return false;
+        }
+        $path = self::path();
+        if (!is_writable($path)) {
+            return false;
+        }
+        $current = Fs::read($path);
+        if ($current === '') {
+            return false;
+        }
+        $lines = preg_split('/\R/u', $current);
+        if ($lines === false) {
+            return false;
+        }
+        $out = [];
+        $inside = false;
+        $found = false;
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+            if ($trimmed !== '' && $trimmed[0] === '[' && str_ends_with($trimmed, ']')) {
+                $name = trim(substr($trimmed, 1, -1));
+                $inside = $name === $section;
+                if ($inside) {
+                    $found = true;
+                    continue;
+                }
+            }
+            if ($inside) {
+                continue;
+            }
+            $out[] = $line;
+        }
+        if (!$found) {
+            return false;
+        }
+        return self::writeLines($path, $out);
+    }
+
+    private static function deleteKey(string $section, string $inFile): bool {
+        $path = self::path();
+        if (!is_writable($path)) {
+            return false;
+        }
+        $current = Fs::read($path);
+        if ($current === '') {
+            return false;
+        }
+        $lines = preg_split('/\R/u', $current);
+        if ($lines === false) {
+            return false;
+        }
+        $currentSection = '';
+        $removed = false;
+        $out = [];
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+            if ($trimmed !== '' && $trimmed[0] === '[' && str_ends_with($trimmed, ']')) {
+                $currentSection = trim(substr($trimmed, 1, -1));
+                $out[] = $line;
+                continue;
+            }
+            if (!$removed && $currentSection === $section
+                && $trimmed !== '' && $trimmed[0] !== ';' && $trimmed[0] !== '#'
+                && preg_match('/^\s*' . preg_quote($inFile, '/') . '\s*[=:]\s*/', $line)) {
+                $removed = true;
+                continue;
+            }
+            $out[] = $line;
+        }
+        if (!$removed) {
+            return false;
+        }
+        return self::writeLines($path, $out);
+    }
+
+    /** @param list<string> $lines */
+    private static function writeLines(string $path, array $lines): bool {
+        $output = implode("\n", $lines);
+        self::$lastBackup = self::backup($path);
+        if (!Fs::write($path, $output)) {
+            return false;
+        }
+        self::refresh();
+        return true;
+    }
+
+    /**
      * 写回前的备份。成功返回备份文件绝对路径，失败返回 null。
      * 文件名带时间戳，只保留最近 5 份，避免长期运行把磁盘写满。
      */

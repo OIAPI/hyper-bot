@@ -68,7 +68,10 @@ try {
 
     check('非数字 QQ 被拒', MemberPermissions::set('abc', 'admin')['ok'] === false);
     check('QQ 太短被拒', MemberPermissions::set('1234', 'admin')['ok'] === false);
-    check('QQ 太长被拒', MemberPermissions::set('1234567890123', 'admin')['ok'] === false);
+    check('超长 ID 被拒', MemberPermissions::set(str_repeat('a', 65), 'admin')['ok'] === false);
+    $openid = MemberPermissions::set('4982995E31B3D19A798977E3C2633AF1', 'admin');
+    check('官方成员 openid 可设置', $openid['ok'] === true
+        && MemberPermissions::get('4982995E31B3D19A798977E3C2633AF1') === 'admin');
     check('未知角色被拒', MemberPermissions::set('10001', 'god')['ok'] === false);
     // v1 的旧等级名仍然接受，并映射成新角色
     $r = MemberPermissions::set('10001', 'manager');

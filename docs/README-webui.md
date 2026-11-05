@@ -303,6 +303,15 @@ WebSocket 服务端**不再默认启动**。只有当下面任一条件成立时
 - 群管理页点 **同步群名**（`POST /webui/api/groups/sync`），框架会调 `get_group_list` 把名字写进 `webui:groups`
 - 需要 `group.write` 权限；没有可用接口时会直接告诉你原因（没配 api、协议端拒绝等）
 
+### 群配置按机器人账号隔离
+
+群管理页顶部要选一个**机器人账号**：
+
+- 群开关、群级插件开关、群名/备注/标签都按账号隔离；
+- 存储键形如 `acct:qqbot-xxx:130558695.info`、`acct:qqbot-xxx:webui:groups`；
+- 插件通过 `$this->Redis` 写的缓存/配置也会自动按账号隔离；
+- 只有一个启用账号时仍会回退读取旧的全局键，升级后不用迁移；一旦启用第二个号，旧全局数据不再参与，避免两个号串群/串权限。
+
 ## 忘记密码（重置面板账号）
 
 面板账号存在 `runtime/webui/users.json`，密码是 bcrypt 哈希。下面三种情况都会让「原来那个密码」失效：
@@ -509,8 +518,8 @@ WebUI 与聊天共用一个落盘器 `Webui\PluginInstaller`：
 | | 后台账号 | QQ 成员权限 |
 |---|---|---|
 | 用途 | 登录 WebUI 面板 | 机器人在群里认人 |
-| 身份 | 用户名 + 密码 / 第三方登录 | QQ 号 |
-| 存储 | `runtime/webui/users.json` | `memberPermission.<QQ>`（沿用 v1 键） |
+| 身份 | 用户名 + 密码 / 第三方登录 | QQ 号 / 官方成员 openid |
+| 存储 | `runtime/webui/users.json` | `acct:<账号>:memberPermission.<QQ>`（单账号回退 v1 键） |
 | 管理 | 账号设置（owner/admin/viewer） | 业务 → QQ 权限 |
 
 权限模型是「角色 → 能力」，等级只是给老插件的兼容视图：

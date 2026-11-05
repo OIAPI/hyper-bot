@@ -33,9 +33,47 @@ final class PermissionsController extends Base
         ];
     }
 
+    /** 选定账号并压入上下文；账号不存在返回 null */
+    private function selectAccount(Request $request): ?string
+    {
+        $id = trim((string)$request->input('account', ''));
+        if ($id !== '') {
+            $account = \Core\Bot\Accounts::get($id);
+            if ($account === null) {
+                return null;
+            }
+        } else {
+            $enabled = \Core\Bot\Accounts::enabled();
+            $account = $enabled[0] ?? null;
+        }
+        if ($account !== null) {
+            \Core\Bot\AccountContext::use($account);
+            return (string)($account['id'] ?? '');
+        }
+        \Core\Bot\AccountContext::reset();
+        return '';
+    }
+
+    private function decorate(array $data, string $accountId): array
+    {
+        $data['account'] = $accountId;
+        $data['accounts'] = array_map(
+            static fn(array $a): array => ['id' => $a['id'], 'name' => $a['name'], 'protocol' => $a['protocol']],
+            \Core\Bot\Accounts::publicList()
+        );
+        return $data;
+    }
+
     public function index(Request $request): Response
     {
-        return $this->ok($this->payload());
+        $accountId = $this->selectAccount($request);
+        if ($accountId === null) {
+            \Core\Bot\AccountContext::reset();
+            return $this->fail('账号不存在', -1, 404);
+        }
+        $data = $this->decorate($this->payload(), $accountId);
+        \Core\Bot\AccountContext::reset();
+        return $this->ok($data);
     }
 
     public function save(Request $request): Response
@@ -43,14 +81,24 @@ final class PermissionsController extends Base
         if ($deny = $this->guard($request, 'settings.write')) {
             return $deny;
         }
-        $result = MemberPermissions::set(
-            (string)$request->input('qq', ''),
-            (string)$request->input('level', '')
-        );
+        $accountId = $this->selectAccount($request);
+        if ($accountId === null) {
+            \Core\Bot\AccountContext::reset();
+            return $this->fail('账号不存在', -1, 404);
+        }
+        try {
+            $result = MemberPermissions::set(
+                (string)$request->input('qq', ''),
+                (string)$request->input('level', '')
+            );
+            $data = $this->decorate($this->payload(), $accountId);
+        } finally {
+            \Core\Bot\AccountContext::reset();
+        }
         if (!$result['ok']) {
             return $this->fail($result['msg'], -1, 400);
         }
-        return $this->ok($this->payload(), $result['msg']);
+        return $this->ok($data, $result['msg']);
     }
 
     public function destroy(Request $request, array $params): Response
@@ -58,10 +106,21 @@ final class PermissionsController extends Base
         if ($deny = $this->guard($request, 'settings.write')) {
             return $deny;
         }
-        $qq = (string)($params['qq'] ?? '');
-        if (!MemberPermissions::remove($qq)) {
+        $accountId = $this->selectAccount($request);
+        if ($accountId === null) {
+            \Core\Bot\AccountContext::reset();
+            return $this->fail('账号不存在', -1, 404);
+        }
+        try {
+            $qq = (string)($params['qq'] ?? '');
+            $ok = MemberPermissions::remove($qq);
+            $data = $this->decorate($this->payload(), $accountId);
+        } finally {
+            \Core\Bot\AccountContext::reset();
+        }
+        if (!$ok) {
             return $this->fail('没有这个人的权限记录', -1, 404);
         }
-        return $this->ok($this->payload(), '已移除，将回落到群角色');
+        return $this->ok($data, '已移除，将回落到群角色');
     }
 }

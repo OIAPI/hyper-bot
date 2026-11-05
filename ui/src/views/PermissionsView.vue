@@ -9,6 +9,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { permissionApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
+import { scopedAccount, setScopedAccount } from '@/stores/accountScope'
 import type { PermissionsData } from '@/types/api'
 import type { UiColumn } from '@/ui/types'
 import { sortRows, type SortState } from '@/utils/sortRows'
@@ -19,9 +20,20 @@ const toast = useToastStore()
 const data = ref<PermissionsData | null>(null)
 const loading = ref(false)
 const canWrite = computed(() => auth.can('settings.write'))
+const selectedAccount = scopedAccount
+const accountOptions = computed(() =>
+  (data.value?.accounts ?? []).map((a) => ({
+    label: a.name ? a.name + '（' + a.id + '）' : a.id,
+    value: a.id,
+  })),
+)
+watch(selectedAccount, (v) => {
+  setScopedAccount(v)
+  void load()
+})
 
 const columns: UiColumn[] = [
-  { key: 'qq', title: 'QQ 号', width: 160 },
+  { key: 'qq', title: 'QQ / 成员 ID', width: 220 },
   { key: 'level', title: '权限等级', width: 200 },
   { key: 'label', title: '说明', minWidth: 160 },
   { key: 'ops', title: '操作', width: 100, align: 'right' },
@@ -107,7 +119,10 @@ const addError = ref('')
 async function load(): Promise<void> {
   loading.value = true
   try {
-    data.value = await permissionApi.list()
+    data.value = await permissionApi.list(selectedAccount.value || undefined)
+    if (!selectedAccount.value && data.value?.account) {
+      selectedAccount.value = data.value.account
+    }
   } catch (e) {
     toast.fromError(e, '加载权限失败')
   } finally {
@@ -117,13 +132,13 @@ async function load(): Promise<void> {
 
 async function add(): Promise<void> {
   addError.value = ''
-  if (!/^\d{5,12}$/.test(newQq.value.trim())) {
-    addError.value = 'QQ 号必须是 5-12 位数字'
+  if (!/^[A-Za-z0-9_-]{5,64}$/.test(newQq.value.trim())) {
+    addError.value = 'QQ 号或官方成员 openid 格式不正确'
     return
   }
   adding.value = true
   try {
-    data.value = await permissionApi.save(newQq.value.trim(), newLevel.value)
+    data.value = await permissionApi.save(newQq.value.trim(), newLevel.value, selectedAccount.value || undefined)
     toast.ok('已设置 ' + newQq.value.trim())
     newQq.value = ''
   } catch (e) {
@@ -135,7 +150,7 @@ async function add(): Promise<void> {
 
 async function change(row: { qq: string; level: string }, level: string): Promise<void> {
   try {
-    const res = await permissionApi.save(row.qq, level)
+    const res = await permissionApi.save(row.qq, level, selectedAccount.value || undefined)
     // 局部响应（只有 items/stats）直接覆盖会让 template 里的 levels 变 undefined
     data.value = { ...(data.value ?? {}), ...res } as PermissionsData
     toast.ok(row.qq + ' → ' + (levels.value.find((l) => l.value === level)?.label ?? level))
@@ -147,7 +162,7 @@ async function change(row: { qq: string; level: string }, level: string): Promis
 
 async function remove(row: { qq: string }): Promise<void> {
   try {
-    const res = await permissionApi.remove(row.qq)
+    const res = await permissionApi.remove(row.qq, selectedAccount.value || undefined)
     data.value = { ...(data.value ?? {}), ...res } as PermissionsData
     toast.ok('已移除 ' + row.qq)
   } catch (e) {
@@ -173,6 +188,7 @@ onMounted(load)
 
     <UiAlert type="info" :closable="false">
       面板登录账号（用户名 / 密码 / 第三方登录）在「账号设置」里管理，和这里的 QQ 号是两套体系。
+      权限按机器人账号隔离：顶部选择哪个机器人，就只管理那个号的群成员权限。
     </UiAlert>
 
     <div class="stat-row">
@@ -190,7 +206,7 @@ onMounted(load)
     <UiCard v-if="canWrite">
       <template #header><span class="card-title">添加 / 修改</span></template>
       <div class="add-row">
-        <UiInput v-model="newQq" class="qq-input" placeholder="QQ 号，如 3889012345" />
+        <UiInput v-model="newQq" class="qq-input" placeholder="QQ 号，或官方成员 openid" />
         <UiSelect v-model="newLevel" :options="levels" class="level-select" />
         <UiButton size="small" type="primary" :loading="adding" @click="add">保存</UiButton>
       </div>
@@ -206,6 +222,7 @@ onMounted(load)
 
     <UiCard :padding="'none'">
       <div class="toolbar">
+        <UiSelect v-model="selectedAccount" :options="accountOptions" class="account-select" />
         <UiInput
           v-model="keyword"
           class="search"

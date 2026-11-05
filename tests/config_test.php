@@ -149,6 +149,19 @@ fixture('broken.ini', "[app\ndebug = true\n");
 ok('解析失败返回默认值', Config::get('app.debug', 'DEFAULT'), 'DEFAULT');
 ok('有解析失败告警', count(array_filter(Config::warnings(), fn($w) => str_contains($w, '解析失败'))) > 0, true);
 
+echo "\n=== 13. 删除配置项 / 小节 ===\n";
+fixture('delete.ini', "[app]\ndebug = true\nname = hyper\n\n[other]\nkeep = value123\n\n[plugin.hello]\na = 1\nb = 2\n");
+ok('删除已有键成功', Config::remove('app.debug'), true);
+ok('删除后读不到', Config::get('app.debug', null), null);
+ok('同小节其它键保留', Config::get('app.name'), 'hyper');
+ok('跨小节不影响其它段', Config::get('other.keep'), 'value123');
+ok('删除点号小节里的键', Config::remove('plugin.hello.a'), true);
+ok('同小节另一个键保留', Config::get('plugin.hello.b'), 2);
+ok('删除整个点号小节', Config::removeSection('plugin.hello'), true);
+ok('小节删除后键不存在', Config::get('plugin.hello.b', 'GONE'), 'GONE');
+ok('删除不存在的小节返回 false', Config::removeSection('nope'), false);
+ok('删除后仍有备份', glob($sandbox . '/delete.ini.*.bak') !== [], true);
+
 // 清理
 foreach (glob($sandbox . '/*') ?: [] as $f) {
     @unlink($f);

@@ -19,6 +19,8 @@ use Protocol\Core\Config;
  */
 class Webhook {
 	public static function secret(): string {
+		[$hit, $value] = \Core\Bot\AccountContext::get('qqbot.client_secret');
+		if ($hit && (string)$value !== '') return (string)$value;
 		return (string)(Config::string('qqbot.client_secret', '') ?: getenv('QQ_BOT_CLIENT_SECRET'));
 	}
 

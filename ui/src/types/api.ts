@@ -426,6 +426,11 @@ export interface BotAccount {
   api?: string
   forward_url?: string
   remark?: string
+  /** QQ 官方机器人：AppID（self_id 缺省时也用它做账号标识） */
+  app_id?: string
+  /** 只写：提交时带上表示要改 AppSecret，响应里永远不回显 */
+  client_secret?: string
+  client_secret_set?: boolean
   /** 只写：提交时带上表示要改令牌，响应里永远不回显 */
   token?: string
   forward_token?: string

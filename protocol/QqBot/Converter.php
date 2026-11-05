@@ -29,7 +29,16 @@ class Converter {
 		$t    = (string)($payload['t'] ?? '');
 		$d    = (array)($payload['d'] ?? []);
 		$time = time();
-		$self = $selfId ?? (int)(Config::string('qqbot.self_id', '0')) ?: self::hashId((string)(Config::string('qqbot.app_id', '')));
+		$self = $selfId;
+		if ($self === null || $self === 0) {
+			[$hit, $accountSelf] = \Core\Bot\AccountContext::get('qqbot.self_id');
+			$self = (int)(($hit && (string)$accountSelf !== '') ? $accountSelf : Config::string('qqbot.self_id', '0'));
+			if (!$self) {
+				[$hitApp, $accountApp] = \Core\Bot\AccountContext::get('qqbot.app_id');
+				$appId = ($hitApp && (string)$accountApp !== '') ? (string)$accountApp : (string)Config::string('qqbot.app_id', '');
+				$self = self::hashId($appId);
+			}
+		}
 
 		return match ($t) {
 			'GROUP_AT_MESSAGE_CREATE', 'GROUP_MESSAGE_CREATE' => self::groupMessage($d, $time, $self, $t),

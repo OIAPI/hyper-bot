@@ -20,15 +20,27 @@ class Token {
 	private static int $expiresAt = 0;
 	private static float $refreshingUntil = 0.0;
 
+	/** 优先读当前账号（多账号），没有账号上下文再回落到 Config.ini / 环境变量 */
+	private static function fromAccount(string $key): string {
+		[$hit, $value] = \Core\Bot\AccountContext::get($key);
+		return $hit ? (string)$value : '';
+	}
+
 	public static function appId(): string {
+		$fromAccount = self::fromAccount('qqbot.app_id');
+		if ($fromAccount !== '') return $fromAccount;
 		return (string)(Config::string('qqbot.app_id', '') ?: getenv('QQ_BOT_APP_ID'));
 	}
 
 	public static function secret(): string {
+		$fromAccount = self::fromAccount('qqbot.client_secret');
+		if ($fromAccount !== '') return $fromAccount;
 		return (string)(Config::string('qqbot.client_secret', '') ?: getenv('QQ_BOT_CLIENT_SECRET'));
 	}
 
 	public static function apiBase(): string {
+		$fromAccount = self::fromAccount('qqbot.api');
+		if ($fromAccount !== '') return rtrim($fromAccount, '/');
 		return rtrim((string)Config::string('qqbot.api', 'https://api.bot.qq.com'), '/');
 	}
 

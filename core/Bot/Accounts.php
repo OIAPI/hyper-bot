@@ -143,9 +143,19 @@ final class Accounts
             return self::fail('不支持的协议：' . $protocol . '（可选 onebot / milky / qqbot）');
         }
 
+        $isQqbot = $protocol === 'qqbot';
         $selfId = trim((string)($data['self_id'] ?? ''));
+        $appId = $isQqbot ? trim((string)($data['app_id'] ?? '')) : '';
+        $clientSecret = $isQqbot ? trim((string)($data['client_secret'] ?? '')) : '';
+        // 官方机器人没有 QQ 号：没填 self_id 时用 AppID 做账号标识（事件/回包都按它路由）
+        if ($isQqbot && $selfId === '' && $appId !== '') {
+            $selfId = $appId;
+        }
         if ($selfId !== '' && preg_match('/^[A-Za-z0-9_\-:.]{1,64}$/', $selfId) !== 1) {
             return self::fail('账号（self_id）只能包含字母、数字、下划线、短横线、冒号或点，最长 64 字符');
+        }
+        if ($isQqbot && $appId !== '' && preg_match('/^[A-Za-z0-9_\-]{1,64}$/', $appId) !== 1) {
+            return self::fail('AppID 只能包含字母、数字、下划线、短横线，最长 64 字符');
         }
 
         $api = trim((string)($data['api'] ?? ''));
@@ -180,13 +190,30 @@ final class Accounts
         // 更新时，未提交的字段沿用原值：面板只改一个开关不会把 token / api 清空
         if ($existing !== null) {
             $prev = $rows[$existing];
-            foreach (['name', 'self_id', 'enable', 'api', 'token', 'forward_url', 'forward_token', 'remark'] as $key) {
+            foreach (['name', 'self_id', 'enable', 'api', 'token', 'forward_url', 'forward_token', 'remark', 'app_id', 'client_secret'] as $key) {
                 if (!array_key_exists($key, $data)) {
                     $data[$key] = $prev[$key] ?? '';
                 }
             }
             $selfId = trim((string)($data['self_id'] ?? ''));
             $api = trim((string)($data['api'] ?? ''));
+            if ($isQqbot) {
+                $appId = trim((string)($data['app_id'] ?? ''));
+                $clientSecret = trim((string)($data['client_secret'] ?? ''));
+            }
+        }
+        if ($isQqbot) {
+            if ($appId === '') {
+                return self::fail('官方机器人需要 AppID');
+            }
+            // 新建必须填 AppSecret；老数据（迁移前只有 Config.ini）允许先空着，
+            // 协议层会继续回落到 Config.ini 的 qqbot.client_secret
+            if ($clientSecret === '' && $existing === null) {
+                return self::fail('官方机器人需要 AppSecret');
+            }
+            if ($api === '') {
+                $api = 'https://api.bot.qq.com';
+            }
         }
 
         $name = trim((string)($data['name'] ?? ''));
@@ -200,6 +227,8 @@ final class Accounts
             'token'         => (string)($data['token'] ?? ''),
             'forward_url'   => trim((string)($data['forward_url'] ?? '')),
             'forward_token' => (string)($data['forward_token'] ?? ''),
+            'app_id'        => $appId,
+            'client_secret' => $clientSecret,
             'remark'        => trim((string)($data['remark'] ?? '')),
             'updated_at'    => date('c'),
         ];
@@ -262,7 +291,8 @@ final class Accounts
     {
         $row['token_set'] = (string)($row['token'] ?? '') !== '';
         $row['forward_token_set'] = (string)($row['forward_token'] ?? '') !== '';
-        unset($row['token'], $row['forward_token']);
+        $row['client_secret_set'] = (string)($row['client_secret'] ?? '') !== '';
+        unset($row['token'], $row['forward_token'], $row['client_secret']);
         $row['protocol_label'] = self::PROTOCOLS[$row['protocol'] ?? ''] ?? (string)($row['protocol'] ?? '');
         return $row;
     }
@@ -317,13 +347,15 @@ final class Accounts
                 'id'            => 'qqbot-' . ($self !== '' ? $self : 'default'),
                 'name'          => 'QQ 官方 ' . ($self !== '' ? $self : '默认'),
                 'protocol'      => 'qqbot',
-                'self_id'       => $self,
+                'self_id'       => $self !== '' ? $self : trim(Config::string('protocol.qqbot.app_id', '')),
                 'enable'        => true,
                 'api'           => Config::string('protocol.qqbot.api', 'https://api.bot.qq.com'),
                 'token'         => '',
                 'forward_url'   => '',
                 'forward_token' => '',
-                'remark'        => '由 Config.ini 迁移（app_id 仍读 Config.ini）',
+                'app_id'        => trim(Config::string('protocol.qqbot.app_id', '')),
+                'client_secret' => Config::string('protocol.qqbot.client_secret', ''),
+                'remark'        => '由 Config.ini 迁移',
                 'created_at'    => $now,
                 'updated_at'    => $now,
             ];
@@ -350,7 +382,7 @@ final class Accounts
             if (!is_array($row) || !isset($row['id'], $row['protocol'])) {
                 continue;
             }
-            $rows[] = [
+            $normalized = [
                 'id'            => (string)$row['id'],
                 'name'          => (string)($row['name'] ?? $row['id']),
                 'protocol'      => strtolower((string)$row['protocol']),
@@ -360,10 +392,26 @@ final class Accounts
                 'token'         => (string)($row['token'] ?? ''),
                 'forward_url'   => (string)($row['forward_url'] ?? ''),
                 'forward_token' => (string)($row['forward_token'] ?? ''),
+                'app_id'        => (string)($row['app_id'] ?? ''),
+                'client_secret' => (string)($row['client_secret'] ?? ''),
                 'remark'        => (string)($row['remark'] ?? ''),
                 'created_at'    => (string)($row['created_at'] ?? ''),
                 'updated_at'    => (string)($row['updated_at'] ?? ''),
             ];
+            // 老版本只有 Config.ini 的 qqbot 配置：读出来补到账号上，
+            // 面板能看到 AppID，协议层也能按账号走（保存后落盘）
+            if ($normalized['protocol'] === 'qqbot') {
+                if ($normalized['app_id'] === '') {
+                    $normalized['app_id'] = trim(Config::string('protocol.qqbot.app_id', ''));
+                }
+                if ($normalized['self_id'] === '') {
+                    $normalized['self_id'] = $normalized['app_id'];
+                }
+                if ($normalized['client_secret'] === '') {
+                    $normalized['client_secret'] = Config::string('protocol.qqbot.client_secret', '');
+                }
+            }
+            $rows[] = $normalized;
         }
         return $rows;
     }

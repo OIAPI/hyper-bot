@@ -81,6 +81,12 @@ final class AccountContext
             $protocol . '.forward.url'   => (string)($account['forward_url'] ?? ''),
             $protocol . '.forward.token' => (string)($account['forward_token'] ?? ''),
         ];
+        // QQ 官方机器人：AppID / AppSecret / self_id 都按账号走
+        if ($protocol === 'qqbot') {
+            $map['qqbot.app_id'] = (string)($account['app_id'] ?? ($account['self_id'] ?? ''));
+            $map['qqbot.client_secret'] = (string)($account['client_secret'] ?? '');
+            $map['qqbot.self_id'] = (string)($account['self_id'] ?? '');
+        }
 
         if (array_key_exists($key, $map)) {
             return [true, $map[$key]];

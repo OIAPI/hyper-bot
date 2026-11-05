@@ -131,6 +131,8 @@ const form = ref({
   token: '',
   forward_url: '',
   forward_token: '',
+  app_id: '',
+  client_secret: '',
   remark: '',
   enable: true,
 })
@@ -146,6 +148,8 @@ function openCreate(): void {
     token: '',
     forward_url: '',
     forward_token: '',
+    app_id: '',
+    client_secret: '',
     remark: '',
     enable: true,
   }
@@ -165,6 +169,8 @@ function openEdit(row: BotAccount): void {
     token: '',
     forward_url: row.forward_url ?? '',
     forward_token: '',
+    app_id: row.app_id ?? '',
+    client_secret: '',
     remark: row.remark ?? '',
     enable: row.enable,
   }
@@ -174,10 +180,16 @@ function openEdit(row: BotAccount): void {
 async function save(): Promise<void> {
   if (saving.value) return
   formError.value = ''
-  if (!form.value.self_id.trim()) { formError.value = '机器人号码不能为空'; return }
-  if (form.value.api.trim() && !/^https?:\/\//i.test(form.value.api.trim())) {
-    formError.value = 'API 地址要以 http:// 或 https:// 开头'
-    return
+  const isQqbot = form.value.protocol === 'qqbot'
+  if (isQqbot) {
+    if (!form.value.app_id.trim()) { formError.value = '官方机器人需要 AppID'; return }
+    if (!editing.value && !form.value.client_secret.trim()) { formError.value = '官方机器人需要 AppSecret'; return }
+  } else {
+    if (!form.value.self_id.trim()) { formError.value = '机器人号码不能为空'; return }
+    if (form.value.api.trim() && !/^https?:\/\//i.test(form.value.api.trim())) {
+      formError.value = 'API 地址要以 http:// 或 https:// 开头'
+      return
+    }
   }
   saving.value = true
   try {
@@ -185,14 +197,20 @@ async function save(): Promise<void> {
       name: form.value.name.trim(),
       protocol: form.value.protocol,
       self_id: form.value.self_id.trim(),
-      api: form.value.api.trim(),
-      forward_url: form.value.forward_url.trim(),
       remark: form.value.remark.trim(),
       enable: form.value.enable,
     }
-    // 空 token 表示「不修改」，避免编辑时把已有凭据清空
-    if (form.value.token) payload.token = form.value.token
-    if (form.value.forward_token) payload.forward_token = form.value.forward_token
+    if (isQqbot) {
+      payload.app_id = form.value.app_id.trim()
+      // 空 secret 表示「不修改」，复用已保存的 AppSecret
+      if (form.value.client_secret) payload.client_secret = form.value.client_secret
+    } else {
+      payload.api = form.value.api.trim()
+      payload.forward_url = form.value.forward_url.trim()
+      // 空 token 表示「不修改」，避免编辑时把已有凭据清空
+      if (form.value.token) payload.token = form.value.token
+      if (form.value.forward_token) payload.forward_token = form.value.forward_token
+    }
     if (form.value.id) payload.id = form.value.id
     const res = editing.value
       ? await accountApi.update(editing.value, payload)
@@ -307,14 +325,20 @@ onMounted(load)
           </span>
         </template>
         <template #cell-self_id="{ row }">
-          <span class="mono">{{ row.self_id }}</span>
+          <span class="mono">{{ row.protocol === 'qqbot' ? (row.app_id || '—') : row.self_id }}</span>
         </template>
         <template #cell-endpoint="{ row }">
-          <div class="mono ellipsis">{{ row.api || '—' }}</div>
-          <div v-if="row.forward_url" class="mono ellipsis dim">{{ row.forward_url }}</div>
+          <template v-if="row.protocol === 'qqbot'">
+            <div class="mono ellipsis">{{ row.app_id ? 'AppID ' + row.app_id : '未配置 AppID' }}</div>
+            <div class="mono ellipsis dim">QQ 开放平台</div>
+          </template>
+          <template v-else>
+            <div class="mono ellipsis">{{ row.api || '—' }}</div>
+            <div v-if="row.forward_url" class="mono ellipsis dim">{{ row.forward_url }}</div>
+          </template>
         </template>
         <template #cell-credential="{ row }">
-          <UiTag v-if="row.token_set" type="success" size="small">已配置</UiTag>
+          <UiTag v-if="row.protocol === 'qqbot' ? row.client_secret_set : row.token_set" type="success" size="small">已配置</UiTag>
           <span v-else class="dim">未配置</span>
         </template>
         <template #cell-enable="{ row }">
@@ -347,22 +371,42 @@ onMounted(load)
           <span class="field-label">显示名称</span>
           <UiInput v-model="form.name" placeholder="主号 / 测试号" />
         </label>
-        <label class="field">
-          <span class="field-label">机器人号码 self_id</span>
-          <UiInput v-model="form.self_id" placeholder="3889012345" />
-        </label>
-        <label class="field span-2">
-          <span class="field-label">API 地址</span>
-          <UiInput v-model="form.api" placeholder="http://127.0.0.1:3000" />
-        </label>
-        <label class="field">
-          <span class="field-label">API Token</span>
-          <UiInput v-model="form.token" type="password" :placeholder="editing ? '留空表示不修改' : '可选'" />
-        </label>
-        <label class="field">
-          <span class="field-label">正向 WS 地址</span>
-          <UiInput v-model="form.forward_url" placeholder="ws://127.0.0.1:6700" />
-        </label>
+        <template v-if="form.protocol === 'qqbot'">
+          <label class="field">
+            <span class="field-label">AppID</span>
+            <UiInput v-model="form.app_id" class="mono" placeholder="QQ 开放平台的机器人 AppID" />
+          </label>
+          <label class="field">
+            <span class="field-label">AppSecret</span>
+            <UiInput
+              v-model="form.client_secret"
+              type="password"
+              :placeholder="editing ? '留空表示不修改' : 'QQ 开放平台的 AppSecret'"
+            />
+          </label>
+          <div class="field span-2 field-hint">
+            官方机器人不需要 API 地址 / Token；回调地址、端口与事件接入方式在
+            <code>Config.ini</code> 的 <code>[protocol.qqbot]</code> 里配置。
+          </div>
+        </template>
+        <template v-else>
+          <label class="field">
+            <span class="field-label">机器人号码 self_id</span>
+            <UiInput v-model="form.self_id" placeholder="3889012345" />
+          </label>
+          <label class="field span-2">
+            <span class="field-label">API 地址</span>
+            <UiInput v-model="form.api" placeholder="http://127.0.0.1:3000" />
+          </label>
+          <label class="field">
+            <span class="field-label">API Token</span>
+            <UiInput v-model="form.token" type="password" :placeholder="editing ? '留空表示不修改' : '可选'" />
+          </label>
+          <label class="field">
+            <span class="field-label">正向 WS 地址</span>
+            <UiInput v-model="form.forward_url" placeholder="ws://127.0.0.1:6700" />
+          </label>
+        </template>
         <label class="field span-2">
           <span class="field-label">备注</span>
           <UiInput v-model="form.remark" placeholder="这个号用在哪" />

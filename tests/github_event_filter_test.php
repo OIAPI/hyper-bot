@@ -49,6 +49,15 @@ check('标签版本不匹配', !GithubWebhook::eventSubscribed('push', $tagPush,
 check('分支不命中标签规则', !GithubWebhook::eventSubscribed('push', $pushMain, ['push:refs/tags/v*']));
 check('标签 push.created 也算创建', GithubWebhook::eventSubscribed('push', $tagPush, ['push.created']));
 
+// release 事件：action=released，payload.release.tag_name
+$release = ['action' => 'released', 'release' => ['tag_name' => 'v3.2.25']];
+check('release.released 命中', GithubWebhook::eventSubscribed('release', $release, ['release.released']));
+check('release.published 不命中 released', !GithubWebhook::eventSubscribed('release', $release, ['release.published']));
+check('release:tag:v3.2.25 命中', GithubWebhook::eventSubscribed('release', $release, ['release:tag:v3.2.25']));
+check('release:tags/v* 命中', GithubWebhook::eventSubscribed('release', $release, ['release:tags/v*']));
+check('release:refs/tags/v3.2.25 命中', GithubWebhook::eventSubscribed('release', $release, ['release:refs/tags/v3.2.25']));
+check('release:tag:v1.0.0 不命中', !GithubWebhook::eventSubscribed('release', $release, ['release:tag:v1.0.0']));
+
 // 群插件 URL：App\\Plugins\\Fq 必须编码成 App%5CPlugins%5CFq，路由再解码
 $router = new Router();
 $router->group('/webui/api', function (Router $r): void {

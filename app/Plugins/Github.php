@@ -32,7 +32,8 @@ final class Github extends BaseApp
                 [
                     'type' => 'text',
                     'text' => '在 GitHub 仓库 Settings → Webhooks 里添加：Payload URL = 本站地址 + /webhook/github/<订阅 id>，Content type 选 application/json，Secret 与下表一致。支持 push / issues / pull_request / release / star 等事件。通知群可填多个（逗号分隔）；模板留空用默认 [GitHub] 摘要。'
-                        . '事件过滤支持 event、event.action、push:分支、push:tag:v1.2.3、push:refs/tags/v*、push.created/deleted/forced、release.*；留空表示全部。'
+                        . '事件过滤支持 event、event.action、push:分支、push:tag:v1.2.3、push:refs/tags/v*、push.created/deleted/forced、release.*；'
+                        . 'release 事件可按动作（release.released）或标签（release:tag:v1.2.3、release:tags/v*）过滤；留空表示全部。'
                         . '内置变量：{event} {repo} {sender} {hook} {summary} {action} {branch} {tag} {number} {title} {url} {commits} {delivery}。'
                         . '也支持任意 JSON 路径：{json.issue.title}、{json.commits[0].message}、{json.head_commit.author.name}；{json} 输出整段 payload，取不到的字段为空。',
                 ],
@@ -242,10 +243,13 @@ final class Github extends BaseApp
         }
         foreach ($groups as $group) {
             try {
-                $adapter->call('send_group_msg', [
+                // 不等待实现端 echo：GitHub 回调只给 10 秒，等回执容易把投递拖超时
+                if (!$adapter->sendNoWait('send_group_msg', [
                     'group_id' => (int)$group,
                     'message'  => $message,
-                ]);
+                ])) {
+                    \Utils\Logger::warning('[github] 推送到群 ' . $group . ' 失败：没有可用的 WS/HTTP 通道');
+                }
             } catch (\Throwable $e) {
                 \Utils\Logger::warning('[github] 推送到群 ' . $group . ' 失败：' . $e->getMessage());
             }

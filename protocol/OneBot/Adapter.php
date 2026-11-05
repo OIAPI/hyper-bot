@@ -37,6 +37,24 @@ class Adapter extends BaseAdapter {
 		return new self([], $fd);
 	}
 
+	/**
+	 * 只发不等回执：外部 WebHook 通知用。
+	 *
+	 * GitHub 要求 10 秒内响应，而 call() 里的 WS 会等实现端 echo（默认 30 秒），
+	 * 连接异常时会把回调拖超时。通知类消息不需要 message_id，写完就返回。
+	 */
+	public function sendNoWait(string $action, array $params = []): bool {
+		$params = (array)\Core\Extension\Hooks::filter('onebot.call', $params, $action);
+		if ($this->fd !== null || WsHub::hasForward() || WsHub::hasReverse()) {
+			if (WsHub::sendApi($action, $params, $this->fd)) {
+				return true;
+			}
+		}
+		$this->http ??= new HttpAdapter();
+		$response = $this->http->call($action, $params);
+		return is_object($response) && (string)($response->status ?? '') !== 'failed';
+	}
+
 	public function call(string $action, array $params = [], string $method = 'POST'): object {
 		// 插件钩子：发出去之前可以改参数（例如统一加 auto_escape、改写消息段）
 		$params = (array)\Core\Extension\Hooks::filter('onebot.call', $params, $action);

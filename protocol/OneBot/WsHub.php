@@ -430,12 +430,43 @@ class WsHub {
 		$channel = new Channel(1);
 		self::$pending[$echo] = $channel;
 
-		$sent = false;
+		if (!self::pushPayload($payload, $fd)) {
+			unset(self::$pending[$echo]);
+			return null;
+		}
 
+		$response = $channel->pop($timeout);
+		unset(self::$pending[$echo]);
+		if ($response === false) {
+			Logger::warning("[OneBot-WS] API 调用超时：{$action}（{$timeout}s），不回落 HTTP 以免重复发送");
+			return false;
+		}
+		return is_array($response) ? $response : false;
+	}
+
+	/**
+	 * 只发不等回执（fire-and-forget）。
+	 *
+	 * GitHub 等外部 WebHook 要求 10 秒内响应，而 send_group_msg 正常要等实现端
+	 * echo；连接异常时会卡到 30 秒，GitHub 直接判投递超时。通知类消息不需要
+	 * message_id，写完就返回，让 HTTP 回调立刻成功。
+	 */
+	public static function sendApi(string $action, array $params = [], ?int $fd = null): bool {
+		$payload = [
+			'action' => $action,
+			'params' => (object)$params,
+			'echo'   => self::nextEcho(),
+		];
+		return self::pushPayload($payload, $fd);
+	}
+
+	/** 把 API 请求写到合适的连接：来源会话 > 正向 > 任选反向 */
+	private static function pushPayload(array $payload, ?int $fd): bool {
+		$sent = false;
 		/*
 		 * 会话优先：事件来自哪个反向连接，API 就回哪个连接。
 		 * 反向 WS 的实现端可能只在自己那条连接上维护会话状态，
-		 * 把回复推到另一条连接会导致「消息发到了别人的会话里」。
+		 * 把回复推到别的连接会导致「消息发到了别人的会话里」。
 		 */
 		if ($fd !== null && isset(self::$sessions[$fd]) && (self::$sessions[$fd]['role'] ?? '') === 'reverse') {
 			$sent = self::push($fd, $payload);
@@ -454,19 +485,7 @@ class WsHub {
 				$sent = self::push($pickFd, $payload);
 			}
 		}
-
-		if (!$sent) {
-			unset(self::$pending[$echo]);
-			return null;
-		}
-
-		$response = $channel->pop($timeout);
-		unset(self::$pending[$echo]);
-		if ($response === false) {
-			Logger::warning("[OneBot-WS] API 调用超时：{$action}（{$timeout}s），不回落 HTTP 以免重复发送");
-			return false;
-		}
-		return is_array($response) ? $response : false;
+		return $sent;
 	}
 
 	private static function sendRaw(array $payload): bool {

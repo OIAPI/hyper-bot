@@ -582,6 +582,8 @@ Secret 留空表示沿用原值，改完保存即可；「删除」直接在行�
   `push.created` / `push.deleted` / `push.forced` 区分分支创建/删除/强推；留空表示全部。
   标签推送用 `push:tag:v3.2.20`、`push:tags/v3.2.20`、`push:refs/tags/v3.2.20` 或通配符
   `push:refs/tags/v*`；`push:tag` 表示任意标签。
+  **Release 事件**（action=published/released…）没有 ref，用 `release.released` 按动作过滤，
+  或用 `release:tag:v3.2.20` / `release:tags/v*` 按标签过滤。
 - **RSS 订阅**（`app/Plugins/Rss.php`）：支持 RSS 2.0 与 Atom，按 `last_poll` 轮询（默认 15 分钟，与定时任务同一套心跳），
   抓到的条目按链接去重；填了群号就推标题与链接。
 

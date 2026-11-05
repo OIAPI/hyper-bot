@@ -118,6 +118,8 @@ final class GithubWebhook
         $isTag = str_starts_with($ref, 'refs/tags/');
         $branch = $isTag ? '' : (string)preg_replace('#^refs/heads/#', '', $ref);
         $tag = $isTag ? substr($ref, strlen('refs/tags/')) : '';
+        // release 事件没有 ref，用 release.tag_name 给 release:tag:v* 用
+        $releaseTag = strtolower((string)($payload['release']['tag_name'] ?? ''));
 
         foreach ($list as $item) {
             if ($item === $event) {
@@ -141,6 +143,10 @@ final class GithubWebhook
             // event:ref / event#ref（push 分支 / 标签过滤，支持通配符）
             if (preg_match('/^' . preg_quote($event, '/') . '[:#](.+)$/', $item, $m)) {
                 if (self::refMatches($m[1], $ref, $branch, $tag, $isTag)) {
+                    return true;
+                }
+                if ($event === 'release' && $releaseTag !== ''
+                    && self::refMatches($m[1], 'refs/tags/' . $releaseTag, '', $releaseTag, true)) {
                     return true;
                 }
             }

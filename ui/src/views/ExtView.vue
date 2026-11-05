@@ -9,7 +9,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { extApi } from '@/api'
 import { useToastStore } from '@/stores/toast'
-import type { ExtBlock, ExtPageData } from '@/types/api'
+import type { ExtBlock, ExtPageData, ExtRowAction } from '@/types/api'
 import type { UiColumn } from '@/ui/types'
 
 const route = useRoute()
@@ -27,12 +27,67 @@ const busy = ref('')
 const blocks = computed<ExtBlock[]>(() => page.value?.blocks ?? [])
 
 function columnsOf(block: ExtBlock): UiColumn[] {
-  return (block.columns ?? []).map((c) => ({
+  const cols: UiColumn[] = (block.columns ?? []).map((c) => ({
     key: c.key,
     title: c.title,
     width: c.width,
     minWidth: c.minWidth,
   }))
+  if ((block.rowActions ?? []).length > 0) {
+    cols.push({ key: '__ops', title: '操作', width: 120, align: 'right' })
+  }
+  return cols
+}
+
+/** 把表格行的值填进指定表单块（编辑订阅用） */
+function fillForm(formIndex: number, row: Record<string, unknown>): void {
+  const target = blocks.value[formIndex]
+  if (!target || target.type !== 'form') return
+  const values: Record<string, string> = {}
+  for (const field of target.fields ?? []) {
+    const value = row[field.key]
+    if (value !== undefined && value !== null) values[field.key] = String(value)
+  }
+  forms.value = { ...forms.value, [formIndex]: values }
+  toast.ok('已填入表单，修改后点保存')
+}
+
+/** 表格行操作：form 填表单；否则带 {key} 占位符调用接口 */
+async function runRowAction(
+  action: ExtRowAction,
+  row: Record<string, unknown>,
+  blockIndex: number,
+  actionIndex: number,
+): Promise<void> {
+  if (action.form !== undefined) {
+    fillForm(action.form, row)
+    return
+  }
+  if (!action.endpoint) return
+  const params: Record<string, string> = {}
+  for (const [key, raw] of Object.entries(action.params ?? {})) {
+    params[key] = String(raw).replace(/\{(\w+)\}/g, (_m, field: string) => String(row[field] ?? ''))
+  }
+  if (action.prompt) {
+    const first = Object.keys(params)[0] ?? 'id'
+    const value = window.prompt(action.prompt, params[first] ?? '')
+    if (value === null) return
+    params[first] = value
+  }
+  if (action.confirm) {
+    const text = action.confirm.replace(/\{(\w+)\}/g, (_m, field: string) => String(row[field] ?? ''))
+    if (!window.confirm(text)) return
+  }
+  busy.value = 'row-' + blockIndex + '-' + actionIndex
+  try {
+    await extApi.call(plugin.value, action.endpoint, action.method ?? 'POST', params)
+    toast.ok('已执行')
+    await Promise.all(blocks.value.map((b, i) => (b.type === 'table' && b.endpoint ? fetchTable(b, i) : Promise.resolve())))
+  } catch (e) {
+    toast.fromError(e, '执行失败')
+  } finally {
+    busy.value = ''
+  }
 }
 
 async function loadPage(): Promise<void> {
@@ -139,7 +194,22 @@ onMounted(loadPage)
             :row-key="block.rowKey || 'id'"
             :loading="tables[i]?.loading ?? false"
             empty-text="暂无数据"
-          />
+          >
+            <template #cell-__ops="{ row }">
+              <div class="row-ops">
+                <UiButton
+                  v-for="(action, k) in block.rowActions ?? []"
+                  :key="k"
+                  size="small"
+                  type="text"
+                  :loading="busy === 'row-' + i + '-' + k"
+                  @click="runRowAction(action, row as Record<string, unknown>, i, k)"
+                >
+                  {{ action.label }}
+                </UiButton>
+              </div>
+            </template>
+          </UiTable>
         </UiCard>
 
         <UiCard v-else-if="block.type === 'form'">
@@ -199,6 +269,7 @@ onMounted(loadPage)
 .field.span-2 { grid-column: span 2; }
 .field-label { font-size: 11.5px; color: var(--text-dim); }
 .row { display: flex; gap: 8px; }
+.row-ops { display: inline-flex; gap: 2px; justify-content: flex-end; flex-wrap: wrap; }
 .row.wrap { flex-wrap: wrap; }
 .form-error {
   margin: 8px 12px; padding: 7px 10px; border-radius: var(--radius-sm);

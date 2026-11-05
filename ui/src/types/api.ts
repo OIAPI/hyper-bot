@@ -602,6 +602,17 @@ export interface ExtAction {
   confirm?: string
 }
 
+/** 表格行操作：form 表示把该行字段填入第 N 个表单块，否则当接口调用 */
+export interface ExtRowAction {
+  label: string
+  form?: number
+  endpoint?: string
+  method?: string
+  params?: Record<string, string>
+  prompt?: string
+  confirm?: string
+}
+
 export interface ExtBlock {
   type: 'text' | 'table' | 'form' | 'actions'
   title?: string
@@ -615,6 +626,8 @@ export interface ExtBlock {
   fields?: ExtField[]
   submitLabel?: string
   actions?: ExtAction[]
+  /** 每行右侧的操作按钮（编辑 / 删除…） */
+  rowActions?: ExtRowAction[]
 }
 
 export interface ExtWidget {

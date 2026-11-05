@@ -558,6 +558,20 @@ public static function extRoutes(): array {
 
 前端按 `/webui/api/ext/{plugin}/call` 统一转发，GET 只读、其它方法要求 `settings.write`。
 
+表格还支持 `rowActions`：每行右侧出现操作按钮。`form` 表示把该行字段填进第 N 个表单块（编辑），
+带 `endpoint` 的则按 `{key}` 占位符取行值调用接口（删除）：
+
+```php
+['type' => 'table', 'endpoint' => '/hooks', 'rowActions' => [
+    ['label' => '编辑', 'form' => 2],
+    ['label' => '删除', 'endpoint' => '/hooks', 'method' => 'DELETE',
+     'params' => ['id' => '{id}'], 'confirm' => '确定删除 {id}？'],
+]],
+```
+
+GitHub 订阅与 RSS 订阅页面已经用上了：列表点「编辑」会把该行填进下方表单，
+Secret 留空表示沿用原值，改完保存即可；「删除」直接在行上确认。
+
 内置两个示例插件：
 
 - **GitHub 订阅**（`app/Plugins/Github.php`）：在 GitHub 仓库 Settings → Webhooks 里填

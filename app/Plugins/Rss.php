@@ -42,10 +42,20 @@ final class Rss extends BaseApp
                         ['key' => 'last_text', 'title' => '最近抓取', 'width' => 170],
                         ['key' => 'enabled', 'title' => '启用', 'width' => 80],
                     ],
+                    'rowActions' => [
+                        ['label' => '编辑', 'form' => 2],
+                        [
+                            'label'    => '删除',
+                            'endpoint' => '/feeds',
+                            'method'   => 'DELETE',
+                            'params'   => ['id' => '{id}'],
+                            'confirm'  => '确定删除订阅源 {id}？',
+                        ],
+                    ],
                 ],
                 [
                     'type' => 'form',
-                    'title' => '新增 / 修改订阅源',
+                    'title' => '新增 / 修改订阅源（点上方「编辑」载入现有源）',
                     'endpoint' => '/feeds',
                     'method' => 'POST',
                     'submitLabel' => '保存',

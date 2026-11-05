@@ -49,16 +49,26 @@ final class Github extends BaseApp
                         ['key' => 'last_text', 'title' => '最近投递', 'width' => 170],
                         ['key' => 'enabled', 'title' => '启用', 'width' => 80],
                     ],
+                    'rowActions' => [
+                        ['label' => '编辑', 'form' => 2],
+                        [
+                            'label'    => '删除',
+                            'endpoint' => '/hooks',
+                            'method'   => 'DELETE',
+                            'params'   => ['id' => '{id}'],
+                            'confirm'  => '确定删除订阅 {id}？',
+                        ],
+                    ],
                 ],
                 [
                     'type' => 'form',
-                    'title' => '新增 / 修改订阅',
+                    'title' => '新增 / 修改订阅（点上方「编辑」载入现有订阅）',
                     'endpoint' => '/hooks',
                     'method' => 'POST',
                     'submitLabel' => '保存',
                     'fields' => [
                         ['key' => 'id', 'label' => '订阅 ID', 'placeholder' => '留空自动生成，如 hyper-bot'],
-                        ['key' => 'secret', 'label' => 'Secret', 'type' => 'password', 'placeholder' => 'GitHub 里填同一个值'],
+                        ['key' => 'secret', 'label' => 'Secret', 'type' => 'password', 'placeholder' => 'GitHub 里填同一个值；修改时留空沿用原 Secret'],
                         ['key' => 'note', 'label' => '备注', 'placeholder' => 'OIAPI/hyper-bot'],
                         ['key' => 'events', 'label' => '事件', 'placeholder' => '逗号分隔，留空为全部，如 push,release'],
                         ['key' => 'groups', 'label' => '通知到群（可多个）', 'placeholder' => '群号，多个用逗号分隔；留空只记日志'],

@@ -150,9 +150,15 @@ final class Bootstrap
                 try {
                     switch ($protocol) {
                         case 'onebot':
-                            $url = \Core\Config::string('protocol.onebot.forward.url', '');
-                            if ($url !== '' && \Core\Config::bool('protocol.onebot.forward.enable', false)) {
-                                \Protocol\OneBot\WsHub::startForward($url, \Core\Config::string('protocol.onebot.forward.token', ''));
+                            // 账号页填了正向 WS 就以账号为准；留空才回落到 Config.ini
+                            $accountUrl = trim((string)($account['forward_url'] ?? ''));
+                            $url = $accountUrl !== '' ? $accountUrl : \Core\Config::string('protocol.onebot.forward.url', '');
+                            $token = $accountUrl !== ''
+                                ? (string)($account['forward_token'] ?? '')
+                                : \Core\Config::string('protocol.onebot.forward.token', '');
+                            $forwardOn = $accountUrl !== '' || \Core\Config::bool('protocol.onebot.forward.enable', false);
+                            if ($url !== '' && $forwardOn) {
+                                \Protocol\OneBot\WsHub::startForward($url, $token);
                                 $started[] = 'OneBot 正向 WS[' . $label . '] → ' . $url;
                             } elseif ($url !== '') {
                                 $started[] = 'OneBot[' . $label . '] 事件接入：' . $url;

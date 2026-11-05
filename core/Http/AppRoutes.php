@@ -149,9 +149,10 @@ final class AppRoutes
         }
 
         if (Config::bool('protocol.qqbot.webhook.verify', true)) {
-            $secret = Config::string('protocol.qqbot.client_secret', '');
+            // 账号页是凭据入口：Config.ini 没有时用第一个启用账号的 AppSecret
+            $secret = \Protocol\QqBot\Webhook::secret();
             if ($secret === '') {
-                return Response::json(['code' => -1, 'message' => 'client_secret 未配置，无法校验签名']);
+                return Response::json(['code' => -1, 'message' => 'AppSecret 未配置（请在「机器人账号」页添加官方机器人），无法校验签名']);
             }
             if (!function_exists('sodium_crypto_sign_verify_detached')) {
                 return Response::json(['code' => -1, 'message' => '缺少 ext-sodium 扩展，无法校验签名']);

@@ -55,6 +55,7 @@ const META: ProtocolMeta[] = [
         label: '正向 WS 地址',
         type: 'text',
         placeholder: 'ws://127.0.0.1:3001',
+        hint: '账号页填了「正向 WS 地址」时以账号页为准；这里仅作回落',
         when: (v) => Boolean(v['forward.enable']),
       },
       {
@@ -62,6 +63,7 @@ const META: ProtocolMeta[] = [
         label: '正向 Token',
         type: 'password',
         placeholder: 'access_token（可选）',
+        hint: '账号页填了「正向 Token」时优先用账号页',
         when: (v) => Boolean(v['forward.enable']),
       },
       { key: 'reverse.enable', label: '反向 WS', type: 'switch', hint: '实现端连接本框架' },
@@ -88,8 +90,8 @@ const META: ProtocolMeta[] = [
     subtitle: 'Milky 协议端 HTTP API + 事件推送',
     fields: [
       { key: 'enable', label: '启用 Milky', type: 'switch' },
-      { key: 'api', label: 'API 地址', type: 'text', placeholder: 'http://127.0.0.1:3010' },
-      { key: 'token', label: '访问 Token', type: 'password', placeholder: '协议端配置的 token' },
+      { key: 'api', label: 'API 地址', type: 'text', placeholder: 'http://127.0.0.1:3010', hint: '账号页填了 API 时以账号页为准；这里仅作回落' },
+      { key: 'token', label: '访问 Token', type: 'password', placeholder: '协议端配置的 token', hint: '账号页填了 Token 时优先用账号页' },
       { key: 'timeout', label: '超时（秒）', type: 'number', placeholder: '30' },
       {
         key: 'event.mode',

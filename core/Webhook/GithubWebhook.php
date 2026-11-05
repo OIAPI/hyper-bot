@@ -79,11 +79,11 @@ final class GithubWebhook
             'sender'   => (string)($payload['sender']['login'] ?? ''),
             'received_at' => time(),
         ];
-        $count = 0;
-        foreach (['github', 'github.' . $event] as $topic) {
-            $count += ExtensionPoint::emit($registry, $topic, $context);
-        }
-        return $count;
+        // 只广播一次，topic 用具体事件名 github.<event>。
+        // 之前同时发了 'github' 和 'github.<event>'：ExtensionPoint::emit 会把
+        // 每个 topic 都投给所有插件的 onExtension，Github 插件按前缀判断，
+        // 于是同一条事件被处理两次，群里每条通知都发两遍。
+        return ExtensionPoint::emit($registry, 'github.' . $event, $context);
     }
 
     /**

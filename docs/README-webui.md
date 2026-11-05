@@ -538,7 +538,7 @@ v3 起插件有三种形态，写在同一个 `app/Plugins/*.php` 里，**不需
 |---|---|---|
 | 机器人插件 | v1 的 `#[Rule]` / `#[Notice]` / `#[Request]` | 收发消息、处理事件（照旧） |
 | 后台功能插件 | `adminMenu()` + `adminPage()` + `extRoutes()` | 侧边栏多一个入口，页面由 schema 描述，前端通用渲染 |
-| 外部事件插件 | `onExtension(string $topic, array $payload)` | 收到 GitHub WebHook / RSS 新条目时被调用 |
+| 外部事件插件 | `onExtension(string $topic, array $payload)` | 收到 GitHub WebHook / RSS 新条目时被调用；GitHub 的 topic 是 `github.<event>`（如 `github.push`），每条事件只广播一次；RSS 为 `rss.item` / `rss.batch` |
 
 页面 schema 只支持四种块，够表达「列表 + 表单 + 按钮 + 说明」：
 

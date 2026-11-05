@@ -33,6 +33,8 @@ class HttpServer {
 	/** 本次启动的 HTTPS 证书：['cert'=>..., 'key'=>..., 'port'=>..., 'source'=>'cli'|'bound'] */
 	private ?array $ssl = null;
 	private int $sslPort = 0;
+	/** 运行中的交互式控制台 */
+	private ?\Core\Console\Shell $shell = null;
 	private const MASTER_PID_KEY = 'master_pid';
 
 	/**
@@ -223,38 +225,35 @@ class HttpServer {
 			return;
 		}
 		shell_exec('stty -icanon -echo -icrnl cs8 min 1 time 50');
-	
-		static $commandHistory = [];
-		static $historyIndex = -1;
-		static $inputBuffer = '';
-		static $cursorPos = 0;
-	
-		Event::add(STDIN, function ($fd) use (
-			$originalStty,
-			&$commandHistory,
-			&$historyIndex,
-			&$inputBuffer,
-			&$cursorPos
-		) {
+
+		// 交互式控制台：行编辑 + 历史 + 透传 bin/hyper 命令
+		$this->shell = new \Core\Console\Shell(
+			__root__,
+			PHP_BINARY,
+			function (): void {
+				$this->stopServer();
+			},
+			function (): void {
+				Logger::warning('终端命令执行 | reload（重载 Worker 进程）');
+				$this->server?->reload();
+			},
+		);
+		$this->shell->banner();
+
+		Event::add(STDIN, function ($fd) {
 			$chars = '';
 			$startTime = microtime(true);
-			while (microtime(true) - $startTime < 0.05 && strlen($chars) < 200) {
+			while (microtime(true) - $startTime < 0.05 && strlen($chars) < 512) {
 				if (feof($fd)) break;
 				$char = fgetc($fd);
 				if ($char === false) break;
 				$chars .= $char;
 			}
-			if (empty($chars)) return;
-	
-			$parsed = $this->parseInputChars($chars);
-			if (!empty($parsed['control'])) {
-				$this->handleControlChars($parsed['control'], $commandHistory, $historyIndex, $inputBuffer, $cursorPos);
-			}
-			if (!empty($parsed['printable'])) {
-				$this->handlePrintableChars($parsed['printable'], $inputBuffer, $cursorPos);
+			if ($chars !== '') {
+				$this->shell?->feed($chars);
 			}
 		});
-	
+
 		register_shutdown_function(function () use ($originalStty) {
 			shell_exec("stty {$originalStty}");
 			Logger::info("终端已恢复正常");

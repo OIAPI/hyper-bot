@@ -105,6 +105,26 @@ php bin/hyper serve --no-ssl      # 忽略已绑定证书，只跑 HTTP
   或在前置 Nginx/Caddy 上终止 TLS；
 - 非 root 用户无法监听 443，请用 `--ssl-port` 选高位端口再交给反代。
 
+### 启动后的控制台
+
+`serve` 启动后终端会进入交互模式，可以直接敲命令，不需要另开终端：
+
+```text
+hyper> status          # 等价于另开终端执行 php bin/hyper status
+hyper> doctor
+hyper> ssl:show
+hyper> config runtime.arch php
+hyper> passwd admin 新密码
+hyper> stop            # 停止服务（exit / quit 同效）
+```
+
+- 除 `status`/`doctor`/`config`/`ssl:*`/`passwd`/`ext`/`redis` 外，`bin/hyper` 的其他
+  子命令也会透传执行（在独立 PHP 进程里跑）；
+- `serve` / `worker` / `install` / `update:apply` 不允许在运行中的控制台执行；
+- 编辑：`↑`/`↓` 翻历史，`←`/`→`、Home/End 移动光标，Backspace/Delete 编辑，
+  Ctrl+C 取消当前行，Ctrl+U 清空，Ctrl+L 清屏；
+- 历史最多保留 100 条，连续重复的命令只记一条。
+
 启动后会打印一段横幅，确认架构、存储、订阅、插件数量：
 
 ```

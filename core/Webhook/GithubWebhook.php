@@ -46,8 +46,8 @@ final class GithubWebhook
         }
 
         $events = (array)($hook['events'] ?? ['*']);
-        if ($events !== ['*'] && !in_array($event, $events, true)) {
-            WebhookStore::record($id, $event, true, '事件未订阅，已忽略');
+        if (!self::eventSubscribed($event, $payload, $events)) {
+            WebhookStore::record($id, $event, true, '事件未订阅（events=' . implode(',', $events) . '），已忽略');
             return Response::ok(['ignored' => true], '事件未订阅');
         }
 
@@ -84,6 +84,67 @@ final class GithubWebhook
             $count += ExtensionPoint::emit($registry, $topic, $context);
         }
         return $count;
+    }
+
+    /**
+     * 事件过滤：events 支持 event / event.action / event:ref / event.* / *。
+     *
+     *   release              → 所有 release 动作（published / created / edited…）
+     *   release.published    → 只有 payload.action = published
+     *   release.*            → 所有 release 动作
+     *   issues.opened        → 只有新建 issue
+     *   push                 → 所有 push
+     *   push:main            → 只匹配推送到 main（也接受 push#main）
+     *   push.created         → 分支/标签刚创建（payload.created = true）
+     *   push.deleted         → 分支/标签刚删除；push.forced → 强推
+     *
+     * @param list<string> $events
+     */
+    public static function eventSubscribed(string $event, array $payload, array $events): bool
+    {
+        $event = strtolower(trim($event));
+        $list = [];
+        foreach ($events as $item) {
+            $item = strtolower(trim((string)$item));
+            if ($item !== '') {
+                $list[] = $item;
+            }
+        }
+        if ($list === [] || in_array('*', $list, true)) {
+            return true;
+        }
+        $action = strtolower(trim((string)($payload['action'] ?? '')));
+        $ref = strtolower((string)($payload['ref'] ?? ''));
+        $branch = strtolower(str_replace('refs/heads/', '', $ref));
+
+        foreach ($list as $item) {
+            if ($item === $event) {
+                return true;
+            }
+            // event.action / event.*
+            if (str_starts_with($item, $event . '.')) {
+                $suffix = substr($item, strlen($event) + 1);
+                if ($suffix === '*') {
+                    return true;
+                }
+                if ($suffix !== '' && $suffix === $action) {
+                    return true;
+                }
+                // push 没有 action 字段，用 payload 的 created/deleted/forced 区分
+                if ($event === 'push' && in_array($suffix, ['created', 'deleted', 'forced'], true)
+                    && !empty($payload[$suffix])) {
+                    return true;
+                }
+            }
+            // event:ref / event#ref（push 分支过滤）
+            if (preg_match('/^' . preg_quote($event, '/') . '[:#](.+)$/', $item, $m)) {
+                $target = $m[1];
+                if ($target === '*' || $target === $branch || $target === $ref) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** 一句话说清这次推送了什么，面板里直接看 */

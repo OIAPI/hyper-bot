@@ -201,7 +201,8 @@ export const groupApi = {
   toggleStatus: (id: string) => http.post<Group>('/groups/' + id + '/status'),
   /** 群级插件开关：必须显式带 enabled，后端默认值是 false（不带等于「关闭」） */
   togglePlugin: (id: string, plugin: string, enabled: boolean) =>
-    http.post<Group>('/groups/' + id + '/plugins/' + plugin, { enabled }),
+    // 插件类是 App\Plugins\Xxx：URL 里反斜杠会被浏览器当成 /，必须编码
+    http.post<Group>('/groups/' + encodeURIComponent(id) + '/plugins/' + encodeURIComponent(plugin), { enabled }),
   destroy: (id: string) => http.del<null>('/groups/' + id),
 }
 

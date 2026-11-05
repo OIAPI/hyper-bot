@@ -109,6 +109,11 @@ class EventClient {
 
 	// ---------------- WebSocket 客户端 ----------------
 
+	/** recv 的读超时 errno（Linux ETIMEDOUT=110）：这是空闲，不是断线 */
+	private static function readTimeoutCode(): int {
+		return defined('SOCKET_ETIMEDOUT') ? (int)SOCKET_ETIMEDOUT : 110;
+	}
+
 	private static function startWs(): void {
 		if (self::$wsRunning) return;
 		self::$wsRunning = true;
@@ -118,12 +123,17 @@ class EventClient {
 		Coroutine::create(function () use ($base, $token) {
 			$retry = 1;
 			while (self::$wsRunning) {
+				$connectedAt = 0.0;
 				try {
 					$client = self::connectWs($base, $token);
 					if ($client !== null) {
+						$connectedAt = microtime(true);
 						Logger::success('[Milky] WS 已连接：' . $base);
-						$retry = 1;
 						self::wsLoop($client);
+						// 连接活过 10 秒才重置退避，避免「连上就断」时每 2 秒重连
+						if (microtime(true) - $connectedAt > 10.0) {
+							$retry = 1;
+						}
 					}
 				} catch (\Throwable $e) {
 					Logger::error('[Milky] WS 异常：' . $e->getMessage());
@@ -179,8 +189,15 @@ class EventClient {
 		while (self::$wsRunning) {
 			$frame = $client->recv(1.0);
 			if ($frame === false || $frame === null) {
-				if ($client->errCode) {
-					Logger::warning('[Milky] WS 连接关闭 | errCode=' . $client->errCode);
+				$err = (int)$client->errCode;
+				// 110=ETIMEDOUT：1 秒没包是正常空闲
+				if ($err === self::readTimeoutCode()) continue;
+				if (!$client->connected) {
+					Logger::info('[Milky] WS 连接已关闭');
+					break;
+				}
+				if ($err !== 0) {
+					Logger::warning('[Milky] WS 连接关闭 | errCode=' . $err);
 					break;
 				}
 				continue;
@@ -207,9 +224,13 @@ class EventClient {
 		Coroutine::create(function () use ($url, $token) {
 			$retry = 1;
 			while (self::$sseRunning) {
+				$startedAt = microtime(true);
 				try {
-					$x = self::runSse($url, $token);
-					if ($x) $retry = 1;
+					self::runSse($url, $token);
+					// 连接活过 10 秒才重置退避
+					if (microtime(true) - $startedAt > 10.0) {
+						$retry = 1;
+					}
 				} catch (\Throwable $e) {
 					Logger::error('[Milky] SSE 异常：' . $e->getMessage());
 				}
@@ -269,11 +290,18 @@ class EventClient {
 		while (self::$sseRunning) {
 			$chunk = $client->recv(1.0);
 			if ($chunk === false || $chunk === null) {
-				if ($client->errCode) {
-					break;
+				$err = (int)$client->errCode;
+				// 110=ETIMEDOUT：1 秒没数据是正常等待，只有超过 90 秒才重连
+				if ($err === self::readTimeoutCode()) {
+					if (time() > $deadline) {
+						Logger::warning('[Milky] SSE 长时间无数据，主动重连');
+						break;
+					}
+					continue;
 				}
-				if (time() > $deadline) {
-					Logger::warning('[Milky] SSE 长时间无数据，主动重连');
+				if (!$client->connected) break;
+				if ($err !== 0) {
+					Logger::warning('[Milky] SSE 连接关闭 | errCode=' . $err);
 					break;
 				}
 				continue;

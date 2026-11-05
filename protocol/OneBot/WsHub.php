@@ -247,12 +247,17 @@ class WsHub {
 		Coroutine::create(function () {
 			$retry = 1;
 			while (self::$forwardRunning) {
+				$connectedAt = 0.0;
 				try {
 					$connected = self::connectForward();
 					if ($connected) {
-						$retry = 1;
+						$connectedAt = microtime(true);
 						Logger::success('[OneBot-WS] 正向 WS 已连接：' . self::$forwardUrl);
 						self::forwardLoop();
+						// 连接活过 10 秒才重置退避，避免「连上就断」时每 2 秒重连
+						if (microtime(true) - $connectedAt > 10.0) {
+							$retry = 1;
+						}
 					}
 				} catch (\Throwable $e) {
 					Logger::error('[OneBot-WS] 正向 WS 异常：' . $e->getMessage());
@@ -331,11 +336,15 @@ class WsHub {
 			// 2) 接收服务端帧（最多阻塞 50ms）
 			$frame = $client->recv(0.05);
 			if ($frame === false || $frame === null) {
-				if ($client->errCode) {
-					Logger::warning('[OneBot-WS] 正向 WS 连接回收 | errCode=' . $client->errCode);
+				$err = (int)$client->errCode;
+				// 110=ETIMEDOUT：50ms 没包是正常空闲，不能当断线
+				if ($err === self::readTimeoutCode()) continue;
+				if (!$client->connected) break;
+				if ($err !== 0) {
+					Logger::warning('[OneBot-WS] 正向 WS 连接回收 | errCode=' . $err);
 					break;
 				}
-				continue; // 空闲超时，继续等待
+				continue;
 			}
 			if (!$frame instanceof \Swoole\WebSocket\Frame) continue;
 			if ((int)$frame->opcode === \WEBSOCKET_OPCODE_PING) continue;
@@ -491,6 +500,11 @@ class WsHub {
 	private static function sendRaw(array $payload): bool {
 		if (self::$forward === null) return false;
 		return (bool)self::$forward->push(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+	}
+
+	/** recv 的读超时 errno（Linux ETIMEDOUT=110）：这是空闲，不是断线 */
+	private static function readTimeoutCode(): int {
+		return defined('SOCKET_ETIMEDOUT') ? (int)SOCKET_ETIMEDOUT : 110;
 	}
 
 	private static function nextEcho(): string {

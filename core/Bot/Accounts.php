@@ -104,6 +104,18 @@ final class Accounts
         return count(self::idsForProtocol($protocol));
     }
 
+    /** 某协议下第一个启用的账号（网关/WebHook 没有上下文时用它取凭据） */
+    public static function firstEnabled(string $protocol): ?array
+    {
+        $protocol = strtolower($protocol);
+        foreach (self::enabled() as $row) {
+            if (strtolower((string)($row['protocol'] ?? '')) === $protocol) {
+                return $row;
+            }
+        }
+        return null;
+    }
+
     /** 某协议下启用的账号 id 列表 */
     public static function idsForProtocol(string $protocol): array
     {

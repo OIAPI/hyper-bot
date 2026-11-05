@@ -385,8 +385,9 @@ onMounted(load)
             />
           </label>
           <div class="field span-2 field-hint">
-            官方机器人不需要 API 地址 / Token；回调地址、端口与事件接入方式在
-            <code>Config.ini</code> 的 <code>[protocol.qqbot]</code> 里配置。
+            官方机器人只需要 AppID + AppSecret，不需要 API 地址 / Token；
+            请同时在「账号连接」页打开 QQ 官方机器人总开关。回调地址、端口与事件接入方式
+            在 <code>Config.ini</code> 的 <code>[protocol.qqbot]</code> 里配置。
           </div>
         </template>
         <template v-else>

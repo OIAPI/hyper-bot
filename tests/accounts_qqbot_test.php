@@ -76,6 +76,10 @@ $check('QqBot Token 用账号 AppID', \Protocol\QqBot\Token::appId() === '102030
 $check('QqBot Token 用账号 AppSecret', \Protocol\QqBot\Token::secret() === 'new-secret');
 $check('QqBot Webhook 验签用账号 AppSecret', \Protocol\QqBot\Webhook::secret() === 'new-secret');
 AccountContext::reset();
+// Gateway / WebHook 首次启动没有事件上下文：应该用第一个启用的官方账号
+$check('无上下文时 Token 用启用账号 AppID', \Protocol\QqBot\Token::appId() === '102030405');
+$check('无上下文时 Token 用启用账号 AppSecret', \Protocol\QqBot\Token::secret() === 'new-secret');
+$check('无上下文时 Webhook 用启用账号 AppSecret', \Protocol\QqBot\Webhook::secret() === 'new-secret');
 
 @unlink($tmp);
 echo PHP_EOL . ($fail === 0 ? '全部通过' : "失败 {$fail} 项") . "，通过 {$pass} 项" . PHP_EOL;

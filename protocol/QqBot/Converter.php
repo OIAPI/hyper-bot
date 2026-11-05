@@ -35,7 +35,13 @@ class Converter {
 			$self = (int)(($hit && (string)$accountSelf !== '') ? $accountSelf : Config::string('qqbot.self_id', '0'));
 			if (!$self) {
 				[$hitApp, $accountApp] = \Core\Bot\AccountContext::get('qqbot.app_id');
-				$appId = ($hitApp && (string)$accountApp !== '') ? (string)$accountApp : (string)Config::string('qqbot.app_id', '');
+				$appId = ($hitApp && (string)$accountApp !== '') ? (string)$accountApp : '';
+				if ($appId === '' && ($enabled = \Core\Bot\Accounts::firstEnabled('qqbot')) !== null) {
+					$appId = (string)($enabled['app_id'] ?? ($enabled['self_id'] ?? ''));
+				}
+				if ($appId === '') {
+					$appId = (string)Config::string('qqbot.app_id', '');
+				}
 				$self = self::hashId($appId);
 			}
 		}

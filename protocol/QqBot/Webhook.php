@@ -21,6 +21,10 @@ class Webhook {
 	public static function secret(): string {
 		[$hit, $value] = \Core\Bot\AccountContext::get('qqbot.client_secret');
 		if ($hit && (string)$value !== '') return (string)$value;
+		$account = \Core\Bot\Accounts::firstEnabled('qqbot');
+		if ($account !== null && (string)($account['client_secret'] ?? '') !== '') {
+			return (string)$account['client_secret'];
+		}
 		return (string)(Config::string('qqbot.client_secret', '') ?: getenv('QQ_BOT_CLIENT_SECRET'));
 	}
 

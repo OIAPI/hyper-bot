@@ -26,21 +26,34 @@ class Token {
 		return $hit ? (string)$value : '';
 	}
 
+	/** 第一次启动 Gateway 时没有事件上下文，从「机器人账号」里取第一个启用的官方号 */
+	private static function fromEnabledAccount(string $field): string {
+		$account = \Core\Bot\Accounts::firstEnabled('qqbot');
+		if ($account === null) return '';
+		return (string)($account[$field] ?? '');
+	}
+
 	public static function appId(): string {
 		$fromAccount = self::fromAccount('qqbot.app_id');
 		if ($fromAccount !== '') return $fromAccount;
+		$fromEnabled = self::fromEnabledAccount('app_id');
+		if ($fromEnabled !== '') return $fromEnabled;
 		return (string)(Config::string('qqbot.app_id', '') ?: getenv('QQ_BOT_APP_ID'));
 	}
 
 	public static function secret(): string {
 		$fromAccount = self::fromAccount('qqbot.client_secret');
 		if ($fromAccount !== '') return $fromAccount;
+		$fromEnabled = self::fromEnabledAccount('client_secret');
+		if ($fromEnabled !== '') return $fromEnabled;
 		return (string)(Config::string('qqbot.client_secret', '') ?: getenv('QQ_BOT_CLIENT_SECRET'));
 	}
 
 	public static function apiBase(): string {
 		$fromAccount = self::fromAccount('qqbot.api');
 		if ($fromAccount !== '') return rtrim($fromAccount, '/');
+		$fromEnabled = self::fromEnabledAccount('api');
+		if ($fromEnabled !== '') return rtrim($fromEnabled, '/');
 		return rtrim((string)Config::string('qqbot.api', 'https://api.bot.qq.com'), '/');
 	}
 
@@ -70,7 +83,7 @@ class Token {
 		$appId  = self::appId();
 		$secret = self::secret();
 		if ($appId === '' || $secret === '') {
-			Logger::error('[QqBot] 未配置 AppID / ClientSecret（[protocol] qqbot.app_id / qqbot.client_secret）');
+			Logger::error('[QqBot] 未配置 AppID / ClientSecret：请在「机器人账号」页添加 QQ 官方机器人（AppID/AppSecret），或配置 Config.ini [protocol.qqbot]');
 			return null;
 		}
 

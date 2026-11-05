@@ -127,11 +127,9 @@ const META: ProtocolMeta[] = [
   {
     name: 'qqbot',
     title: 'QQ 官方机器人',
-    subtitle: 'QQ Bot OpenAPI v2',
+    subtitle: 'QQ Bot OpenAPI v2 · AppID/AppSecret 请在「机器人账号」页配置',
     fields: [
       { key: 'enable', label: '启用 QQ 官方机器人', type: 'switch' },
-      { key: 'app_id', label: 'AppID', type: 'text', placeholder: '开放平台 AppID' },
-      { key: 'client_secret', label: 'Client Secret', type: 'password', placeholder: '开放平台密钥' },
       { key: 'api', label: 'API 域名', type: 'text', placeholder: 'https://api.bot.qq.com' },
       { key: 'token_url', label: 'Token 地址', type: 'text', placeholder: 'https://api.bot.qq.com/app/getAppAccessToken' },
       {

@@ -31,6 +31,8 @@ final class Registry
 
     /** @var array<string,list<array>> 属性类名 => 规则列表 */
     private array $hooks = [];
+    /** @var list<array{class:string,func:string,method:string,router:string}> #[Webhook] 声明的 HTTP 路由 */
+    private array $webhooks = [];
     /** @var array<string,array> 类名 => 元数据 */
     private array $plugins = [];
     /** @var array<string,string> 类名 => 显示名 */
@@ -84,6 +86,7 @@ final class Registry
         }
         $this->signature = $signature;
         $this->hooks = [];
+        $this->webhooks = [];
         $this->plugins = [];
         $this->labels = [];
         $this->loaded = true;
@@ -99,8 +102,9 @@ final class Registry
         }
 
         $this->logger->debug('plugin registry loaded', [
-            'plugins' => count($this->plugins),
-            'hooks'   => array_sum(array_map('count', $this->hooks)),
+            'plugins'  => count($this->plugins),
+            'hooks'    => array_sum(array_map('count', $this->hooks)),
+            'webhooks' => count($this->webhooks),
         ]);
         return $this;
     }
@@ -137,6 +141,18 @@ final class Registry
                     continue;
                 }
                 $instance = $attr->newInstance();
+                // #[Webhook] 不参与 QQ 事件分发，单独收集成 HTTP 路由
+                if ($instance instanceof \Controller\Attr\Webhook) {
+                    if ($method->isPublic() && !$method->isStatic()) {
+                        $this->webhooks[] = [
+                            'class'  => $class,
+                            'func'   => $method->getName(),
+                            'method' => strtolower(trim($instance->method)),
+                            'router' => (string)$instance->router,
+                        ];
+                    }
+                    continue;
+                }
                 $perm = $instance->permission ?? 'default';
                 if ($perm instanceof \Controller\Enum\PermRule) {
                     $perm = $perm->value;
@@ -230,6 +246,13 @@ final class Registry
     {
         $this->load();
         return $this->hooks;
+    }
+
+    /** #[Webhook] 注解声明的公开 HTTP 路由 */
+    public function webhooks(): array
+    {
+        $this->load();
+        return $this->webhooks;
     }
 
     public function plugins(): array

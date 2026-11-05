@@ -605,7 +605,63 @@ public static function extRoutes(): array {
 
 内置的 `app/Plugins/Demo.php` 把这些都演示了一遍：给所有响应加 `X-Plugins: demo`、
 加 `X-Kernel-Middleware: demo` 请求中间件头、在「概览」页注入「插件钩子」表与前端组件、
-提供 `plugins.diag` 命令、演示 `[demo:drop]`（丢消息）与 `[demo:block]`（拦发送）。
+提供 `plugins.diag` 命令、演示 `[demo:drop]`（丢消息）与 `[demo:block]`（拦发送），
+以及两个 `#[Webhook]` 注解路由：`GET /demo/webhookDemo` 与 `POST /demo/hook/{id}/webhookEcho`。
+
+#### 用注解声明公开 HTTP Webhook（v3.2.16）
+
+不想写 `requestMiddleware()` 里那一堆 path 判断，可以直接在插件方法上加 `#[Webhook]`：
+
+```php
+use Controller\Attr\Webhook;
+
+#[Webhook(method: 'get', router: '/路径')]
+public function test()
+{
+    return 122;                 // 最终路由：GET /路径/test
+}
+
+#[Webhook(method: 'post', router: '/github')]
+public function hook(\Core\Http\Request $request)
+{
+    // 公开路由，没有登录态：签名、IP 白名单由插件自己做
+    return \Core\Http\Response::json(['ok' => true]);
+}
+```
+
+| 参数 | 说明 |
+|---|---|
+| `method` | `get` / `post` / `put` / `patch` / `delete` / `all`，默认 `all` |
+| `router` | 路径前缀，可留空（根路径）；支持 `{id}` 占位；最终路径 = `router + '/' + 方法名` |
+
+**方法参数可以任意多个**，按反射类型/名字注入：
+
+| 参数 | 取值 |
+|---|---|
+| `Request $request` | 当前请求 |
+| `array $params` | 路由参数；名字叫 `headers` / `query` / `body` 时取对应部分 |
+| `string $id`、`int $n` … | 路由参数 → query → body 里的同名值，自动转类型 |
+| 默认值 / `?string` | 找不到时用默认值，可空类型给 `null` |
+
+```php
+#[Webhook(method: 'get', router: '/demo/{id}')]
+public function show(Request $request, int $id, array $params, ?string $extra = null)
+{
+    return ['id' => $id, 'params' => $params, 'extra' => $extra];
+}
+```
+
+参数解析失败会返回 500 并指出是哪个参数，不会静默传 `null`。
+
+限制（超过限制的注解会在注册时记日志并跳过）：
+
+- `router` 不能含空白、`?`、`#`，不能占用 `/webui`、`/api`、`/webhook/github`；
+- 方法必须是 **public 实例方法**；参数可以是多个，注入规则见上面的表；
+- 返回值只接受 `Response` / 标量 / 数组 / `null`（`122`、`['ok'=>true]` 都会直接 JSON 化），
+  其它类型返回 500，原因写进响应；
+- 同一 `method + path` 只注册第一条，后面的记日志跳过；
+- 中文等非 ASCII 路径会同时注册原文和百分号编码两个版本；
+- 全局停用的插件不注册路由。
 
 #### 插件自带前端（v3.2）
 

@@ -232,6 +232,8 @@ final class Routes {
             // webui-only 架构不注册协议路由：让请求落到下面的 503 兜底，
             // 而不是命中路由后返回「accepted」（协议端会误判为成功）。
             \Core\Http\AppRoutes::register($app->router, $app->runtime->handlesEvents());
+            // 插件用 #[Webhook] 注解声明的公开 HTTP 路由（无需登录，签名/校验由插件自己做）
+            \Core\Http\PluginWebhooks::register($app->router, $app->registry, $app->logger);
         }
 
         // WebUI-only 架构：协议端点显式拒绝，避免协议端误以为投递成功

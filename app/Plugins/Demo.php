@@ -2,17 +2,19 @@
 namespace App\Plugins;
 
 use App\BaseApp;
+use Controller\Attr\Webhook;
 use Core\Extension\ExtensionPoint;
 use Core\Extension\Hooks;
+use Core\Http\Request;
 use Core\Http\Response;
 
 /**
  * 扩展点示例插件（把「万物皆插件」的四种能力都演示一遍）。
  *
  * @name demo
- * @description 插件扩展点示例：钩子 / 注入块 / 命令
+ * @description 插件扩展点示例：钩子 / 请求中间件 / 注入块 / 命令 / 注解 Webhook
  * @author hyper
- * @version 1.0
+ * @version 1.1
  */
 class Demo extends BaseApp
 {
@@ -94,6 +96,62 @@ class Demo extends BaseApp
                 ->withHeader('X-Kernel-Middleware', 'demo')
                 ->withHeader('X-Kernel-Ms', $ms);
         }];
+    }
+
+    /**
+     * 注解 Webhook（v3.2.16）：把插件方法直接暴露成公开 HTTP 路由。
+     *
+     * 路由 = router + '/' + 方法名 → 这里是 /demo/webhookDemo（method: all）。
+     * 参数由框架反射注入，可以任意多个：
+     *   Request $request   当前请求（method / path / query / body / headers 都从这取）
+     *   ?string $who       路由参数 → query → body 里同名的标量；找不到用默认值
+     *   array $query       参数名是 query 时注入 query；叫 body / headers / params 同理
+     *
+     * 返回值：数组会自动 JSON 化；需要控制状态码/响应头时直接返回 Response。
+     *
+     * 注意：这是公开接口（没有面板登录态）。示例只回显请求信息、不碰数据；
+     * 生产环境建议删掉这两个示例，或在方法里自己校验签名 / Token。
+     *
+     * 手动测试：
+     *   curl 'http://127.0.0.1:8080/demo/webhookDemo?who=hyper'
+     */
+    #[Webhook(method: 'all', router: '/demo')]
+    public function webhookDemo(Request $request, ?string $who = 'world', array $query = []): array
+    {
+        return [
+            'plugin' => 'Demo',
+            'method' => $request->method,
+            'path'   => $request->path,
+            'who'    => $who,
+            'query'  => $query,
+            'body'   => $request->body,
+            'ua'     => $request->headers['user-agent'] ?? '',
+        ];
+    }
+
+    /**
+     * 带路径参数的 Webhook：router 里的 {id} 会作为路由参数注入。
+     *
+     * 路由：POST /demo/hook/{id}/webhookEcho
+     * 参数：
+     *   int $id         路由参数 {id}，自动转 int
+     *   array $params   全部路由参数（这里就是 ['id' => '42']）
+     *   ?string $note   body 里的 note 字段，没有就是 null
+     * 返回：Response —— 想自定义状态码/响应头时直接返回它。
+     *
+     * 测试：
+     *   curl -X POST 'http://127.0.0.1:8080/demo/hook/42/webhookEcho' \
+     *        -H 'Content-Type: application/json' -d '{"note":"hi"}'
+     */
+    #[Webhook(method: 'post', router: '/demo/hook/{id}')]
+    public function webhookEcho(int $id, array $params, ?string $note = null): Response
+    {
+        return Response::json([
+            'ok'     => true,
+            'id'     => $id,
+            'params' => $params,
+            'note'   => $note,
+        ], 200, ['X-Demo-Webhook' => 'yes']);
     }
 
     /**

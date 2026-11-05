@@ -164,6 +164,13 @@ final class Dispatcher
         if ($regex === '') {
             return true;
         }
+        // v1 插件常用 #[Notice('group_increase')] 这种「原始类型名」写法，
+        // 它不是完整正则（缺分隔符），直接 preg_match 会报 Internal error。
+        // 这类值按精确匹配处理；只有以分隔符开头的才当正则。
+        $first = $regex[0];
+        if (preg_match('/^[A-Za-z0-9_\\\\]/', $first) === 1 || ord($first) > 127) {
+            return $subject === $regex;
+        }
         $result = @preg_match($regex, $subject);
         if ($result === false) {
             $this->logger->error('invalid hook regex', ['regex' => $regex, 'error' => preg_last_error_msg()]);

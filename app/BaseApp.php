@@ -184,6 +184,7 @@ abstract class BaseApp {
 			}
 		}
 
+		// 首次默认关闭：群开关需要管理命令/面板显式打开
 		$data = (object)['status' => 0, 'worker' => $this->scanWorkerList()];
 		$this->redis->set($key, json_encode($data, 320));
 		return $data;
@@ -192,6 +193,7 @@ abstract class BaseApp {
 	public function initGroupInfo(string|float|int $group, bool $isArray = false): object|array
 	{
 		$key = "{$group}.info";
+		// 只在「没有旧配置」时用这个默认值；已有 status 会原样保留
 		$status = 0;
 		$worker = [];
 

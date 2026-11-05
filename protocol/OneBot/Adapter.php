@@ -25,6 +25,15 @@ class Adapter extends BaseAdapter {
 	}
 
 	public static function currentAdapter(?int $fd = null): self {
+		// 没显式指定 fd 时，优先复用「当前事件来源」的适配器：
+		// 多账号 / 多条反向 WS 时，new self() 会丢掉来源连接，WsHub 只能任选一条，
+		// 偶发把回复发到别的连接（实现端没有该群上下文 → 看起来就是「有时不回」）。
+		if ($fd === null) {
+			$incoming = \Core\Bot\Context::adapter();
+			if ($incoming instanceof self) {
+				return $incoming;
+			}
+		}
 		return new self([], $fd);
 	}
 

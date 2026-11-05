@@ -161,7 +161,7 @@ final class App {
         }
         $raw = $this->store->get("{$group}.info");
         if ($raw === null) {
-            // 未登记的群：视为关闭（与 v1 一致：需要先 initGroupInfo）
+            // 未登记的群：视为关闭（首次必须在群里用管理命令/面板打开）
             return false;
         }
         $info = is_string($raw) ? json_decode($raw, true) : $raw;

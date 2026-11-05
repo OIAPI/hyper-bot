@@ -55,7 +55,7 @@ final class GithubWebhook
         WebhookStore::record($id, $event, true, $summary);
 
         $registry = \Core\App::boot()->registry;
-        $handled = self::broadcast($registry, $event, $payload, $id);
+        $handled = self::broadcast($registry, $event, $payload, $id, $delivery);
 
         Logger::info('[webhook] GitHub ' . $event . ' | id=' . $id . ' | ' . $summary . ' | plugins=' . $handled);
 
@@ -67,12 +67,13 @@ final class GithubWebhook
         ], 'accepted');
     }
 
-    private static function broadcast(Registry $registry, string $event, array $payload, string $hookId): int
+    private static function broadcast(Registry $registry, string $event, array $payload, string $hookId, string $delivery = ''): int
     {
         $context = [
             'hook'     => $hookId,
             'event'    => $event,
             'payload'  => $payload,
+            'delivery' => $delivery,
             'summary'  => self::summarize($event, $payload),
             'repo'     => (string)($payload['repository']['full_name'] ?? ''),
             'sender'   => (string)($payload['sender']['login'] ?? ''),

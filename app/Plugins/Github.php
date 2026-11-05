@@ -31,7 +31,9 @@ final class Github extends BaseApp
             'blocks' => [
                 [
                     'type' => 'text',
-                    'text' => '在 GitHub 仓库 Settings → Webhooks 里添加：Payload URL = 本站地址 + /webhook/github/<订阅 id>，Content type 选 application/json，Secret 与下表一致。支持 push / issues / pull_request / release / star 等事件。通知群可填多个（逗号分隔）；模板留空用默认 [GitHub] 摘要，可用变量：{event} {repo} {sender} {hook} {summary}。',
+                    'text' => '在 GitHub 仓库 Settings → Webhooks 里添加：Payload URL = 本站地址 + /webhook/github/<订阅 id>，Content type 选 application/json，Secret 与下表一致。支持 push / issues / pull_request / release / star 等事件。通知群可填多个（逗号分隔）；模板留空用默认 [GitHub] 摘要。'
+                        . '内置变量：{event} {repo} {sender} {hook} {summary} {action} {branch} {tag} {number} {title} {url} {commits} {delivery}。'
+                        . '也支持任意 JSON 路径：{json.issue.title}、{json.commits[0].message}、{json.head_commit.author.name}；{json} 输出整段 payload，取不到的字段为空。',
                 ],
                 [
                     'type' => 'table',
@@ -60,7 +62,7 @@ final class Github extends BaseApp
                         ['key' => 'note', 'label' => '备注', 'placeholder' => 'OIAPI/hyper-bot'],
                         ['key' => 'events', 'label' => '事件', 'placeholder' => '逗号分隔，留空为全部，如 push,release'],
                         ['key' => 'groups', 'label' => '通知到群（可多个）', 'placeholder' => '群号，多个用逗号分隔；留空只记日志'],
-                        ['key' => 'template', 'label' => '消息模板', 'type' => 'textarea', 'placeholder' => '留空默认 [GitHub] {summary}；可用 {event} {repo} {sender} {hook} {summary}'],
+                        ['key' => 'template', 'label' => '消息模板', 'type' => 'textarea', 'placeholder' => '留空默认 [GitHub] {summary}；可用 {event} {repo} {branch} {title} {url}，自定义字段写 {json.issue.title}、{json.commits[0].message}'],
                     ],
                 ],
                 [
@@ -217,13 +219,7 @@ final class Github extends BaseApp
         if ($summary === '' && $template === '') {
             return;
         }
-        $message = $template !== '' ? strtr($template, [
-            '{event}'   => (string)($context['event'] ?? ''),
-            '{repo}'    => (string)($context['repo'] ?? ''),
-            '{sender}'  => (string)($context['sender'] ?? ''),
-            '{hook}'    => (string)($context['hook'] ?? ''),
-            '{summary}' => $summary,
-        ]) : '[GitHub] ' . $summary;
+        $message = $template !== '' ? self::renderTemplate($template, $context) : '[GitHub] ' . $summary;
         if (trim($message) === '') {
             return;
         }
@@ -243,5 +239,100 @@ final class Github extends BaseApp
                 \Utils\Logger::warning('[github] 推送到群 ' . $group . ' 失败：' . $e->getMessage());
             }
         }
+    }
+
+    /**
+     * 模板渲染：内置变量 + 任意 JSON 路径。
+     *
+     * - {repo} {branch} {title} … 走内置变量；
+     * - {json.issue.title} / {json.commits[0].message} 按 payload 取值；
+     * - {json} 输出整段 payload；
+     * - 未知变量保持原样（看得出是拼错），JSON 路径取不到时输出空串。
+     */
+    public static function renderTemplate(string $template, array $context): string
+    {
+        $payload = is_array($context['payload'] ?? null) ? $context['payload'] : [];
+        $vars = self::templateVars($context, $payload);
+        return (string)preg_replace_callback(
+            '/\{([^{}\r\n]{1,120})\}/u',
+            function (array $m) use ($vars, $payload): string {
+                $name = trim($m[1]);
+                if ($name === 'json') {
+                    return self::stringify($payload);
+                }
+                if (str_starts_with($name, 'json.')) {
+                    return self::stringify(self::jsonPath($payload, substr($name, 5)));
+                }
+                return array_key_exists($name, $vars) ? self::stringify($vars[$name]) : $m[0];
+            },
+            $template,
+        ) ?? '';
+    }
+
+    /** 内置变量：覆盖常见事件里最常用的字段 */
+    private static function templateVars(array $context, array $payload): array
+    {
+        $ref = (string)($payload['ref'] ?? '');
+        $branch = $ref !== ''
+            ? str_replace('refs/heads/', '', $ref)
+            : (string)($payload['pull_request']['head']['ref'] ?? '');
+        $number = $payload['issue']['number'] ?? ($payload['pull_request']['number'] ?? '');
+        return [
+            'event'       => (string)($context['event'] ?? ''),
+            'repo'        => (string)($context['repo'] ?? ($payload['repository']['full_name'] ?? '')),
+            'sender'      => (string)($context['sender'] ?? ($payload['sender']['login'] ?? '')),
+            'hook'        => (string)($context['hook'] ?? ''),
+            'summary'     => (string)($context['summary'] ?? ''),
+            'action'      => (string)($payload['action'] ?? ''),
+            'branch'      => $branch,
+            'tag'         => (string)($payload['release']['tag_name'] ?? ''),
+            'number'      => (string)$number,
+            'title'       => (string)($payload['issue']['title'] ?? ($payload['pull_request']['title'] ?? ($payload['release']['name'] ?? ''))),
+            'url'         => (string)($payload['issue']['html_url']
+                ?? ($payload['pull_request']['html_url']
+                ?? ($payload['release']['html_url']
+                ?? ($payload['repository']['html_url'] ?? '')))),
+            'commits'     => is_array($payload['commits'] ?? null) ? count($payload['commits']) : 0,
+            'delivery'    => (string)($context['delivery'] ?? ''),
+            'received_at' => (string)($context['received_at'] ?? ''),
+        ];
+    }
+
+    /** {json.a.b[0].c} 的路径解析：点分键名 + 数字下标 */
+    private static function jsonPath(mixed $data, string $path): mixed
+    {
+        if (!preg_match_all('/([A-Za-z0-9_\-]+)(?:\[(\d+)\])?/', $path, $m, PREG_SET_ORDER)) {
+            return null;
+        }
+        $cur = $data;
+        foreach ($m as $seg) {
+            $key = $seg[1];
+            if (!is_array($cur) || !array_key_exists($key, $cur)) {
+                return null;
+            }
+            $cur = $cur[$key];
+            if (isset($seg[2]) && $seg[2] !== '') {
+                $index = (int)$seg[2];
+                if (!is_array($cur) || !array_key_exists($index, $cur)) {
+                    return null;
+                }
+                $cur = $cur[$index];
+            }
+        }
+        return $cur;
+    }
+
+    private static function stringify(mixed $value): string
+    {
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+        if ($value === null) {
+            return '';
+        }
+        if (is_array($value)) {
+            return (string)(json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '');
+        }
+        return (string)$value;
     }
 }

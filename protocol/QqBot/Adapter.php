@@ -74,7 +74,32 @@ class Adapter extends BaseAdapter {
 				'set_menu'                          => $this->requestOk('PUT', '/v2/menu', ['menu' => $params['menu'] ?? new \stdClass()]),
 				'get_panels'                        => $this->requestOk('GET', '/v2/panels'),
 				'create_panel'                      => $this->requestOk('POST', '/v2/panels', $params),
+				'get_panel'                         => $this->getPanel($params),
+				'update_panel'                      => $this->updatePanel($params),
+				'delete_panel'                      => $this->deletePanel($params),
+				'set_panel_target'                  => $this->setPanelTarget($params),
 				'generate_url_link'                 => $this->requestOk('POST', '/v2/generate_url_link', ['callback_data' => (string)($params['callback_data'] ?? '')]),
+
+				// 入群自动审批策略
+				'get_join_approval_strategies'      => $this->joinApprovalStrategyList($params),
+				'create_join_approval_strategy'     => $this->createJoinApprovalStrategy($params),
+				'update_join_approval_strategy'     => $this->updateJoinApprovalStrategy($params),
+				'delete_join_approval_strategy'     => $this->deleteJoinApprovalStrategy($params),
+				'execute_join_approval_strategy'    => $this->executeJoinApprovalStrategy($params),
+				'set_join_approval_whitelist'       => $this->setJoinApprovalWhitelist($params),
+
+				// 群禁言（批量）/ 频道（Guild）
+				'set_group_restrict_chat_setting'   => $this->setRestrictChatSetting($params),
+				'get_current_user_guilds'           => $this->requestOk('GET', '/users/@me/guilds', [
+					'limit' => (int)($params['limit'] ?? 100), 'cursor' => (string)($params['cursor'] ?? ''),
+				]),
+				'get_guild'                         => $this->requestOk('GET', '/guilds/' . urlencode((string)($params['guild_id'] ?? ''))),
+				'update_guild'                      => $this->requestOk('PATCH', '/guilds/' . urlencode((string)($params['guild_id'] ?? '')), $params),
+				'get_guild_channels'                => $this->requestOk('GET', '/guilds/' . urlencode((string)($params['guild_id'] ?? '')) . '/channels'),
+				'create_guild_channel'              => $this->requestOk('POST', '/guilds/' . urlencode((string)($params['guild_id'] ?? '')) . '/channels', $params),
+				'get_channel'                       => $this->requestOk('GET', '/channels/' . urlencode((string)($params['channel_id'] ?? ''))),
+				'update_channel'                    => $this->requestOk('PATCH', '/channels/' . urlencode((string)($params['channel_id'] ?? '')), $params),
+				'delete_channel'                    => $this->requestOk('DELETE', '/channels/' . urlencode((string)($params['channel_id'] ?? ''))),
 
 				// 官方确实未开放的能力
 				'get_group_list'                    => $this->fail(-501, 'QQ 官方机器人不支持获取群列表'),
@@ -252,6 +277,118 @@ class Adapter extends BaseAdapter {
 			return $this->fail((int)$result['code'], (string)($result['message'] ?? '请求失败'));
 		}
 		return $this->ok($result);
+	}
+
+	// ---------------- 面板 / 审批策略 / 频道 ----------------
+
+	private function getPanel(array $p): object {
+		$id = (string)($p['panel_id'] ?? '');
+		if ($id === '') return $this->fail(-400, '缺少 panel_id');
+		return $this->requestOk('GET', '/v2/panels/' . urlencode($id));
+	}
+
+	private function updatePanel(array $p): object {
+		$id = (string)($p['panel_id'] ?? '');
+		if ($id === '') return $this->fail(-400, '缺少 panel_id');
+		$panel = (array)($p['panel'] ?? $p);
+		return $this->requestOk('PUT', '/v2/panels/' . urlencode($id), ['panel' => $panel]);
+	}
+
+	private function deletePanel(array $p): object {
+		$id = (string)($p['panel_id'] ?? '');
+		if ($id === '') return $this->fail(-400, '缺少 panel_id');
+		return $this->requestOk('DELETE', '/v2/panels/' . urlencode($id));
+	}
+
+	private function setPanelTarget(array $p): object {
+		$id = (string)($p['panel_id'] ?? '');
+		if ($id === '') return $this->fail(-400, '缺少 panel_id');
+		$body = [
+			'op'            => strtolower((string)($p['op'] ?? 'add')),
+			'user_openids'  => array_values(array_map('strval', (array)($p['user_openids'] ?? []))),
+			'group_openids' => array_values(array_map('strval', (array)($p['group_openids'] ?? []))),
+		];
+		return $this->requestOk('PUT', '/v2/panels/' . urlencode($id) . '/target', $body);
+	}
+
+	private function joinApprovalStrategyList(array $p): object {
+		return $this->requestOk('GET', '/v2/groups/join_approval_strategy', [
+			'cursor' => (string)($p['cursor'] ?? ''),
+			'limit'  => (int)($p['limit'] ?? 20),
+		]);
+	}
+
+	private function createJoinApprovalStrategy(array $p): object {
+		$body = [];
+		foreach (['group_openids', 'group_ids', 'is_enable', 'expire_at', 'remark'] as $key) {
+			if (array_key_exists($key, $p)) {
+				$body[$key] = $p[$key];
+			}
+		}
+		return $this->requestOk('POST', '/v2/groups/join_approval_strategy', $body);
+	}
+
+	private function updateJoinApprovalStrategy(array $p): object {
+		$id = (string)($p['strategy_id'] ?? '');
+		if ($id === '') return $this->fail(-400, '缺少 strategy_id');
+		$body = [];
+		foreach (['is_enable', 'expire_at', 'group_action', 'remark'] as $key) {
+			if (array_key_exists($key, $p)) {
+				$body[$key] = $p[$key];
+			}
+		}
+		return $this->requestOk('PATCH', '/v2/groups/join_approval_strategy/' . urlencode($id), $body);
+	}
+
+	private function deleteJoinApprovalStrategy(array $p): object {
+		$id = (string)($p['strategy_id'] ?? '');
+		if ($id === '') return $this->fail(-400, '缺少 strategy_id');
+		return $this->requestOk('DELETE', '/v2/groups/join_approval_strategy/' . urlencode($id));
+	}
+
+	private function executeJoinApprovalStrategy(array $p): object {
+		$id = (string)($p['strategy_id'] ?? '');
+		if ($id === '') return $this->fail(-400, '缺少 strategy_id');
+		return $this->requestOk('POST', '/v2/groups/join_approval_strategy/' . urlencode($id) . '/execute');
+	}
+
+	private function setJoinApprovalWhitelist(array $p): object {
+		$id = (string)($p['strategy_id'] ?? '');
+		if ($id === '') return $this->fail(-400, '缺少 strategy_id');
+		$users = array_values(array_map('strval', (array)($p['whitelist_users'] ?? [])));
+		if ($users === []) return $this->fail(-400, '缺少 whitelist_users');
+		return $this->requestOk('POST', '/v2/groups/join_approval_strategy/' . urlencode($id) . '/whitelist_users', [
+			'op'              => strtolower((string)($p['op'] ?? 'add')),
+			'whitelist_users' => $users,
+		]);
+	}
+
+	private function setRestrictChatSetting(array $p): object {
+		$group = $this->groupOpenid($p);
+		$members = (array)($p['members'] ?? []);
+		if ($members === [] && !empty($p['user_id'])) {
+			$members[] = [
+				'op'             => (int)($p['duration'] ?? 0) > 0 ? 'add' : 'del',
+				'member_openid'  => (string)$p['user_id'],
+				'mute_expire_at' => (int)($p['duration'] ?? 0) > 0
+					? date('c', time() + min((int)$p['duration'], 2592000))
+					: '',
+			];
+		}
+		if ($members === []) return $this->fail(-400, '缺少 members 或 user_id');
+		$clean = [];
+		foreach (array_slice($members, 0, 20) as $member) {
+			$member = (array)$member;
+			$openid = (string)($member['member_openid'] ?? ($member['user_id'] ?? ''));
+			if ($openid === '') continue;
+			$clean[] = [
+				'op'             => strtolower((string)($member['op'] ?? 'add')),
+				'member_openid'  => $openid,
+				'mute_expire_at' => (string)($member['mute_expire_at'] ?? ''),
+			];
+		}
+		if ($clean === []) return $this->fail(-400, 'members 里没有有效 member_openid');
+		return $this->requestOk('POST', '/v2/groups/' . urlencode($group) . '/restrict_chat_setting', ['members' => $clean]);
 	}
 
 	private function getGroupInfo(array $p): object {

@@ -52,19 +52,34 @@ final class GroupsController extends Base {
         if ($deny = $this->guard($request, 'group.write')) {
             return $deny;
         }
-        // 拉群列表要用「账号自己的 api / token」，没有显式指定时，
-        // 该协议下只有一个启用账号就用它，多个账号必须指定，避免拉错号的群。
-        $accountId = trim((string)$request->input('account', ''));
-        if ($accountId === '' && \Core\Bot\Accounts::countForProtocol('onebot') > 1) {
+        $requested = trim((string)$request->input('account', ''));
+        if ($requested === '' && \Core\Bot\Accounts::countForProtocol('onebot') > 1) {
             return $this->fail('该协议下配置了多个账号，请指定 account（' . implode('、', \Core\Bot\Accounts::idsForProtocol('onebot')) . '）', -1, 400);
         }
-        $account = $accountId !== ''
-            ? \Core\Bot\Accounts::get($accountId)
-            : \Core\Bot\Accounts::forProtocol('onebot');
-        if ($accountId !== '' && $account === null) {
-            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        if ($requested !== '') {
+            $account = \Core\Bot\Accounts::get($requested);
+            if ($account === null) {
+                return $this->fail('账号不存在：' . $requested, -1, 404);
+            }
+        } else {
+            $enabled = \Core\Bot\Accounts::enabled();
+            $account = $enabled[0] ?? null;
         }
-        $accountId = (string)($account['id'] ?? $accountId);
+        if ($account === null) {
+            return $this->fail('没有可用的机器人账号', -1, 400);
+        }
+        $accountId = (string)($account['id'] ?? $requested);
+        $protocol = strtolower((string)($account['protocol'] ?? ''));
+
+        // 官方机器人没有 get_group_list，但有 get_group_info（需白名单权限）：
+        // 对已知 group_openid 逐个拉群名，而不是要求整表接口。
+        if ($protocol === 'qqbot') {
+            return $this->syncQqbot($accountId);
+        }
+        if ($protocol !== 'onebot') {
+            return $this->fail('该协议不支持同步群名', -1, 400);
+        }
+
         $api = (string)(($account['api'] ?? '') ?: \Protocol\Core\Config::string('onebot.api', ''));
         $hasWs = \Protocol\OneBot\WsHub::hasForward() || \Protocol\OneBot\WsHub::hasReverse();
         if ($api === '' && !$hasWs) {
@@ -109,7 +124,6 @@ final class GroupsController extends Base {
             }
             $row['updated_at'] = time();
             $meta[$id] = $row;
-            // 没有 {id}.info 的群在列表里根本不会出现，这里补一条空白开关
             if (\Core\Bot\GroupState::getInfo($this->store, $id, $accountId) === null) {
                 \Core\Bot\GroupState::setInfo($this->store, $id, ['status' => 1, 'worker' => [], 'name' => $name], $accountId);
             }
@@ -121,6 +135,83 @@ final class GroupsController extends Base {
             'synced' => $synced,
             'total'  => count($this->metrics->groups($accountId)['items']),
         ], '已同步 ' . $synced . ' 个群');
+    }
+
+    /**
+     * QQ 官方机器人：逐个已知 group_openid 调 get_group_info。
+     * 接口仅白名单机器人可用（错误码 11253），受限时明确提示。
+     */
+    private function syncQqbot(string $accountId): Response {
+        $account = \Core\Bot\Accounts::get($accountId);
+        if ($account === null) {
+            return $this->fail('账号不存在：' . $accountId, -1, 404);
+        }
+        $items = $this->metrics->groups($accountId)['items'];
+        if ($items === []) {
+            return $this->fail('当前账号还没有已知的群；先让群里发一条消息，再来同步群名', -1, 400);
+        }
+        \Core\Bot\AccountContext::use($account);
+        $meta = \Core\Bot\GroupState::meta($this->store, $accountId);
+        $synced = 0;
+        $failed = [];
+        $permissionDenied = false;
+        try {
+            $adapter = new \Protocol\QqBot\Adapter();
+            foreach (array_slice($items, 0, 25) as $group) {
+                $id = (string)($group['group_id'] ?? '');
+                if ($id === '') {
+                    continue;
+                }
+                $resp = $adapter->call('get_group_info', ['group_id' => $id]);
+                $status = (string)($resp->status ?? 'failed');
+                if ($status !== 'ok') {
+                    $code = (int)($resp->retcode ?? 0);
+                    $failed[$id] = (string)($resp->message ?? '获取群信息失败');
+                    if ($code === 11253) {
+                        $permissionDenied = true;
+                        break;
+                    }
+                    continue;
+                }
+                $data = (array)($resp->data ?? []);
+                $name = trim((string)($data['group_name'] ?? ''));
+                $row = is_array($meta[$id] ?? null) ? $meta[$id] : [];
+                if ($name !== '') {
+                    $row['name'] = $name;
+                }
+                $memo = trim((string)($data['group_memo'] ?? ''));
+                if ($memo !== '' && trim((string)($row['note'] ?? '')) === '') {
+                    $row['note'] = $memo;
+                }
+                $tags = array_values(array_filter(array_map('strval', (array)($data['group_tags'] ?? []))));
+                if ($tags !== [] && (array)($row['tags'] ?? []) === []) {
+                    $row['tags'] = $tags;
+                }
+                $row['updated_at'] = time();
+                $meta[$id] = $row;
+                $synced++;
+            }
+        } catch (\Throwable $e) {
+            \Core\Bot\AccountContext::reset();
+            return $this->fail('调用 get_group_info 失败：' . $e->getMessage(), -2, 502);
+        } finally {
+            \Core\Bot\AccountContext::reset();
+        }
+        \Core\Bot\GroupState::setMeta($this->store, $meta, $accountId);
+        if ($permissionDenied) {
+            return $this->fail(
+                '官方接口未对本机器人开放（11253：应用无接口访问权限）；该接口目前仅白名单机器人可用。'
+                . ($synced > 0 ? '已同步 ' . $synced . ' 个群，' : '')
+                . '其余群名可在「管理」里手动填写',
+                -3,
+                403
+            );
+        }
+        return $this->ok([
+            'synced' => $synced,
+            'failed' => $failed,
+            'total'  => count($this->metrics->groups($accountId)['items']),
+        ], '已同步 ' . $synced . ' 个群名' . ($failed !== [] ? '，' . count($failed) . ' 个失败' : ''));
     }
 
     public function show(Request $request, array $params): Response {

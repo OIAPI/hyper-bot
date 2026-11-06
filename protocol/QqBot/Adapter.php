@@ -261,9 +261,11 @@ class Adapter extends BaseAdapter {
 		}
 		return $this->ok([
 			'group_id'        => (string)($result['group_openid'] ?? ''),
+			'group_openid'    => (string)($result['group_openid'] ?? ''),
 			'group_name'      => (string)($result['group_name'] ?? ''),
 			'group_memo'      => (string)($result['group_finger_memo'] ?? ''),
 			'group_class_text'=> (string)($result['group_class_text'] ?? ''),
+			'group_tags'      => array_values(array_map('strval', (array)($result['group_tags'] ?? []))),
 			'member_count'    => (int)($result['group_member_num'] ?? 0),
 			'max_member_count'=> (int)($result['group_member_num'] ?? 0),
 		]);

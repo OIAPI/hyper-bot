@@ -39,7 +39,10 @@ const accountOptions = computed(() =>
   })),
 )
 const selectedAccountMeta = computed(() => accounts.value.find((a) => a.id === selectedAccount.value))
-const canSyncGroups = computed(() => (selectedAccountMeta.value?.protocol ?? 'onebot') === 'onebot')
+const canSyncGroups = computed(() => {
+  const protocol = selectedAccountMeta.value?.protocol ?? 'onebot'
+  return protocol === 'onebot' || protocol === 'qqbot'
+})
 const isOfficialAccount = computed(() => selectedAccountMeta.value?.protocol === 'qqbot')
 watch(selectedAccount, (v) => {
   setScopedAccount(v)
@@ -108,7 +111,7 @@ const syncing = ref(false)
 /** 协议端支持 get_group_list，主动拉一次能补上「没发过言的群」的名字 */
 async function syncNames(): Promise<void> {
   if (!canSyncGroups.value) {
-    toast.warn('只有 OneBot 账号支持从协议端同步群列表')
+    toast.warn('该协议不支持从协议端同步群名')
     return
   }
   if (syncing.value) return
@@ -270,7 +273,8 @@ async function confirmRemove(): Promise<void> {
         <p class="sub">
           群配置按机器人账号隔离；先选择账号，再管理该账号下的群与插件开关。
           <template v-if="isOfficialAccount">
-            官方机器人没有群列表接口，群通过消息事件发现；群名需在「管理」里手动填写。
+            官方机器人没有整表群列表接口，群通过消息事件发现；可点「同步群名」逐个拉取
+            get_group_info（需平台白名单权限），无权限时在「管理」里手动填写。
           </template>
         </p>
       </div>

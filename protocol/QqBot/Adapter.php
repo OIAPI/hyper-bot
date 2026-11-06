@@ -46,7 +46,8 @@ class Adapter extends BaseAdapter {
 			return match ($action) {
 				'send_msg', 'send_group_msg', 'send_private_msg' => $this->sendMessage($action, $params),
 				'delete_msg', 'recall_msg'          => $this->recall($params),
-				'get_login_info'                    => $this->getLoginInfo(),
+				'get_login_info', 'get_self_info'    => $this->getLoginInfo(),
+				'get_gateway'                       => $this->requestOk('GET', '/gateway'),
 				'interaction_reply'                 => $this->interactionReply($params),
 
 				// 群信息与成员
@@ -100,6 +101,13 @@ class Adapter extends BaseAdapter {
 				'get_channel'                       => $this->requestOk('GET', '/channels/' . urlencode((string)($params['channel_id'] ?? ''))),
 				'update_channel'                    => $this->requestOk('PATCH', '/channels/' . urlencode((string)($params['channel_id'] ?? '')), $params),
 				'delete_channel'                    => $this->requestOk('DELETE', '/channels/' . urlencode((string)($params['channel_id'] ?? ''))),
+
+				// 流式单聊 / 分片上传
+				'send_stream_message'               => $this->sendStreamMessage($params),
+				'group_upload_prepare'              => $this->uploadPrepare($params, true),
+				'user_upload_prepare'               => $this->uploadPrepare($params, false),
+				'group_upload_part_finish'          => $this->uploadPartFinish($params, true),
+				'user_upload_part_finish'           => $this->uploadPartFinish($params, false),
 
 				// 官方确实未开放的能力
 				'get_group_list'                    => $this->fail(-501, 'QQ 官方机器人不支持获取群列表'),
@@ -229,10 +237,15 @@ class Adapter extends BaseAdapter {
 			$body['url'] = $file;
 		} elseif (str_starts_with($file, 'base64://')) {
 			$body['file_data'] = substr($file, 9);
-		} elseif (is_file($file) && filesize($file) <= 5 * 1024 * 1024) {
+		} elseif (is_file($file)) {
+			$body['file_name'] = (string)($data['name'] ?? basename($file));
+			if (filesize($file) > 5 * 1024 * 1024) {
+				// 超过 5MB 走官方分片上传：prepare → PUT 分片 → part_finish → files 合并
+				return $this->uploadMediaChunked($file, $fileType, $isGroup, $target, (string)$body['file_name']);
+			}
 			$body['file_data'] = base64_encode((string)file_get_contents($file));
 		} else {
-			Logger::warning('[QqBot] 富媒体仅支持 http(s) URL、base64:// 或 ≤5MB 本地文件：' . $file);
+			Logger::warning('[QqBot] 富媒体仅支持 http(s) URL、base64:// 或本地文件：' . $file);
 			return null;
 		}
 		$body['file_name'] = (string)($data['name'] ?? basename(parse_url($file, PHP_URL_PATH) ?: 'file'));
@@ -241,6 +254,79 @@ class Adapter extends BaseAdapter {
 			? '/v2/groups/' . urlencode($target) . '/files'
 			: '/v2/users/' . urlencode($target) . '/files';
 		$result = $this->request('POST', $path, $body, 10);
+		return $result['file_info'] ?? null;
+	}
+
+	/** 大文件分片上传（官方推荐流程） */
+	private function uploadMediaChunked(string $file, int $fileType, bool $isGroup, string $target, string $fileName): ?string {
+		$size = (int)filesize($file);
+		if ($size <= 0) return null;
+		$md5 = md5_file($file);
+		$sha1 = sha1_file($file);
+		$head = (string)file_get_contents($file, false, null, 0, min($size, 10002432));
+		$md5Head = md5($head);
+		unset($head);
+
+		$prepare = $this->request('POST', '/v2/' . ($isGroup ? 'groups' : 'users') . '/' . urlencode($target) . '/upload_prepare', [
+			'file_type' => $fileType,
+			'file_size' => (string)$size,
+			'file_name' => $fileName,
+			'md5'       => (string)$md5,
+			'sha1'      => (string)$sha1,
+			'md5_10m'   => $md5Head,
+		], 30);
+		if (isset($prepare['code']) && (int)$prepare['code'] !== 0) {
+			Logger::warning('[QqBot] 分片上传 prepare 失败：' . (string)($prepare['message'] ?? ''));
+			return null;
+		}
+		$uploadId = (string)($prepare['upload_id'] ?? '');
+		$parts = (array)($prepare['parts'] ?? []);
+		if ($uploadId === '' || $parts === []) {
+			Logger::warning('[QqBot] 分片上传 prepare 返回缺少 upload_id/parts');
+			return null;
+		}
+
+		$fh = fopen($file, 'rb');
+		if ($fh === false) return null;
+		try {
+			foreach ($parts as $part) {
+				$part = (array)$part;
+				$index = (int)($part['index'] ?? 0);
+				$url = (string)($part['presigned_url'] ?? '');
+				$block = (int)($part['block_size'] ?? 0);
+				if ($url === '' || $block <= 0) continue;
+				$chunk = (string)fread($fh, $block);
+				$chunkMd5 = md5($chunk);
+				$curl = new \Utils\CoroutineCurl();
+				$curl->timeout(60);
+				$curl->addHeaders('Content-Type', 'application/octet-stream');
+				$curl->put($url, $chunk);
+				$http = (int)($curl->info['http_code'] ?? 0);
+				if ($curl->error || $http < 200 || $http >= 300) {
+					Logger::warning('[QqBot] 分片上传失败：part ' . $index . ' HTTP ' . $http);
+					return null;
+				}
+				$finished = $this->request('POST', '/v2/' . ($isGroup ? 'groups' : 'users') . '/' . urlencode($target) . '/upload_part_finish', [
+					'upload_id'  => $uploadId,
+					'part_index' => $index,
+					'block_size' => (string)$block,
+					'md5'        => $chunkMd5,
+				], 30);
+				if (isset($finished['code']) && (int)$finished['code'] !== 0) {
+					Logger::warning('[QqBot] 分片上传完成通知失败：part ' . $index . ' ' . (string)($finished['message'] ?? ''));
+					return null;
+				}
+			}
+		} finally {
+			fclose($fh);
+		}
+
+		$result = $this->request('POST', '/v2/' . ($isGroup ? 'groups' : 'users') . '/' . urlencode($target) . '/files', [
+			'file_type'    => $fileType,
+			'srv_send_msg' => false,
+			'file_name'    => $fileName,
+			'upload_id'    => $uploadId,
+		], 60);
 		return $result['file_info'] ?? null;
 	}
 
@@ -389,6 +475,43 @@ class Adapter extends BaseAdapter {
 		}
 		if ($clean === []) return $this->fail(-400, 'members 里没有有效 member_openid');
 		return $this->requestOk('POST', '/v2/groups/' . urlencode($group) . '/restrict_chat_setting', ['members' => $clean]);
+	}
+
+	private function sendStreamMessage(array $p): object {
+		$target = (string)($p['user_id'] ?? ($p['user_openid'] ?? ''));
+		if ($target === '') return $this->fail(-400, '缺少 user_openid');
+		$body = [];
+		foreach (['input_mode', 'input_state', 'index', 'content_type', 'content_raw', 'event_id', 'msg_id', 'stream_msg_id', 'msg_seq', 'is_wakeup'] as $key) {
+			if (array_key_exists($key, $p)) {
+				$body[$key] = $p[$key];
+			}
+		}
+		if (($body['content_raw'] ?? '') === '') return $this->fail(-400, '缺少 content_raw');
+		return $this->requestOk('POST', '/v2/users/' . urlencode($target) . '/stream_messages', $body);
+	}
+
+	private function uploadPrepare(array $p, bool $isGroup): object {
+		$target = (string)($isGroup ? ($p['group_id'] ?? ($p['group_openid'] ?? '')) : ($p['user_id'] ?? ($p['user_openid'] ?? '')));
+		if ($target === '') return $this->fail(-400, $isGroup ? '缺少 group_openid' : '缺少 user_openid');
+		$body = [];
+		foreach (['file_type', 'file_size', 'file_name', 'md5', 'sha1', 'md5_10m'] as $key) {
+			if (array_key_exists($key, $p)) {
+				$body[$key] = $p[$key];
+			}
+		}
+		return $this->requestOk('POST', '/v2/' . ($isGroup ? 'groups' : 'users') . '/' . urlencode($target) . '/upload_prepare', $body);
+	}
+
+	private function uploadPartFinish(array $p, bool $isGroup): object {
+		$target = (string)($isGroup ? ($p['group_id'] ?? ($p['group_openid'] ?? '')) : ($p['user_id'] ?? ($p['user_openid'] ?? '')));
+		if ($target === '') return $this->fail(-400, $isGroup ? '缺少 group_openid' : '缺少 user_openid');
+		$body = [];
+		foreach (['upload_id', 'part_index', 'block_size', 'md5'] as $key) {
+			if (array_key_exists($key, $p)) {
+				$body[$key] = $p[$key];
+			}
+		}
+		return $this->requestOk('POST', '/v2/' . ($isGroup ? 'groups' : 'users') . '/' . urlencode($target) . '/upload_part_finish', $body);
 	}
 
 	private function getGroupInfo(array $p): object {

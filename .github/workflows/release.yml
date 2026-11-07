@@ -86,7 +86,9 @@ jobs:
             git fetch origin main --quiet
             git rebase origin/main || { git rebase --abort; exit 1; }
             git tag -f -a "$TAG" -m "release $TAG"
-            if git push origin HEAD:main "refs/tags/$TAG"; then
+            # tag 触发时远端同名 tag 已存在；产物提交后需要强制把 tag 移到新提交。
+            # 分支不加 --force，避免覆盖别人推上来的 main。
+            if git push origin HEAD:main "+refs/tags/$TAG"; then
               echo "分支与 tag 已推送（$TAG）"
               exit 0
             fi

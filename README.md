@@ -6,7 +6,9 @@
 - 协议：OneBot 11（HTTP / 正向 WS / 反向 WS）、Milky（Webhook / WS / SSE）、QQ 官方机器人（Webhook）
 - 架构：swoole 常驻（推荐）或 php 内置服务器（无需扩展）
 - 面板：Vue 3 + 四套组件库可热切换（Element / Ant Design / Naive / Arco）
-- 存储：文件存储开箱即用，有 Redis 时自动使用
+- 存储：文件存储开箱即用；可选 Redis，或 MySQL / PostgreSQL 持久层 + Redis 读缓存
+
+版本与变更见 [CHANGELOG.md](CHANGELOG.md)，当前发布版本 **3.3.8**（仓库 VERSION 3.3.9 为发布流程与文档变更，尚未出包）。
 
 ---
 
@@ -16,7 +18,7 @@
 |---|---|
 | PHP | >= 8.1（推荐 8.3 / 8.5） |
 | 必需扩展 | json、mbstring、curl、openssl |
-| 可选扩展 | swoole（常驻 WS 服务端，推荐）、redis（缓存与会话共享）、sodium（QQ 官方 Webhook 验签） |
+| 可选扩展 | swoole（常驻 WS 服务端，推荐）、redis（缓存与会话共享）、pdo_mysql / pdo_pgsql（数据库持久层）、sodium（QQ 官方 Webhook 验签） |
 | 依赖 | 发布包已内置 vendor/；源码部署需要 Composer |
 
 没有 swoole 也能跑（php 架构），但没有常驻 WebSocket，只能用 HTTP Webhook / 轮询。
@@ -111,7 +113,17 @@ arch = swoole          ; swoole | php，默认 swoole，缺扩展自动降级
 session_store = file   ; file（推荐）| store
 
 [store]
-driver = auto          ; auto 有 Redis 就用 Redis，否则文件
+; auto / redis / file / memory / mysql / pgsql / sqlite / pdo
+driver = auto
+; 数据库持久层示例（二选一）：
+; dsn = "mysql:host=127.0.0.1;port=3306;dbname=hyper;charset=utf8mb4"
+; dsn = "pgsql:host=127.0.0.1;port=5432;dbname=hyper"
+; user = hyper
+; password =
+; prefix = hyper_
+; 可选：数据库做持久层，Redis 只做读缓存
+; cache = redis
+; cache_ttl = 30
 
 [Redis]
 host = 127.0.0.1
@@ -156,12 +168,18 @@ php bin/hyper doctor 里有一行「WS 服务端」显示当前状态。
 
 ## 六、多账号
 
-同一协议可以挂多个机器人号，各自一套 api / token / self_id：
+同一协议可以挂多个机器人号，也可以 OneBot / Milky / QQ 官方混用，各自一套 api / token / self_id：
 
-- 面板「业务 -> 账号」增删改，凭据只写不读（列表只显示「已配置」）
-- 事件进来时按 self_id 自动路由到对应账号；手动调用可用 ?account=<id> 指定
-- 主动操作（测试发送、同步群名）优先用账号里的 api/token，取不到才回落 Config.ini
-- 同一协议有多个账号又没指定时，接口会报错并列出候选，不会瞎猜
+- 面板「业务 -> 账号」增删改，凭据只写不读（列表只显示「已配置」）；
+- WebUI 顶栏选择当前机器人账号，接口自动带 `X-Account-Id`；群管理、QQ 权限页按账号读写；
+- 事件进来时按 `self_id` 自动路由到账号；手动调用可用 `?account=<id>` 指定；
+- 真正的数据隔离（不是前端过滤）：群开关、群级插件开关、群名/备注/标签、成员权限、
+  按群订阅覆盖、事件流、插件通过 `$Redis` 写的配置缓存都带 `acct:{账号}:` 前缀；
+- 只有单账号时回退读取旧全局键，升级不丢数据；启用第二个账号后旧全局数据不再参与；
+- 主动操作（测试发送、同步群名）优先用账号里的 api/token，取不到才回落 Config.ini；
+- 同一协议有多个账号又没指定时，接口会报错并列出候选，不会瞎猜；
+- 群同步：OneBot / Milky 调协议端 `get_group_list`；QQ 官方不调受限接口，只按消息/事件记录刷新；
+- 仍为全局一份：Webhook 订阅、RSS、定时任务、消息日志、Config.ini 协议级配置、插件全局启停。
 
 ---
 
@@ -238,15 +256,24 @@ readv() failed / 403。分片大小 512 KB，断点数据在 runtime/update/chun
 国内拉 GitHub 慢可以用加速前缀（面板下拉，或手动拼）：
 https://gh-proxy.com/https://github.com/user/repo.git
 
-### 自动发布（GitHub Actions）
+### 自动发布（推送版本 tag）
 
-推送到 main 或手动触发 .github/workflows/release.yml 时：
+**普通 push 只同步源码，不编译、不打包、不发 Release。**
 
-1. 读 VERSION，若该版本 Release 已存在则跳过（幂等）
-2. 构建前端 -> 产物有变化则提交回去（带 [skip ci]，冲突时 rebase 重试）
-3. 打 tag -> 装 composer 依赖 -> 打包 zip + sha256 -> 创建 Release
+确认要发布 build 包时，推送版本 tag 即可，工作流自动执行：
 
-发版就是把 VERSION 改一下再 push。
+    git tag v3.3.9
+    git push origin v3.3.9
+
+触发后：
+
+1. 校验 tag 与 VERSION 一致（不一致直接失败）
+2. 读 VERSION，若该版本 Release 已存在则跳过（幂等）
+3. 构建前端 -> 产物有变化则提交回去（带 [skip ci]，冲突时 rebase 重试）
+4. 打 tag -> 装 composer 依赖 -> 打包 zip + sha256 -> 创建 Release
+
+所以流程是：改 VERSION → push 同步 → 需要出包时推 v<版本> tag。
+也保留 Actions → release → Run workflow 作为兜底。
 
 ---
 
@@ -262,7 +289,7 @@ docs/         README-webui.md（面板细节）
 protocol/     OneBot / Milky / QQ 官方机器人适配
 public/       入口 index.php 与 webui 静态产物
 runtime/      运行时数据（日志、缓存、账号、任务、会话、更新备份）
-tests/        19 个自检脚本，php tests/xxx_test.php
+tests/        38 个自检脚本，php tests/xxx_test.php
 ui/           面板源码（Vue 3 + Vite）
 utils/        日志、HTTP、Markdown 等工具
 webui/        面板后端：路由、控制器、账号与权限
@@ -343,7 +370,7 @@ npm run dev          # 本地开发（需要后端在跑）
 # 测试（不需要 swoole / Redis）
 php tests/accounts_test.php
 php tests/subscription_test.php
-# ……共 19 个，见 tests/
+# ……共 38 个，见 tests/
 ~~~
 
 提交前建议跑一遍：

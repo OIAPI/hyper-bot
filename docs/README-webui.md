@@ -1,6 +1,6 @@
 # WebUI 控制台
 
-基于新内核（`Core\`）的可视化管理界面，位于 `/webui/`。
+基于新内核（`Core\`）的可视化管理界面，位于 `/webui/`。当前发布版本 **3.3.8**，变更见 [CHANGELOG](../CHANGELOG.md)。
 
 ## 启动
 
@@ -69,26 +69,23 @@ Element 343KB JS + 364KB CSS、Ant 851KB、Naive 624KB、Arco 313KB。这些包�
 | 订阅 | 事件通道开关、消息范围、通知类型多选与全选、自定义订阅类型 |
 | 协议接入 | OneBot11 / Milky / QQ 官方机器人 的配置与能力矩阵 |
 | 日志 | 实时尾部 + 历史按日期，按级别过滤 |
-| 配置 | Config.ini 的表单视图、原文视图、键值写回、账号 |
+| 配置 | Config.ini 表单/原文、单项增删改、整节删除、一次新增多个配置项、账号 |
 | 系统 | 目录体积、已注册路由、缓存清理 |
 
 ## 架构
 
-前端是**无构建的原生 ES Modules**，没有 npm、没有 CDN，离线可用：
+前端是 **Vue 3 + Vite + Pinia**，源码在 `ui/src`，构建产物在 `public/webui`（带 hash 的 assets，无 CDN，离线可用）。
 
 ```
-public/webui/
-├── index.html
-└── assets/
-    ├── app.css            设计令牌 + 组件
-    ├── main.js            持久化 shell + 路由 + 登录态
-    ├── lib/{dom,api,ui}.js
-    └── views/*.js         8 个视图 + 登录
+ui/src/
+├── api/             统一 API client（自动带 X-Account-Id）
+├── components/      Ui* 适配层（Element / Ant / Naive / Arco 可切换）
+├── layout/          侧边栏、顶栏、全局机器人账号选择
+├── stores/          Pinia 状态
+└── views/           各业务页面
 ```
 
-- `lib/dom.js`：`h('div.card', props, children)` 直接建真实节点，无虚拟 DOM。
-- `lib/api.js`：统一 fetch 封装，401 自动触发登出回调。
-- `lib/ui.js`：Toast / Modal / 确认框 / 格式化。
+发布前的构建产物由手动触发的 release 工作流生成；开发时在 `ui/` 下执行 `npm run build`。
 
 ## 消息订阅
 
@@ -435,6 +432,27 @@ chmod 600 runtime/webui/users.json
 - **升级兼容**：首次启动若没有 `accounts.json`，会按 Config.ini 里已配置的协议自动生成初始账号，
   老部署不需要手工迁移。
 - **删除保护**：至少保留一个账号，避免面板把自己锁死。
+
+### 账号作用域（3.3 起）
+
+不只是前端按账号显示，后端存储本身按账号隔离：
+
+- WebUI 顶栏选择机器人账号后，所有请求自动带 `X-Account-Id`；
+- 群开关 / 群级插件开关：`acct:{账号}:{群}.info`；
+- 群名 / 备注 / 标签：`acct:{账号}:webui:groups`；
+- 成员权限：`acct:{账号}:memberPermission.*`；
+- 按群订阅覆盖：`subscription-groups.{账号}.json`；
+- 事件流：`acct:{账号}:webui:events`；
+- 插件通过 `$this->Redis` 写的配置/缓存：StoreBridge 自动加 `acct:{账号}:` 前缀，插件代码不用改。
+
+单账号升级兼容：只有一个启用账号时回退读旧全局键，历史群/权限/事件不丢；启用第二个账号后旧全局数据不再参与。仍为全局一份的：Webhook 订阅、RSS、定时任务、消息日志、Config.ini 协议级配置、插件全局启停。
+
+### 群同步用哪个来源
+
+- **OneBot / Milky**：调协议端 `get_group_list`，按 API 结果更新群列表；
+- **QQ 官方**：没有整表群列表接口，不调受限接口，只按消息/事件记录刷新；
+- 群列表按协议过滤：官方只显示 32 位 openid 群，OneBot/Milky 只显示纯数字群号；
+- 多账号下同步必须指定 `account`，避免把 A 号的群写到 B 号。
 
 ### 发消息 / 拉群列表用哪个账号
 
@@ -827,13 +845,15 @@ git branch --set-upstream-to=origin/main main
 
 后续计划（等仓库地址固定）：定时/手动「自动检测更新」，以及更新前校验签名与版本号递增。
 
-## 自动发布（GitHub Actions）
+## 自动发布（推送版本 tag）
 
 工作流：`.github/workflows/release.yml`，仓库 `OIAPI/hyper-bot`。
 
-**发版 = 改 `VERSION` 然后 push 到 main**，不需要手动打包：
+**普通 push 到 main 只同步源码，不编译、不打包、不发 Release。**
 
-1. 读仓库根 `VERSION` → 版本号与 tag（`v2.4.1`）
+确认要发布 build 包时，推送版本 tag（例如 v3.3.9）。工作流自动触发，执行：
+
+1. 校验推送的 tag 与仓库根 `VERSION` 一致，读出版本号与 tag（`v3.3.9`）
 2. 已经发布过（存在同名 Release）就整条跳过，重复 push 不会重复发版
 3. `npm install && npm run build` 重建 `public/webui`（`ui/` 是源码）
 4. 产物有变化就由 bot 提交回 main，提交信息带 `[skip ci]` 防止自触发；
@@ -845,7 +865,7 @@ git branch --set-upstream-to=origin/main main
 7. 打包 `hyper-bot-v<版本>.zip`（排除 `.git` / `node_modules` / `dist`），生成 `.sha256`
 8. 发 Release，附件是 zip 与 sha256
 
-也可以手动触发：**Actions → release → Run workflow**。
+普通 push（不带 tag）不会触发这个工作流；需要发布时推送 `v<版本>` tag 即可自动出包。
 
 > 判断依据是「Release 是否存在」而不是「tag 是否存在」：之前 tag 建成功了但发布失败，
 > 只看 tag 会导致再也不会补发。

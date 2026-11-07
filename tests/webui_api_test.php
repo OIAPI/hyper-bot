@@ -399,6 +399,8 @@ $ac2 = $call('POST', '/webui/api/accounts', [
 $ok('同一机器人可加多个协议账号', ($ac2['json']['code'] ?? 0) === 1);
 $qqSync = $call('POST', '/webui/api/groups/sync', ['account' => 'qqbot-1002002'], $token);
 $ok('官方账号无已知群时同步给出提示', $qqSync['status'] === 400, $qqSync['raw']);
+$qqGroups = $call('GET', '/webui/api/groups?account=qqbot-1002002', [], $token);
+$ok('官方账号群列表不混入 OneBot 群', (int)($qqGroups['json']['data']['total'] ?? -1) === 0, $qqGroups['raw']);
 
 $ad = $call('DELETE', '/webui/api/accounts/onebot-1001', [], $token);
 $ok('删除账号', ($ad['json']['code'] ?? 0) === 1);

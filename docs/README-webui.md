@@ -204,6 +204,27 @@ arch / receives_events / arch_hint。
 - 想彻底解决：`store.driver = file`，或把 `Redis.host / Redis.port` 改回真正的 Redis
 - 自检：`php bin/hyper doctor` 会真的 PING 一次并说明「连上了但不是 Redis」
 
+### 用 MySQL / PostgreSQL 存固定数据，Redis 只做缓存
+
+如果 Redis 在长时间空闲后连接假死，或者希望群/权限/订阅/事件这些固定数据真正落库，可以把存储层切到数据库：
+
+```ini
+[store]
+driver = mysql
+dsn = "mysql:host=127.0.0.1;port=3306;dbname=hyper;charset=utf8mb4"
+user = hyper
+password = 你的密码
+prefix = hyper_
+; 可选：Redis 只做读缓存，挂了自动降级为直读数据库
+cache = redis
+cache_ttl = 30
+```
+
+- 支持 `mysql` / `pgsql` / `sqlite` / `pdo`，表会自动创建（键值表 + 事件时间线表）；
+- Redis 只做缓存时，写先落数据库，读缓存未命中回源；Redis 异常只影响缓存命中率；
+- 需要 PHP 的 `pdo_mysql` 或 `pdo_pgsql` 扩展；
+- 注意：切换存储驱动不会自动把旧 Redis/文件里的群记录、权限、事件搬到新库，切换前请先备份 `runtime/` 或保留旧驱动回滚。
+
 ### Redis / KeyDB「明明能连，面板就是不用」
 
 以前这种情况日志里一个字都没有：连接成功但 AUTH、SELECT、PING 任一步失败，代码静默回退文件存储。现在：

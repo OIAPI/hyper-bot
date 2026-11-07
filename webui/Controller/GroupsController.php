@@ -25,7 +25,9 @@ final class GroupsController extends Base {
         if (!$this->accountExists($accountId)) {
             return $this->fail('账号不存在：' . $accountId, -1, 404);
         }
-        $groups = $this->metrics->groups($accountId)['items'];
+        $account = \Core\Bot\Accounts::get($accountId);
+        $protocol = strtolower((string)($account['protocol'] ?? ''));
+        $groups = $this->filterByProtocol($this->metrics->groups($accountId)['items'], $protocol);
         $keyword = (string)$request->input('q', '');
         if ($keyword !== '') {
             $groups = array_values(array_filter($groups, fn($g) =>
@@ -53,9 +55,6 @@ final class GroupsController extends Base {
             return $deny;
         }
         $requested = trim((string)$request->input('account', ''));
-        if ($requested === '' && \Core\Bot\Accounts::countForProtocol('onebot') > 1) {
-            return $this->fail('该协议下配置了多个账号，请指定 account（' . implode('、', \Core\Bot\Accounts::idsForProtocol('onebot')) . '）', -1, 400);
-        }
         if ($requested !== '') {
             $account = \Core\Bot\Accounts::get($requested);
             if ($account === null) {
@@ -63,6 +62,9 @@ final class GroupsController extends Base {
             }
         } else {
             $enabled = \Core\Bot\Accounts::enabled();
+            if (count($enabled) !== 1) {
+                return $this->fail('有多个机器人账号，请指定 account，避免把群数据同步到别的账号', -1, 400);
+            }
             $account = $enabled[0] ?? null;
         }
         if ($account === null) {
@@ -71,25 +73,27 @@ final class GroupsController extends Base {
         $accountId = (string)($account['id'] ?? $requested);
         $protocol = strtolower((string)($account['protocol'] ?? ''));
 
-        // 官方机器人没有 get_group_list，但有 get_group_info（需白名单权限）：
-        // 对已知 group_openid 逐个拉群名，而不是要求整表接口。
+        // 官方机器人没有整表群列表接口：只按消息/事件记录刷新，不调 API。
         if ($protocol === 'qqbot') {
             return $this->syncQqbot($accountId);
         }
-        if ($protocol !== 'onebot') {
+        if (!in_array($protocol, ['onebot', 'milky'], true)) {
             return $this->fail('该协议不支持同步群名', -1, 400);
         }
 
-        $api = (string)(($account['api'] ?? '') ?: \Protocol\Core\Config::string('onebot.api', ''));
-        $hasWs = \Protocol\OneBot\WsHub::hasForward() || \Protocol\OneBot\WsHub::hasReverse();
-        if ($api === '' && !$hasWs) {
-            return $this->fail($accountId !== ''
-                ? '账号 ' . $accountId . ' 没有填 api 地址，也没有可用的 WS 连接'
-                : '没有可用的 OneBot 接口：请在「账号」页填写 api，或开启正向 / 反向 WS', -1, 400);
+        if ($protocol === 'onebot') {
+            $api = (string)(($account['api'] ?? '') ?: \Protocol\Core\Config::string('onebot.api', ''));
+            $hasWs = \Protocol\OneBot\WsHub::hasForward() || \Protocol\OneBot\WsHub::hasReverse();
+            if ($api === '' && !$hasWs) {
+                return $this->fail('账号 ' . $accountId . ' 没有填 api 地址，也没有可用的 WS 连接', -1, 400);
+            }
         }
+
         \Core\Bot\AccountContext::use($account);
         try {
-            $adapter = \Protocol\OneBot\Adapter::currentAdapter();
+            $adapter = $protocol === 'onebot'
+                ? \Protocol\OneBot\Adapter::currentAdapter()
+                : new \Protocol\Milky\Adapter();
             $resp = $adapter->call('get_group_list');
         } catch (\Throwable $e) {
             \Core\Bot\AccountContext::reset();
@@ -117,6 +121,10 @@ final class GroupsController extends Base {
             if ($id === '' || !preg_match('/^[0-9a-zA-Z_-]+$/', $id)) {
                 continue;
             }
+            // OneBot/Milky 群号是纯数字；不要因为协议端返回 openid 群而写到它们名下
+            if (($protocol === 'onebot' || $protocol === 'milky') && !ctype_digit($id)) {
+                continue;
+            }
             $name = (string)($group['group_name'] ?? ($group['name'] ?? ''));
             $row = is_array($meta[$id] ?? null) ? $meta[$id] : [];
             if ($name !== '') {
@@ -134,86 +142,54 @@ final class GroupsController extends Base {
         return $this->ok([
             'synced' => $synced,
             'total'  => count($this->metrics->groups($accountId)['items']),
-        ], '已同步 ' . $synced . ' 个群');
+            'source' => 'api',
+        ], '已从 ' . $protocol . ' API 同步 ' . $synced . ' 个群');
+    }
+
+    /** 按协议过滤群 ID：官方群是 32 位 openid，OneBot/Milky 群是纯数字 */
+    private function filterByProtocol(array $groups, string $protocol): array {
+        if ($protocol === 'qqbot') {
+            return array_values(array_filter($groups, static fn($g) => preg_match('/^[0-9A-Fa-f]{32}$/', (string)($g['group_id'] ?? '')) === 1));
+        }
+        if ($protocol === 'onebot' || $protocol === 'milky') {
+            return array_values(array_filter($groups, static fn($g) => ctype_digit((string)($g['group_id'] ?? ''))));
+        }
+        return $groups;
     }
 
     /**
-     * QQ 官方机器人：逐个已知 group_openid 调 get_group_info。
-     * 接口仅白名单机器人可用（错误码 11253），受限时明确提示。
+     * QQ 官方机器人：不调用受限接口，只按消息/事件记录刷新本地群列表。
      */
     private function syncQqbot(string $accountId): Response {
-        $account = \Core\Bot\Accounts::get($accountId);
-        if ($account === null) {
-            return $this->fail('账号不存在：' . $accountId, -1, 404);
-        }
-        $items = $this->metrics->groups($accountId)['items'];
+        $items = $this->filterByProtocol($this->metrics->groups($accountId)['items'], 'qqbot');
         if ($items === []) {
-            return $this->fail('当前账号还没有已知的群；先让群里发一条消息，再来同步群名', -1, 400);
+            return $this->fail('当前账号还没有消息记录；让群里发一条消息后再刷新', -1, 400);
         }
-        \Core\Bot\AccountContext::use($account);
         $meta = \Core\Bot\GroupState::meta($this->store, $accountId);
         $synced = 0;
-        $failed = [];
-        $permissionDenied = false;
-        try {
-            $adapter = new \Protocol\QqBot\Adapter();
-            foreach (array_slice($items, 0, 25) as $group) {
-                $id = (string)($group['group_id'] ?? '');
-                if ($id === '') {
-                    continue;
-                }
-                $resp = $adapter->call('get_group_info', ['group_id' => $id]);
-                $status = (string)($resp->status ?? 'failed');
-                if ($status !== 'ok') {
-                    $code = (int)($resp->retcode ?? 0);
-                    $failed[$id] = (string)($resp->message ?? '获取群信息失败');
-                    if ($code === 11253) {
-                        $permissionDenied = true;
-                        break;
-                    }
-                    continue;
-                }
-                $data = (array)($resp->data ?? []);
-                $name = trim((string)($data['group_name'] ?? ''));
-                $row = is_array($meta[$id] ?? null) ? $meta[$id] : [];
-                if ($name !== '') {
-                    $row['name'] = $name;
-                }
-                $memo = trim((string)($data['group_memo'] ?? ''));
-                if ($memo !== '' && trim((string)($row['note'] ?? '')) === '') {
-                    $row['note'] = $memo;
-                }
-                $tags = array_values(array_filter(array_map('strval', (array)($data['group_tags'] ?? []))));
-                if ($tags !== [] && (array)($row['tags'] ?? []) === []) {
-                    $row['tags'] = $tags;
-                }
-                $row['updated_at'] = time();
-                $meta[$id] = $row;
-                $synced++;
+        foreach ($items as $group) {
+            $id = (string)($group['group_id'] ?? '');
+            if ($id === '') {
+                continue;
             }
-        } catch (\Throwable $e) {
-            \Core\Bot\AccountContext::reset();
-            return $this->fail('调用 get_group_info 失败：' . $e->getMessage(), -2, 502);
-        } finally {
-            \Core\Bot\AccountContext::reset();
+            $row = is_array($meta[$id] ?? null) ? $meta[$id] : [];
+            if (($row['name'] ?? '') === '' && trim((string)($group['name'] ?? '')) !== '') {
+                $row['name'] = (string)$group['name'];
+            }
+            $meta[$id] = $row;
+            if (\Core\Bot\GroupState::getInfo($this->store, $id, $accountId) === null) {
+                // 官方群默认关闭；这里只补数据记录，不因同步自动开群
+                \Core\Bot\GroupState::setInfo($this->store, $id, ['status' => 0, 'worker' => []], $accountId);
+            }
+            $synced++;
         }
         \Core\Bot\GroupState::setMeta($this->store, $meta, $accountId);
-        if ($permissionDenied) {
-            return $this->fail(
-                '官方接口未对本机器人开放（11253：应用无接口访问权限）；该接口目前仅白名单机器人可用。'
-                . ($synced > 0 ? '已同步 ' . $synced . ' 个群，' : '')
-                . '其余群名可在「管理」里手动填写',
-                -3,
-                403
-            );
-        }
         return $this->ok([
             'synced' => $synced,
-            'failed' => $failed,
             'total'  => count($this->metrics->groups($accountId)['items']),
-        ], '已同步 ' . $synced . ' 个群名' . ($failed !== [] ? '，' . count($failed) . ' 个失败' : ''));
+            'source' => 'records',
+        ], '已按消息记录刷新 ' . $synced . ' 个官方群');
     }
-
     public function show(Request $request, array $params): Response {
         $accountId = $this->accountId($request);
         if (!$this->accountExists($accountId)) {

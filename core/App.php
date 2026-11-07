@@ -211,9 +211,98 @@ final class App {
         return $this;
     }
 
+    /** MySQL / PostgreSQL / SQLite 持久层；Redis 仅作为可选读缓存 */
+    private function buildPdoStore(string $driver, string $root): Store {
+        $fileFallback = new \Core\Store\FileStore($root . '/store');
+        $dsn = (string)Config::string('store.dsn', '');
+        if ($dsn === '') {
+            if ($driver === 'sqlite') {
+                $dsn = 'sqlite:' . (string)Config::string('store.path', $root . '/store.sqlite');
+            } elseif ($driver === 'mysql') {
+                $dsn = sprintf(
+                    'mysql:host=%s;port=%d;dbname=%s;charset=%s',
+                    (string)Config::string('store.host', '127.0.0.1'),
+                    (int)Config::string('store.port', '3306'),
+                    (string)Config::string('store.database', 'hyper'),
+                    (string)Config::string('store.charset', 'utf8mb4')
+                );
+            } elseif ($driver === 'pgsql') {
+                $dsn = sprintf(
+                    'pgsql:host=%s;port=%d;dbname=%s',
+                    (string)Config::string('store.host', '127.0.0.1'),
+                    (int)Config::string('store.port', '5432'),
+                    (string)Config::string('store.database', 'hyper')
+                );
+            }
+        }
+        if ($dsn === '') {
+            \Utils\Logger::warning('[store] 选择了数据库存储但未配置 store.dsn / host / database，已回退文件存储');
+            return $fileFallback;
+        }
+        $user = (string)Config::string('store.user', (string)Config::string('store.username', ''));
+        $password = (string)Config::string('store.password', (string)Config::string('store.pass', ''));
+        $prefix = (string)Config::string('store.prefix', 'hyper_');
+        try {
+            $pdo = \Core\Store\PdoStore::fromDsn($dsn, $user, $password, [], $prefix);
+        } catch (\Throwable $e) {
+            \Utils\Logger::error('[store] 数据库连接/建表失败，已回退文件存储：' . $e->getMessage() . '（DSN: ' . preg_replace('/password=[^;]+/i', 'password=***', $dsn) . '）');
+            return $fileFallback;
+        }
+
+        if (strtolower((string)Config::string('store.cache', '')) === 'redis') {
+            $cache = $this->redisCacheStore();
+            if ($cache !== null) {
+                return new \Core\Store\CachedStore($pdo, $cache, max(1, (int)Config::string('store.cache_ttl', '30')));
+            }
+            \Utils\Logger::warning('[store] store.cache=redis 但 Redis 不可用，本次直接读写数据库');
+        }
+        return $pdo;
+    }
+
+    /** 仅供 CachedStore 使用的 Redis 缓存连接（失败返回 null，不阻断持久层） */
+    private function redisCacheStore(): ?\Core\Store\Store {
+        if (!class_exists('Redis')) {
+            return null;
+        }
+        try {
+            $client = new \Redis();
+            $host = (string)Config::string('Redis.host', '127.0.0.1');
+            $port = (int)Config::string('Redis.port', '6379');
+            if (defined('Redis::OPT_READ_TIMEOUT')) {
+                @$client->setOption(\Redis::OPT_READ_TIMEOUT, 1.0);
+            }
+            if (@$client->connect($host, $port, 0.8) !== true) {
+                return null;
+            }
+            $auth = (string)Config::string('Redis.auth', '');
+            if ($auth !== '') {
+                try { @$client->auth($auth); } catch (\Throwable) {}
+            }
+            $select = (int)Config::string('Redis.select', '0');
+            if ($select > 0) {
+                @$client->select($select);
+            }
+            if (@$client->ping() === false) {
+                return null;
+            }
+            return new \Core\Store\RedisStore($client);
+        } catch (\Throwable $e) {
+            \Utils\Logger::warning('[store] Redis 缓存连接失败：' . $e->getMessage());
+            return null;
+        }
+    }
+
     private function buildStore(): Store {
         $driver = strtolower(Config::string('store.driver', 'auto'));
         $root = (defined('__runtime__') ? __runtime__ : dirname(__DIR__) . '/runtime');
+
+        // 固定数据持久层：MySQL / PostgreSQL / SQLite（PDO）
+        if ($driver === 'auto' && \Core\Config::string('store.dsn', '') !== '') {
+            $driver = 'pdo';
+        }
+        if (in_array($driver, ['mysql', 'pgsql', 'sqlite', 'pdo'], true)) {
+            return $this->buildPdoStore($driver, $root);
+        }
 
         if ($driver === 'file') {
             return new \Core\Store\FileStore($root . '/store');
@@ -235,6 +324,10 @@ final class App {
                 $client = new \Redis();
                 $host = Config::string('Redis.host', '127.0.0.1');
                 $port = Config::int('Redis.port', 6379);
+                if (defined('Redis::OPT_READ_TIMEOUT')) {
+                    // 长时间空闲后 TCP 可能假死：给读操作 1.5s 上限，避免整个 worker 卡住
+                    @$client->setOption(\Redis::OPT_READ_TIMEOUT, 1.5);
+                }
                 if (@$client->connect($host, $port, 1.0) !== true) {
                     $reason = '连接 ' . $host . ':' . $port . ' 失败（端口没开 / 防火墙 / 只监听其他地址）';
                 } else {

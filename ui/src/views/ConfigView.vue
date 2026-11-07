@@ -35,9 +35,7 @@ const saving = ref(false)
 /* ---------------- 新增配置项 ---------------- */
 const addOpen = ref(false)
 const addSection = ref('')
-const addKey = ref('')
-const addValue = ref('')
-const addType = ref<'string' | 'number' | 'boolean' | 'json'>('string')
+const addRows = ref<Array<{ key: string; type: 'string' | 'number' | 'boolean' | 'json'; value: string }>>([])
 const adding = ref(false)
 const addError = ref('')
 
@@ -48,65 +46,95 @@ const typeOptions = [
   { label: 'JSON / 数组', value: 'json' },
 ]
 
+function blankRow() {
+  return { key: '', type: 'string' as const, value: '' }
+}
+
 function openAdd(): void {
   addSection.value = ''
-  addKey.value = ''
-  addValue.value = ''
-  addType.value = 'string'
+  addRows.value = [blankRow()]
   addError.value = ''
   addOpen.value = true
 }
 
+function appendRow(): void {
+  addRows.value.push(blankRow())
+}
+
+function removeAddRow(index: number): void {
+  addRows.value.splice(index, 1)
+  if (addRows.value.length === 0) addRows.value.push(blankRow())
+}
+
 /** 按所选类型把输入转成真正写进 Config.ini 的值 */
-function coerceNew(): unknown {
-  const raw = addValue.value.trim()
-  if (addType.value === 'number') {
+function coerceNew(row: { type: string; value: string }): unknown {
+  const raw = row.value.trim()
+  if (row.type === 'number') {
     const n = Number(raw)
     if (!Number.isFinite(n)) throw new Error('值不是合法数字')
     return n
   }
-  if (addType.value === 'boolean') {
+  if (row.type === 'boolean') {
     const v = raw.toLowerCase()
     if (['true', '1', 'yes', 'on'].includes(v)) return true
     if (['false', '0', 'no', 'off'].includes(v)) return false
     if (v === '') return false
     throw new Error('布尔值请填 true / false')
   }
-  if (addType.value === 'json') {
+  if (row.type === 'json') {
     try {
       return JSON.parse(raw)
     } catch {
       throw new Error('JSON 解析失败，请检查格式（例如 ["a","b"]）')
     }
   }
-  return addValue.value
+  return row.value
 }
 
 async function saveAdd(): Promise<void> {
   addError.value = ''
   const section = addSection.value.trim().replace(/^\[|\]$/g, '')
-  const key = addKey.value.trim()
   const nameRe = /^[A-Za-z0-9_.-]+$/
   if (section === '') { addError.value = '请填写小节名，例如 plugin.hello'; return }
-  if (key === '') { addError.value = '请填写键名，例如 theme'; return }
-  if (key.startsWith('_')) { addError.value = '键名不能以下划线开头'; return }
   if (!nameRe.test(section) || section.includes('..')) { addError.value = '小节名只能用字母、数字、点、下划线、横线'; return }
-  if (!nameRe.test(key) || key.includes('..')) { addError.value = '键名只能用字母、数字、点、下划线、横线'; return }
-  let value: unknown
-  try {
-    value = coerceNew()
-  } catch (e) {
-    addError.value = e instanceof Error ? e.message : '值格式不对'
-    return
+  if (addRows.value.length === 0) { addError.value = '至少添加一个配置项'; return }
+
+  const seen = new Set<string>()
+  const items: Array<{ key: string; value: unknown }> = []
+  for (let i = 0; i < addRows.value.length; i++) {
+    const row = addRows.value[i]
+    const key = row.key.trim()
+    if (key === '') { addError.value = '第 ' + (i + 1) + ' 项：请填写键名'; return }
+    if (key.startsWith('_')) { addError.value = '第 ' + (i + 1) + ' 项：键名不能以下划线开头'; return }
+    if (!nameRe.test(key) || key.includes('..')) { addError.value = '第 ' + (i + 1) + ' 项：键名只能用字母、数字、点、下划线、横线'; return }
+    if (seen.has(key)) { addError.value = '键名重复：' + key; return }
+    seen.add(key)
+    try {
+      items.push({ key, value: coerceNew(row) })
+    } catch (e) {
+      addError.value = '第 ' + (i + 1) + ' 项（' + key + '）：' + (e instanceof Error ? e.message : '值格式不对')
+      return
+    }
   }
+
   adding.value = true
+  let saved = 0
   try {
-    const res = await settingsApi.add(section, key, value)
-    toast.ok('已新增 ' + (res.path ?? section + '.' + key) + (res.backup ? '，旧文件已备份' : ''))
+    let backup = ''
+    for (const item of items) {
+      const res = await settingsApi.add(section, item.key, item.value)
+      saved++
+      if (res.backup) backup = res.backup
+    }
+    toast.ok('已新增 ' + saved + ' 个配置项（' + section + '）' + (backup ? '，旧文件已备份' : ''))
     addOpen.value = false
     await load()
   } catch (e) {
-    addError.value = e instanceof Error ? e.message : '保存失败'
+    const failed = items[saved]
+    addError.value = '第 ' + (saved + 1) + ' 项' + (failed ? '（' + failed.key + '）' : '') + '保存失败：'
+      + (e instanceof Error ? e.message : '未知错误')
+      + (saved > 0 ? '；前 ' + saved + ' 项已保存' : '')
+    if (saved > 0) await load()
   } finally {
     adding.value = false
   }
@@ -500,18 +528,26 @@ const warnings = computed(() => data.value?.warnings ?? [])
         <UiFormItem label="小节">
           <UiInput v-model="addSection" class="mono" placeholder="例如 plugin.hello（不存在会自动创建）" />
         </UiFormItem>
-        <UiFormItem label="键名">
-          <UiInput v-model="addKey" class="mono" placeholder="例如 theme" />
-        </UiFormItem>
-        <UiFormItem label="类型">
-          <UiSelect v-model="addType" :options="typeOptions" />
-        </UiFormItem>
-        <UiFormItem label="值">
-          <UiInput v-model="addValue" class="mono" placeholder="例如 dark" @enter="saveAdd" />
+        <UiFormItem label="配置项（可一次加多个）">
+          <div class="add-rows">
+            <div v-for="(row, index) in addRows" :key="index" class="add-row">
+              <UiInput v-model="row.key" class="mono add-key" placeholder="键名，例如 theme" />
+              <UiSelect v-model="row.type" :options="typeOptions" class="add-type" />
+              <UiInput
+                v-model="row.value"
+                class="mono add-value"
+                placeholder="值，例如 dark"
+                @enter="saveAdd"
+              />
+              <UiButton size="small" type="text" class="danger-text" @click="removeAddRow(index)">移除</UiButton>
+            </div>
+            <UiButton size="small" @click="appendRow">+ 再加一项</UiButton>
+          </div>
         </UiFormItem>
       </UiForm>
-      <div class="field-hint mono" v-if="addSection && addKey">
-        将写入：{{ addSection.replace(/^\[|\]$/g, '') }}.{{ addKey }}
+      <div class="field-hint mono" v-if="addSection && addRows.length">
+        将写入 {{ addSection.replace(/^\[|\]$/g, '') }} 下的 {{ addRows.length }} 项：
+        {{ addRows.map((r) => r.key.trim()).filter(Boolean).join('、') || '（待填写键名）' }}
       </div>
       <div v-if="addError" class="form-error">{{ addError }}</div>
       <div class="field-hint">
@@ -555,6 +591,16 @@ h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 .row { display: flex; align-items: center; }
 .right { justify-content: flex-end; }
 .gap-8 { gap: 8px; }
+.add-rows { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.add-row { display: flex; align-items: center; gap: 6px; }
+.add-key { flex: 0 0 128px; }
+.add-type { flex: 0 0 108px; }
+.add-value { flex: 1; min-width: 0; }
+@media (max-width: 560px) {
+  .add-row { flex-wrap: wrap; }
+  .add-key, .add-type { flex: 1 1 calc(50% - 3px); }
+  .add-value { flex: 1 1 100%; }
+}
 .form-error {
   margin-top: 10px; padding: 7px 10px; border-radius: var(--radius-sm);
   border: 1px solid var(--danger, #d33); color: var(--danger, #d33);

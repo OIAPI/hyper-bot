@@ -253,6 +253,14 @@ readv() failed / 403。分片大小 512 KB，断点数据在 runtime/update/chun
 永不覆盖：runtime/、vendor/、.git/、node_modules/、Config.ini、.env。
 旧文件先备份到 runtime/update/backup-<时间>/。
 
+**本地修改保护**：升级不会无脑覆盖本地改过的文件。
+
+- Git 更新会先看 `git status`，工作区里改过的文件跳过；
+- 每次更新记录上游文件哈希（`runtime/update/upstream.json`），下次本地与上次上游不一致就跳过；
+- 也可显式指定：`Config.ini [update] preserve = app/Plugins/Group.php`，或写
+  `runtime/update/preserve.txt`，一行一个路径/glob；
+- 跳过时更新结果会列出「已保留」的文件并提示手动合并；被覆盖的旧文件仍在备份目录。
+
 国内拉 GitHub 慢可以用加速前缀（面板下拉，或手动拼）：
 https://gh-proxy.com/https://github.com/user/repo.git
 

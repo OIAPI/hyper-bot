@@ -493,9 +493,13 @@ final class UpdateService
         $backup = self::path('backup-' . date('YmdHis'));
         $changed = 0;
         $skipped = 0;
+        $preserved = [];
         $warnings = [];
         $composerChanged = false;
         $files = [];
+        $upstream = self::loadUpstreamManifest();
+        $gitChanges = self::gitLocalChanges();
+        $preservePatterns = self::preservePatterns();
 
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveDirectoryIterator($src, \FilesystemIterator::SKIP_DOTS),
@@ -515,7 +519,15 @@ final class UpdateService
                 continue;
             }
             $target = $root . '/' . $rel;
-            if (is_file($target) && md5_file($target) === md5_file($item->getPathname())) {
+            $sourceMd5 = md5_file($item->getPathname());
+            if (is_file($target) && md5_file($target) === $sourceMd5) {
+                continue;
+            }
+            // 保留本地改过的文件：显式 preserve 规则 / git 工作区改动 / 上次上游哈希不一致
+            if (is_file($target) && self::shouldPreserve($rel, $target, $upstream, $gitChanges, $preservePatterns)) {
+                $preserved[] = $rel;
+                $upstream[$rel] = $sourceMd5;
+                $skipped++;
                 continue;
             }
             // 覆盖前备份旧文件
@@ -538,11 +550,19 @@ final class UpdateService
             }
             $changed++;
             $files[] = $rel;
+            $upstream[$rel] = (string)($sourceMd5 ?: md5_file($item->getPathname()));
             if ($rel === 'composer.json') {
                 $composerChanged = true;
             }
         }
 
+        self::saveUpstreamManifest($upstream);
+        if ($preserved !== []) {
+            $warnings[] = '以下文件本地有修改，已保留不覆盖（共 ' . count($preserved) . ' 个）：'
+                . implode('、', array_slice($preserved, 0, 20))
+                . (count($preserved) > 20 ? ' …' : '')
+                . '。如需上游版本，请先备份并在本地合并。';
+        }
         if ($composerChanged) {
             $warnings[] = 'composer.json 已更新：依赖可能有变化，建议执行 php bin/hyper install --force';
         }
@@ -558,27 +578,33 @@ final class UpdateService
 
         if ($changed === 0) {
             @rmdir($backup);
-            return ['ok' => true, 'changed' => 0, 'skipped' => $skipped, 'backup' => '', 'warnings' => $warnings, 'version' => self::version(), 'msg' => '已经是最新，没有文件需要更新'];
+            $msg = $preserved !== []
+                ? '已保留 ' . count($preserved) . ' 个本地修改文件，其余已是最新'
+                : '已经是最新，没有文件需要更新';
+            return ['ok' => true, 'changed' => 0, 'skipped' => $skipped, 'preserved' => count($preserved), 'backup' => '', 'warnings' => $warnings, 'version' => self::version(), 'msg' => $msg];
         }
 
         $record = [
             'at'       => date('c'),
             'source'   => $source,
             'changed'  => $changed,
+            'preserved' => count($preserved),
             'backup'   => is_dir($backup) ? $backup : '',
             'version'  => self::version(),
             'files'    => array_slice($files, 0, 200),
+            'preserved_files' => array_slice($preserved, 0, 200),
         ];
         \Core\Fs::write(self::path('last.json'), (string)json_encode($record, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
 
         return [
             'ok'       => true,
             'changed'  => $changed,
+            'preserved' => count($preserved),
             'skipped'  => $skipped,
             'backup'   => $record['backup'],
             'warnings' => $warnings,
             'version'  => self::version(),
-            'msg'      => '已更新 ' . $changed . ' 个文件，版本 ' . self::version(),
+            'msg'      => '已更新 ' . $changed . ' 个文件' . ($preserved !== [] ? '，保留 ' . count($preserved) . ' 个本地修改' : '') . '，版本 ' . self::version(),
         ];
     }
 
@@ -590,6 +616,106 @@ final class UpdateService
         }
         $decoded = json_decode((string)@file_get_contents($file), true);
         return is_array($decoded) ? $decoded : null;
+    }
+
+    /** 上次更新写入的上游文件哈希：rel => md5 */
+    private static function loadUpstreamManifest(): array
+    {
+        $file = self::path('upstream.json');
+        if (!is_file($file)) {
+            return [];
+        }
+        $data = json_decode((string)@file_get_contents($file), true);
+        if (!is_array($data)) {
+            return [];
+        }
+        $out = [];
+        foreach ($data as $path => $hash) {
+            if (is_string($path) && is_string($hash) && $hash !== '') {
+                $out[$path] = $hash;
+            }
+        }
+        return $out;
+    }
+
+    private static function saveUpstreamManifest(array $data): void
+    {
+        if ($data === []) {
+            return;
+        }
+        \Core\Fs::write(self::path('upstream.json'), (string)json_encode($data, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+    }
+
+    /** git 工作区本地修改（未提交）；没有 .git 或 git 不可用时返回空 */
+    private static function gitLocalChanges(): array
+    {
+        if (!is_dir(self::root() . '/.git')) {
+            return [];
+        }
+        $status = self::git('status --porcelain --untracked-files=no');
+        if ($status === null) {
+            return [];
+        }
+        $out = [];
+        foreach (preg_split('/\R/', $status) ?: [] as $line) {
+            if (strlen($line) < 4) {
+                continue;
+            }
+            $code = substr($line, 0, 2);
+            if (str_contains($code, 'D')) {
+                continue;
+            }
+            $path = trim(substr($line, 3));
+            if (str_contains($path, ' -> ')) {
+                $path = trim(substr($path, strrpos($path, ' -> ') + 4));
+            }
+            $path = trim($path, '"');
+            if ($path !== '') {
+                $out[$path] = true;
+            }
+        }
+        return $out;
+    }
+
+    /** 显式保留规则：Config update.preserve + runtime/update/preserve.txt */
+    private static function preservePatterns(): array
+    {
+        $patterns = [];
+        $config = (string)\Core\Config::string('update.preserve', '');
+        if ($config !== '') {
+            $patterns = array_merge($patterns, preg_split('/[,;\n]+/', $config) ?: []);
+        }
+        $file = self::path('preserve.txt');
+        if (is_file($file)) {
+            foreach (preg_split('/\R/', (string)@file_get_contents($file)) ?: [] as $line) {
+                $line = trim($line);
+                if ($line === '' || str_starts_with($line, '#')) {
+                    continue;
+                }
+                $patterns[] = $line;
+            }
+        }
+        return array_values(array_unique(array_filter(array_map(static fn($v) => ltrim(trim($v), '/'), $patterns))));
+    }
+
+    private static function shouldPreserve(string $rel, string $target, array $upstream, array $gitChanges, array $patterns): bool
+    {
+        foreach ($patterns as $pattern) {
+            if (fnmatch($pattern, $rel, FNM_PATHNAME) || fnmatch($pattern, $rel)) {
+                return true;
+            }
+        }
+        if (isset($gitChanges[$rel])) {
+            return true;
+        }
+        $baseline = (string)($upstream[$rel] ?? '');
+        if ($baseline !== '') {
+            $local = @md5_file($target);
+            if ($local !== false && $local !== $baseline) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function isProtected(string $rel): bool

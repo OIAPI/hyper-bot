@@ -576,6 +576,7 @@ export interface UpdateResult {
   ok: boolean
   changed: number
   skipped?: number
+  preserved?: number
   backup?: string
   warnings?: string[]
   version?: string

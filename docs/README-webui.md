@@ -837,6 +837,14 @@ git branch --set-upstream-to=origin/main main
 **永远不会被覆盖**：`runtime/`、`vendor/`、`.git/`、`node_modules/`、`Config.ini`、`.env`。
 被覆盖的旧文件先备份到 `runtime/update/backup-<时间>/`，更新记录写在 `runtime/update/last.json`，面板上能看到上次更新了多少文件、备份在哪。
 
+**本地修改保护**：
+
+- Git 更新会先跑 `git status`，工作区里改过的文件跳过覆盖；
+- 每次更新记录上游哈希 `runtime/update/upstream.json`，后面本地与上游不一致会自动跳过；
+- 显式保留：`Config.ini [update] preserve = app/Plugins/Group.php`，或
+  `runtime/update/preserve.txt` 一行一个路径/glob；
+- 面板会提示「已保留 N 个本地修改文件」，需要上游新功能时先备份再手动合并。
+
 - 只允许**主人**执行（更新会覆盖鉴权与写接口代码）
 - `composer.json` 有变化时会提示执行 `php bin/hyper install --force`
 - 前端有变化时会提示强刷浏览器（旧 index.html 引用已删除的 chunk 会白屏）

@@ -484,7 +484,7 @@ onUnmounted(stopPoll)
           <template v-if="job.age"> · 已跑 {{ job.age }} 秒</template>
         </div>
         <div v-if="job.result" class="tiny">
-          版本 {{ job.result.version || '—' }} · 变更 {{ job.result.changed }} 个文件 · 跳过 {{ job.result.skipped ?? 0 }} 个受保护路径
+          版本 {{ job.result.version || '—' }} · 变更 {{ job.result.changed }} 个文件 · 跳过 {{ job.result.skipped ?? 0 }} 个受保护路径 · 保留 {{ job.result.preserved ?? 0 }} 个本地修改
         </div>
         <div v-if="job.result?.backup" class="tiny mono">备份：{{ job.result.backup }}</div>
         <ul v-if="job.result?.warnings?.length" class="warns">

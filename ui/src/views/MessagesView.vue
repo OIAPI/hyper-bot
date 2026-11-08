@@ -18,6 +18,7 @@ const loading = ref(true)
 const dates = ref<string[]>([])
 const selectedDate = ref('')
 const keyword = ref('')
+const hint = ref('')
 
 const cols: UiColumn[] = [
   { key: 'time', title: '时间', width: 176 },
@@ -35,6 +36,7 @@ async function load(): Promise<void> {
   try {
     const res = await logApi.messages(selectedDate.value || undefined)
     items.value = res.items ?? []
+    hint.value = res.hint ?? ''
     // 后端对「最近」会返回实际日期，顺手把下拉对齐，避免用户以为筛的是今天
     if (!selectedDate.value && res.date) {
       selectedDate.value = res.date
@@ -124,7 +126,7 @@ function source(m: MessageRecord): string {
           <span class="cell-msg">{{ row.raw_message || '—' }}</span>
         </template>
         <template #empty>
-          <UiEmpty description="暂无消息记录" />
+          <UiEmpty :description="hint || '暂无消息记录'" />
         </template>
       </UiTable>
     </UiCard>

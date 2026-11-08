@@ -91,7 +91,10 @@ final class LogsController extends Base {
             return $this->fail('日期格式应为 YYYY-MM-DD 或 YYYYMMDD', -1, 400);
         }
         [$y, $m, $d] = explode('-', $day);
-        $dir = $this->root . '/runtime/message/' . $y . '/' . $m . '/' . $d;
+        // 用 MessageLog 的实际目录，而不是硬编码 runtime/message：
+        // 部分部署会通过环境/常量覆盖日志目录。
+        $rootDir = \Utils\MessageLog::dir();
+        $dir = $rootDir . '/' . $y . '/' . $m . '/' . $d;
 
         $items = [];
         // 同一天可能有 message / notice / request 多个分类文件，文件名大小写历史上也不统一
@@ -109,16 +112,21 @@ final class LogsController extends Base {
         usort($items, static fn(array $a, array $b): int => strcmp((string)($b['log_time'] ?? ''), (string)($a['log_time'] ?? '')));
 
         return $this->ok([
-            'date'  => $day,
-            'items' => array_slice($items, 0, $limit),
-            'total' => count($items),
-            'dates' => $available,
+            'date'   => $day,
+            'items'  => array_slice($items, 0, $limit),
+            'total'  => count($items),
+            'dates'  => $available,
+            'dir'    => $dir,
+            'exists' => is_dir($dir),
+            'hint'   => $items === [] ? ($available === []
+                ? '还没有消息日志：确认机器人有收到消息，且 runtime/message 可写'
+                : '所选日期没有消息，可切换其它日期') : '',
         ]);
     }
 
     /** 有消息日志的日期（倒序） */
     private function messageDays(int $limit = 60): array {
-        $root = $this->root . '/runtime/message';
+        $root = \Utils\MessageLog::dir();
         $days = [];
         foreach (glob($root . '/*/*/*', GLOB_ONLYDIR) ?: [] as $dir) {
             $parts = explode('/', $dir);
@@ -127,7 +135,7 @@ final class LogsController extends Base {
                 continue;
             }
             $day = $parts[$n - 3] . '-' . $parts[$n - 2] . '-' . $parts[$n - 1];
-            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $day) && glob($dir . '/*.log')) {
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $day) && (glob($dir . '/*.[lL][oO][gG]') ?: [])) {
                 $days[] = $day;
             }
         }

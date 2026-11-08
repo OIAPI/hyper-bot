@@ -297,7 +297,25 @@ final class App {
             if (@$client->ping() === false) {
                 return null;
             }
-            return new \Core\Store\RedisStore($client);
+            $factory = function () use ($host, $port): \Redis {
+                $c = new \Redis();
+                if (defined('Redis::OPT_READ_TIMEOUT')) {
+                    @$c->setOption(\Redis::OPT_READ_TIMEOUT, 1.0);
+                }
+                if (@$c->connect($host, $port, 0.8) !== true) {
+                    throw new \RuntimeException('Redis 缓存重连失败');
+                }
+                $auth = (string)Config::string('Redis.auth', '');
+                if ($auth !== '') {
+                    @$c->auth($auth);
+                }
+                $select = (int)Config::string('Redis.select', '0');
+                if ($select > 0) {
+                    @$c->select($select);
+                }
+                return $c;
+            };
+            return new \Core\Store\RedisStore($client, $factory);
         } catch (\Throwable $e) {
             \Utils\Logger::warning('[store] Redis 缓存连接失败：' . $e->getMessage());
             return null;
@@ -378,7 +396,25 @@ final class App {
                         }
                     }
                     if ($reason === '') {
-                        return new \Core\Store\ResilientStore(new \Core\Store\RedisStore($client), $fileFallback);
+                        $factory = function () use ($host, $port): \Redis {
+                            $c = new \Redis();
+                            if (defined('Redis::OPT_READ_TIMEOUT')) {
+                                @$c->setOption(\Redis::OPT_READ_TIMEOUT, 1.5);
+                            }
+                            if (@$c->connect($host, $port, 1.0) !== true) {
+                                throw new \RuntimeException('Redis 重连失败：' . $host . ':' . $port);
+                            }
+                            $auth = (string)Config::string('Redis.auth', '');
+                            if ($auth !== '') {
+                                @$c->auth($auth);
+                            }
+                            $select = (int)Config::string('Redis.select', '0');
+                            if ($select > 0) {
+                                @$c->select($select);
+                            }
+                            return $c;
+                        };
+                        return new \Core\Store\ResilientStore(new \Core\Store\RedisStore($client, $factory), $fileFallback);
                     }
                     @$client->close();
                 }

@@ -1,10 +1,10 @@
 # Hyper Bot 交接文档
 
-> 当前开发版本：**3.3.12**（未发布）
-> 最近发布版本：**3.3.11**
+> 当前开发版本：**3.3.13**（未发布）
+> 最近发布版本：**3.3.12**
 > 仓库：`OIAPI/hyper-bot`，分支 `main`
-> 发布 tag：`v3.3.10` → `17f246f`
-> 本地 HEAD：待推送（3.3.12 插件 reload 修复）
+> 发布 tag：`v3.3.12` → `66abc3e`
+> 本地 HEAD：待推送（3.3.13 消息记录/Redis 连接修复）
 > 工作目录：`/storage/emulated/0/model/hyper.lkaa.top`
 > 最后更新：2026-11-08
 
@@ -164,6 +164,12 @@ webui/Metrics.php
 - 修复 3.3.11 的遗漏：启动横幅在 Swoole master 里调用 `registry->plugins()`，
   仍然 class_exists 把插件类加载进 master；Swoole 下横幅不再读取插件数量；
 - 升级到 3.3.12 后仍需完整重启一次，确保新 master 不加载插件类。
+
+### 3.3.13
+
+- WebUI 消息记录：使用 MessageLog 实际目录、兼容大写文件名；审计落库提前到插件过滤前；
+- RedisStore：PID 感知自动重建连接（Swoole worker 不再继承 master socket），
+  异常 / set false 自动重连重试；每进程长连接，不是每请求短连接。
 
 ---
 

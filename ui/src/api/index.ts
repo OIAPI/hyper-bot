@@ -247,7 +247,7 @@ export const logApi = {
   day: (date: string) => http.get<LogTail>('/logs/' + date),
   /** 消息记录：不传日期时后端给「最近有数据的那天」，返回 {date,items,total,dates} */
   messages: (date?: string) =>
-    http.get<{ date: string; items: MessageRecord[]; total: number; dates?: string[] }>('/messages', {
+    http.get<{ date: string; items: MessageRecord[]; total: number; dates?: string[]; hint?: string }>('/messages', {
       query: { date },
     }),
 }

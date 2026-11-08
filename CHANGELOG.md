@@ -1,8 +1,21 @@
 # 更新日志
 
-当前发布版本：**3.3.11**（仓库 VERSION 已到 3.3.12，3.3.12 补插件 reload 遗漏，未出包）。
+当前发布版本：**3.3.12**（仓库 VERSION 已到 3.3.13，3.3.13 修复消息记录/Redis 连接，未出包）。
 
-## 3.3.12（未发布）
+## 3.3.13（未发布）
+
+- WebUI 消息记录：
+  - 读取 `MessageLog::dir()` 实际目录，不再硬编码 runtime/message；
+  - 兼容历史上大写 `Message.log` 文件名；
+  - 审计落库提前到插件过滤之前，被插件丢弃的事件也能查到；
+  - 空列表返回 `hint`，界面提示「没有消息日志/该日期无消息」。
+- Redis 连接：
+  - 新增 PID 感知：Swoole worker fork 后会自动重建连接，不再继承 master 的同一个 socket；
+  - 命令异常 / set 返回 false 时自动重连并重试一次；
+  - Redis 缓存连接也补上重连 factory；
+  - 仍是每进程长连接，不是每请求短连接。
+
+## 3.3.12
 
 - 修复 3.3.11 仍无法 reload 插件代码的遗漏：
   - 启动横幅在 Swoole master 里调用 `registry->plugins()`，仍会 class_exists 把所有插件类加载进 master；

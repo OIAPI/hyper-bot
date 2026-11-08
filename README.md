@@ -264,6 +264,13 @@ readv() failed / 403。分片大小 512 KB，断点数据在 runtime/update/chun
 国内拉 GitHub 慢可以用加速前缀（面板下拉，或手动拼）：
 https://gh-proxy.com/https://github.com/user/repo.git
 
+### 分支策略
+
+- `dev`：日常开发默认分支，普通 push 只推 `dev`；
+- `dev` 的 CI 只编译前端（`.github/workflows/dev.yml`），不打包、不打 tag、不发 Release；
+- `main`：只在确认发布时从 `dev` 合并，再推 `v<版本>` tag；
+- 没有明确发布指令，不要推 `main`。
+
 ### 自动发布（推送版本 tag）
 
 **普通 push 只同步源码，不编译、不打包、不发 Release。**

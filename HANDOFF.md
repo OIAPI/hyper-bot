@@ -10,6 +10,20 @@
 
 ---
 
+## 分支策略
+
+- `main`：只用于发布，不直接开发；
+- `dev`：日常开发默认分支，普通 push 只推 `dev`；
+- 推 `dev` 会触发 `.github/workflows/dev.yml`，**只编译前端，不打包、不打 tag、不发 Release**；
+- 需要发布时，用户明确确认后：
+  1. 确认 `dev` 的 `VERSION` 已改好；
+  2. `git checkout main && git pull && git merge dev`；
+  3. `git push origin main`；
+  4. 推 `v<版本>` tag，触发 release 工作流生成 zip/Release。
+- **没有用户明确同意，不要推 `main`、不要打 tag。**
+
+---
+
 ## 一、接手先做这几件事
 
 1. **完整读一遍 git 日志**，不要只看最近几条：

@@ -1,0 +1,37 @@
+name: dev-build
+
+# dev 分支只做编译验证，不打包、不打 tag、不发 Release。
+# 发布仍然走 release.yml：main + v<版本> tag。
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Compile webUI
+        working-directory: ui
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          test -f ../public/webui/index.html
+          echo "dev 编译通过（不生成发布包）"

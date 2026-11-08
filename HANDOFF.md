@@ -1,9 +1,10 @@
 # Hyper Bot 交接文档
 
-> 当前版本：**3.3.10**（已发布）
+> 当前开发版本：**3.3.11**（未发布）
+> 最近发布版本：**3.3.10**
 > 仓库：`OIAPI/hyper-bot`，分支 `main`
 > 发布 tag：`v3.3.10` → `17f246f`
-> 本地 HEAD：`17f246f`（包含 CI 重新构建的前端产物）
+> 本地 HEAD：待推送（3.3.11 插件 reload 修复）
 > 工作目录：`/storage/emulated/0/model/hyper.lkaa.top`
 > 最后更新：2026-11-08
 
@@ -146,6 +147,17 @@ webui/Metrics.php
   - `runtime/update/upstream.json` 记录上游哈希，本地不一致跳过；
   - 支持 `Config.ini [update] preserve` 和 `runtime/update/preserve.txt`；
   - 面板显示「保留 N 个本地修改」。
+
+### 3.3.11
+
+- 修复插件改代码后 reload/restart 仍加载旧代码：
+  - Swoole master 不再提前加载插件类，插件改为 WorkerStart 内加载；
+  - WorkerStart / reload 前清理插件文件 OPcache；
+  - WebUI「重新加载」在 Swoole 下延迟给 master 发 SIGUSR1 重启 worker；
+  - Sys 插件 reload、控制台 reload/restart 共用 PluginReloader；
+  - PHP/webui 架构每次请求重新加载插件。
+- 注意：从 3.3.10 升级到 3.3.11 后必须**完整重启一次 master**，
+  新逻辑才会生效；之后 reload 即可加载新插件代码。
 
 ---
 

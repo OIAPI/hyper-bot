@@ -42,12 +42,15 @@ final class PluginsController extends Base {
         //   2) v1 遗留的 Redis 注册表键 bot:registry:v2（老版本写过，留着会盖住新扫描结果）。
         \Core\Bot\PluginState::flush();
         $this->store->del('bot:registry:v2');
-        \Core\App::boot()->container->get(Registry::class)->invalidate();
+
+        // 清 OPcache + 注册表缓存；Swoole 下调度 Worker 重启，PHP 架构直接重扫。
+        $workerReload = \Core\Bot\PluginReloader::reload();
         $items = $this->metrics->plugins()['items'];
 
-        // 群级开关不再需要往 Redis worker 表里补键：
-        // Help/Sys 已改为以注册表（文件扫描）列表为准，worker 只保存「本群关掉了哪些」。
-        return $this->ok(['items' => $items, 'total' => count($items)], '已重新扫描');
+        return $this->ok(
+            ['items' => $items, 'total' => count($items), 'worker_reload' => $workerReload],
+            $workerReload ? '已重新扫描，Worker 正在重载（插件代码重载后生效）' : '已重新扫描'
+        );
     }
 
     /** 全局启用 / 停用某个插件（停用后重载注册表，钩子不再参与分发） */
@@ -226,6 +229,7 @@ final class PluginsController extends Base {
         ];
         return $this->ok($payload, $source === 'zip' ? '已安装 ' . $payload['name'] : '已拉取 ' . $payload['name']);
     }
+
 
     /** 用类文件真实路径匹配，比猜类名可靠（插件的 @name 和目录名经常不一致） */
     private function findPluginByPath(string $path): ?array {

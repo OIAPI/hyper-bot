@@ -3,7 +3,6 @@ namespace App\Plugins;
 
 use Utils\Logger;
 use Utils\Utils;
-use Utils\Cache;
 use App\BaseApp;
 use Controller\Attr\Rule;
 
@@ -22,20 +21,18 @@ class sys extends BaseApp {
 		// 计时用 microtime：v1 的 cache::get('request_time') 在 v2 已经没人写，
 		// 取到 null 会让「耗时」变成 unix 时间戳（1793817313.15 秒就是这么来的）。
 		$start = microtime(true);
-		$http = cache::$http;
 		$message = $this->api->message;
 
-		// 和面板的「重新加载」做同一件事：清全局开关缓存 + 让注册表重扫。
-		// 以前群里 reload 只调 $http->reload()，不重扫，所以新装的插件要等
-		// 后台点一次「重新加载」才看得到。
+		// 和面板「重新加载」共用同一套逻辑：清 OPcache / 注册表，
+		// Swoole 下延迟重启 worker，PHP 架构直接重扫。
 		$registry = null;
 		try {
 			$registry = \Core\App::boot()->container->get(\Core\Bot\Registry::class);
 			\Core\Bot\PluginState::flush();
-			$registry->invalidate();
-			$registry->load(true);
+			$workerReload = \Core\Bot\PluginReloader::reload();
 		} catch (\Throwable $e) {
 			Logger::debug('reload 重扫注册表失败：' . $e->getMessage());
+			$workerReload = false;
 		}
 
 		$count = 0;
@@ -46,16 +43,9 @@ class sys extends BaseApp {
 				$count = 0;
 			}
 		}
-
-		// Cache::$http 只在 Swoole 的 HttpServer 里赋值。PHP 内置服务器没有常驻
-		// worker（每请求重新加载），重扫这一步已经足够。
-		$restarted = false;
-		if (is_object($http) && method_exists($http, 'reload')) {
-			$restarted = (bool)$http->reload();
-		}
 		$elapsed = round(microtime(true) - $start, 3);
 
-		if ($restarted) {
+		if ($workerReload) {
 			Logger::Warning('重启成功！');
 			$this->initGroupInfoIfNeed();
 			return $message->sendMsg(group: $this->group, message: '重载成功：已重扫 ' . $count . ' 个插件，耗时 ' . $elapsed . ' 秒；worker 正在重启，稍后新插件/开关即生效。');

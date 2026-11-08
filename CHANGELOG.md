@@ -1,8 +1,22 @@
 # 更新日志
 
-当前发布版本：**3.3.8**（仓库 VERSION 已到 3.3.9，3.3.9 只改发布流程，未出包）。
+当前发布版本：**3.3.10**（仓库 VERSION 已到 3.3.11，3.3.11 修复插件 reload，未出包）。
 
-## 3.3.9（未发布）
+## 3.3.11（未发布）
+
+- 修复插件改代码后 reload/restart 仍加载旧代码：
+  - Swoole master 不再提前加载插件类，插件改为 WorkerStart 内加载；
+  - WorkerStart / reload 前清理插件文件 OPcache；
+  - WebUI「重新加载」在 Swoole 下会延迟给 master 发 SIGUSR1 重启 worker；
+  - Sys 插件 reload、控制台 reload/restart 共用 PluginReloader，走同一套清缓存和重启逻辑；
+  - PHP/webui 架构每次请求重新加载插件。
+
+## 3.3.10
+
+- WebUI 升级保留本地修改：Git 工作区改动、upstream.json 哈希、preserve 规则；
+- 面板显示「保留 N 个本地修改」，被覆盖旧文件仍备份。
+
+## 3.3.9
 
 - 发布流程改为 tag 自动触发：普通 push 只同步源码，不构建、不打包、不发 Release；
 - 需要 build 包时推送 v<版本> tag，工作流自动校验 VERSION、构建、打包并创建 Release；

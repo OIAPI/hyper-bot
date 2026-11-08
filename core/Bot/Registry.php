@@ -101,6 +101,9 @@ final class Registry
             }
         }
 
+        // 插件用 @subscribe 声明的事件类型并入可订阅目录（面板上就能勾到）
+        \Core\Bot\SubscriptionCatalog::absorb($this->plugins);
+
         $this->logger->debug('plugin registry loaded', [
             'plugins'  => count($this->plugins),
             'hooks'    => array_sum(array_map('count', $this->hooks)),
@@ -310,5 +313,36 @@ final class Registry
     public function invalidate(): void
     {
         $this->loaded = false;
+    }
+
+    /**
+     * 清掉所有插件文件的 OPcache。
+     *
+     * 生产环境常把 opcache.validate_timestamps 设为 0；只重启 Swoole worker
+     * 仍可能命中旧字节码。改插件代码 / reload 前必须 invalidate 对应文件。
+     */
+    public function flushOpcache(): void
+    {
+        if (!function_exists('opcache_invalidate')) {
+            return;
+        }
+        foreach (array_values($this->sources) as $dir) {
+            if (!is_dir($dir)) {
+                continue;
+            }
+            try {
+                $it = new \RecursiveIteratorIterator(
+                    new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)
+                );
+                foreach ($it as $file) {
+                    if (!$file->isFile() || strtolower($file->getExtension()) !== 'php') {
+                        continue;
+                    }
+                    @opcache_invalidate($file->getPathname(), true);
+                }
+            } catch (\Throwable $e) {
+                $this->logger->warning('[plugin] 清理 OPcache 失败：' . $e->getMessage());
+            }
+        }
     }
 }

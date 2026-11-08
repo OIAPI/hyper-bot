@@ -64,9 +64,10 @@ final class App {
         $this->runtime = \Core\Runtime::fromConfig();
         $this->subscription = \Core\Bot\Subscription::fromConfig();
         $this->registry = new \Core\Bot\Registry($this->logger, $this->buildPluginSources(), $this->buildPluginRoots());
-        // 插件用 @subscribe 声明的事件类型并入可订阅目录（面板上就能勾到）
-        $this->registry->load();
-        \Core\Bot\SubscriptionCatalog::absorb($this->registry->plugins());
+        // 注意：这里故意不 load()。
+        // Swoole master 在 fork worker 之前就构造 App；如果 master 先加载插件类，
+        // 之后 reload worker 也只是 fork 同一份 master 内存，插件代码永远是旧的。
+        // 插件加载推迟到 worker 启动（App::loadPlugins）或 PHP 架构首次请求。
         $this->dispatcher = new \Core\Bot\Dispatcher(
             $this->registry,
             $this->subscription,
@@ -204,6 +205,17 @@ final class App {
 
         // 角色 -> 等级由 MemberRoles 统一维护（v1 的 supervisor/director/manager 自动映射）
         return \Core\Bot\MemberRoles::level($role);
+    }
+
+    /** 在当前进程加载插件（Swoole 必须在 WorkerStart 里调用，不能在 master 调） */
+    public function loadPlugins(bool $force = false): void {
+        $this->registry->load($force);
+    }
+
+    /** 丢弃注册表并清掉插件文件的 OPcache（改代码后调用；Swoole 还需重启 Worker） */
+    public function invalidatePluginCode(): void {
+        $this->registry->flushOpcache();
+        $this->registry->invalidate();
     }
 
     public function withLogger(Logger $logger): self {

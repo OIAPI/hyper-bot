@@ -46,6 +46,16 @@ final class Bootstrap
         // 2. 内核启动（配置 / 日志 / 存储 / 路由 / Bot 服务）
         $app = App::boot();
 
+        // Swoole master 不能加载插件类（否则 worker reload 会继承旧类）；
+        // PHP / webui 每次请求是独立进程，直接在这里加载最新代码。
+        if ($app->runtime->mode !== Runtime::SWOOLE) {
+            $app->invalidatePluginCode();
+            $app->loadPlugins();
+        } else {
+            // master 不加载插件类，但可以先清 OPcache；worker fork 后读到的就是新字节码。
+            $app->invalidatePluginCode();
+        }
+
         // 3. 运行时约束：PHP 模式下不支持的配置项要显式告警，而不是静默忽略
         self::validateRuntimeLimits($app);
 

@@ -235,6 +235,7 @@ class HttpServer {
 			},
 			function (): void {
 				Logger::warning('终端命令执行 | reload（重载 Worker 进程）');
+				\Core\App::boot()->invalidatePluginCode();
 				$this->server?->reload();
 			},
 		);
@@ -452,6 +453,7 @@ class HttpServer {
 				echo shell_exec('clear');
 				Logger::warning("终端命令执行 | restart（重启Worker进程）");
 				// System::exec("kill -USR1 " . constant(self::MASTER_PID_KEY));
+				\Core\App::boot()->invalidatePluginCode();
 				$this->server->reload();
 				
 				Logger::warning("Worker进程重启完成");
@@ -599,7 +601,17 @@ HELP;
 			});
 		}
 		Timer::clearAll();
-		
+
+		// 插件必须在 Worker 里加载，且每次 WorkerStart 都清一遍 OPcache：
+		// Swoole reload 会 fork 新 worker，但 master 里加载过的类 / 旧字节码不会自动消失。
+		try {
+			$pluginApp = \Core\App::boot();
+			$pluginApp->invalidatePluginCode();
+			$pluginApp->loadPlugins();
+		} catch (\Throwable $e) {
+			Logger::error('[plugin] Worker 加载失败：' . $e->getMessage());
+		}
+
 		$this->registerErrorHandler();
 		Logger::debug("Worker进程启动 | ID: {$workerId} | PID: {$server->worker_pid}");
 		$workerNum = $server->setting['worker_num'];

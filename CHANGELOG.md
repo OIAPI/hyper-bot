@@ -1,8 +1,15 @@
 # 更新日志
 
-当前发布版本：**3.3.10**（仓库 VERSION 已到 3.3.11，3.3.11 修复插件 reload，未出包）。
+当前发布版本：**3.3.11**（仓库 VERSION 已到 3.3.12，3.3.12 补插件 reload 遗漏，未出包）。
 
-## 3.3.11（未发布）
+## 3.3.12（未发布）
+
+- 修复 3.3.11 仍无法 reload 插件代码的遗漏：
+  - 启动横幅在 Swoole master 里调用 `registry->plugins()`，仍会 class_exists 把所有插件类加载进 master；
+  - Swoole 下横幅不再读取插件数量，改为「Worker 启动时加载」；
+  - master 保持不加载插件类，reload worker 才能 fork 出最新代码。
+
+## 3.3.11
 
 - 修复插件改代码后 reload/restart 仍加载旧代码：
   - Swoole master 不再提前加载插件类，插件改为 WorkerStart 内加载；

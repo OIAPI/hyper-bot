@@ -247,7 +247,11 @@ final class Bootstrap
             "运行架构  {$runtime->describe()}",
             "存储      " . basename(str_replace('\\', '/', get_class($app->store))),
             "订阅      " . self::describeSubscription($app->subscription),
-            "插件      " . count($app->registry->plugins()) . ' 个',
+            // Swoole master 里绝不能碰 registry->plugins()：那会 class_exists 加载插件类，
+            // 之后 reload worker 从 master fork，代码永远是旧的。
+            $runtime->mode === Runtime::SWOOLE
+                ? '插件      Worker 启动时加载'
+                : "插件      " . count($app->registry->plugins()) . ' 个',
             "配置      " . Config::path(),
         ];
         // 首启随机密码只写在这个文件里，横幅里提一句，省得用户对着登录页发懵

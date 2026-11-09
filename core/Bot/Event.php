@@ -10,7 +10,7 @@ namespace Core\Bot;
  * v1 里事件就是一个裸 \stdClass，散落在 Cache::get('param') 里，字段靠 ?? 兜底。
  * 这里收敛成显式访问器：拼错字段名会立刻暴露，而不是静默拿到 null。
  */
-final class Event
+final class Event implements \JsonSerializable
 {
     /** @param array<string,mixed> $data 标准 OneBot11 事件（已补齐公共字段） */
     public function __construct(public readonly array $data) {}
@@ -29,6 +29,49 @@ final class Event
     public function toArray(): array
     {
         return $this->data;
+    }
+
+    /**
+     * 兼容 v1 插件：$this->input->message[0]->type / ->data->id。
+     *
+     * v2 内部 Event 用数组存取，但大量老插件按 stdClass 访问；
+     * 这里把数组递归转成对象（列表保持数组），缺失字段返回 null 而不是报
+     * "Undefined property: Core\Bot\Event::$message"。
+     */
+    public function __get(string $name): mixed
+    {
+        return self::objectify($this->data[$name] ?? null);
+    }
+
+    public function __isset(string $name): bool
+    {
+        return array_key_exists($name, $this->data);
+    }
+
+    /** v1 插件常把 input 直接 json_encode / print_r 调试 */
+    public function jsonSerialize(): array
+    {
+        return $this->data;
+    }
+
+    public function __debugInfo(): array
+    {
+        return $this->data;
+    }
+
+    private static function objectify(mixed $value): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        if (array_is_list($value)) {
+            return array_map(static fn($item) => self::objectify($item), $value);
+        }
+        $object = new \stdClass();
+        foreach ($value as $key => $item) {
+            $object->{$key} = self::objectify($item);
+        }
+        return $object;
     }
 
     /** 读取任意字段（不存在返回默认值） */

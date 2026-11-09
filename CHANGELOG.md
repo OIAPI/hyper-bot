@@ -1,8 +1,18 @@
 # 更新日志
 
-当前发布版本：**3.3.12**（仓库 VERSION 已到 3.3.13，3.3.13 修复消息记录/Redis 连接，未出包）。
+当前发布版本：**3.3.12**（仓库 VERSION 已到 3.3.14，3.3.14 修复 v1 插件 Event 字段访问，未出包）。
 
-## 3.3.13（未发布）
+## 3.3.14（未发布）
+
+- 修复 v1 插件访问 `$this->input->message[0]->type` / `->data->id` 时
+  `Undefined property: Core\Bot\Event::$message`：
+  - Event 增加 `__get` / `__isset`，数组递归转 stdClass，列表保持数组；
+  - 缺失字段返回 null，不再触发未定义属性告警；
+  - `toArray()` / 类型化访问器保持原样；
+  - 实现 JsonSerializable / __debugInfo，json_encode(input) 返回事件字段。
+- 新增 event_input_test 8 项。
+
+## 3.3.13
 
 - WebUI 消息记录：
   - 读取 `MessageLog::dir()` 实际目录，不再硬编码 runtime/message；

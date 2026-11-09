@@ -1,10 +1,10 @@
 # Hyper Bot 交接文档
 
-> 当前开发版本：**3.3.13**（未发布）
+> 当前开发版本：**3.3.14**（未发布）
 > 最近发布版本：**3.3.12**
-> 仓库：`OIAPI/hyper-bot`，分支 `main`
+> 仓库：`OIAPI/hyper-bot`，日常分支 `dev`，发布分支 `main`
 > 发布 tag：`v3.3.12` → `66abc3e`
-> 本地 HEAD：待推送（3.3.13 消息记录/Redis 连接修复）
+> 本地 HEAD：dev 待推送（3.3.14 Event v1 兼容）
 > 工作目录：`/storage/emulated/0/model/hyper.lkaa.top`
 > 最后更新：2026-11-08
 
@@ -184,6 +184,14 @@ webui/Metrics.php
 - WebUI 消息记录：使用 MessageLog 实际目录、兼容大写文件名；审计落库提前到插件过滤前；
 - RedisStore：PID 感知自动重建连接（Swoole worker 不再继承 master socket），
   异常 / set false 自动重连重试；每进程长连接，不是每请求短连接。
+
+### 3.3.14
+
+- Event 增加 `__get` / `__isset`：兼容 v1 插件的 `$this->input->message[0]->type`
+  和 `->data->id`，数组递归转 stdClass，缺失字段返回 null，不再报
+  `Undefined property: Core\Bot\Event::$message`；
+- 实现 JsonSerializable / __debugInfo，json_encode(input) 返回事件字段；
+- 新增 event_input_test 8 项。
 
 ---
 

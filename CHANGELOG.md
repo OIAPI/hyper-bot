@@ -1,8 +1,19 @@
 # 更新日志
 
-当前发布版本：**3.3.12**（仓库 VERSION 已到 3.3.14，3.3.14 修复 v1 插件 Event 字段访问，未出包）。
+当前发布版本：**3.3.14**（仓库 VERSION 已到 3.3.15，3.3.15 修复 PDO 存储兼容，未出包）。
 
-## 3.3.14（未发布）
+## 3.3.15（未发布）
+
+- 修复 PdoStore 在部分 PDO/MySQL 配置下的错误：
+  - 强制 `PDO::ATTR_DEFAULT_FETCH_MODE = FETCH_ASSOC`，不再出现
+    `Undefined array key "k" / "v" / "expires_at"`；
+  - MySQL 连接强制开启 `MYSQL_ATTR_USE_BUFFERED_QUERY`；
+  - get/zcard 取一行后 closeCursor，zrange/keys/ztrim 显式 fetchAll，
+    避免 2014 "Cannot execute queries while other unbuffered queries are active"；
+- PdoStore 增加 PID 感知，Swoole worker fork 后自动重连并补建表；
+- pdo_store_test 增加直接 new PDO / PID 重连用例（共 20 项）。
+
+## 3.3.14
 
 - 修复 v1 插件访问 `$this->input->message[0]->type` / `->data->id` 时
   `Undefined property: Core\Bot\Event::$message`：

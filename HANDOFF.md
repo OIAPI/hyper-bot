@@ -1,10 +1,10 @@
 # Hyper Bot 交接文档
 
-> 当前开发版本：**3.3.14**（未发布）
-> 最近发布版本：**3.3.12**
+> 当前开发版本：**3.3.15**（未发布）
+> 最近发布版本：**3.3.14**
 > 仓库：`OIAPI/hyper-bot`，日常分支 `dev`，发布分支 `main`
-> 发布 tag：`v3.3.12` → `66abc3e`
-> 本地 HEAD：dev 待推送（3.3.14 Event v1 兼容）
+> 发布 tag：`v3.3.14` → `b598604`
+> 本地 HEAD：dev 待推送（3.3.15 PDO 兼容修复）
 > 工作目录：`/storage/emulated/0/model/hyper.lkaa.top`
 > 最后更新：2026-11-08
 
@@ -192,6 +192,15 @@ webui/Metrics.php
   `Undefined property: Core\Bot\Event::$message`；
 - 实现 JsonSerializable / __debugInfo，json_encode(input) 返回事件字段；
 - 新增 event_input_test 8 项。
+
+### 3.3.15
+
+- PdoStore 强制 FETCH_ASSOC，修复 Undefined array key "k" / "v" / "expires_at"；
+- MySQL 强制 MYSQL_ATTR_USE_BUFFERED_QUERY；
+- get/zcard 单行查询 closeCursor，zrange/keys/ztrim 显式 fetchAll，
+  修复 2014 unbuffered queries active；
+- PdoStore 增加 PID 感知，worker fork 后自动重连并补建表；
+- pdo_store_test 增加到 20 项。
 
 ---
 

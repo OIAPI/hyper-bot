@@ -28,6 +28,27 @@ $check('zcard', $store->zcard('z') === 2);
 $check('ztrim', $store->ztrim('z', 1) === 1 && $store->zcard('z') === 1);
 $check('zrem', $store->zrem('z', 'b') === 1);
 
+// 直接 new PDO + new PdoStore：不依赖 fromDsn 的默认 FETCH_ASSOC
+$file2 = sys_get_temp_dir() . '/hyper-pdo-direct-' . getmypid() . '.sqlite';
+@unlink($file2);
+$direct = new PdoStore(new \PDO('sqlite:' . $file2), 'direct_');
+$direct->set('d1', 'v1');
+$direct->set('d2', ['a' => 1]);
+$check('直接构造 get 字符串', $direct->get('d1') === 'v1');
+$check('直接构造 get 数组', $direct->get('d2') === ['a' => 1]);
+$check('直接构造 keys 不报 Undefined k', in_array('d1', $direct->keys('d*'), true));
+@unlink($file2);
+
+// PID 变化（模拟 Swoole worker fork）后应通过 factory 重连
+$file3 = sys_get_temp_dir() . '/hyper-pdo-fork-' . getmypid() . '.sqlite';
+@unlink($file3);
+$forked = PdoStore::fromDsn('sqlite:' . $file3, '', '', [], 'fork_');
+$forked->set('f1', 'v1');
+$pidProp = new ReflectionProperty(PdoStore::class, 'pid');
+$pidProp->setValue($forked, 0);
+$check('PID 变化后自动重连', $forked->get('f1') === 'v1');
+@unlink($file3);
+
 // TTL
 $store->set('ttl', 'x', 1);
 $check('TTL 未过期可读', $store->get('ttl') === 'x');

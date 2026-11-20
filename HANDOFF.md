@@ -1,12 +1,14 @@
 # Hyper Bot 交接文档
 
-> 当前开发版本：**3.3.15**（未发布）
-> 最近发布版本：**3.3.14**
+> 当前发布版本：**3.3.15**
 > 仓库：`OIAPI/hyper-bot`，日常分支 `dev`，发布分支 `main`
-> 发布 tag：`v3.3.14` → `b598604`
-> 本地 HEAD：dev 待推送（3.3.15 PDO 兼容修复）
+> 发布 tag：`v3.3.15` → `ac188ff`
+> 本地 HEAD：`ac188ff`（dev / main 已同步）
 > 工作目录：`/storage/emulated/0/model/hyper.lkaa.top`
-> 最后更新：2026-11-08
+> 最后更新：2026-11-20
+>
+> **当前有一个未解决的高优先级问题：插件源码修改后，reload 与完整重启都不生效。**
+> 详见「八、已知限制 / 待办」第一条。
 
 ---
 
@@ -58,10 +60,12 @@
 | `webui/` | WebUI 后端 Controller / Routes / Metrics |
 | `ui/src/` | Vue 3 + Vite + Pinia 前端源码 |
 | `public/webui/` | 前端构建产物，发布时由 CI 生成 |
-| `tests/` | 39 个自检脚本，大部分不需要 Swoole / Redis |
+| `tests/` | 41 个自检脚本，大部分不需要 Swoole / Redis |
 | `runtime/` | 运行时数据，升级永远不覆盖 |
 | `docs/` | 架构、协议、部署、WebUI 细节 |
-| `CHANGELOG.md` | 3.3.0 ~ 3.3.10 变更记录 |
+| `CHANGELOG.md` | 3.3.0 ~ 3.3.15 变更记录 |
+| `.github/workflows/dev.yml` | dev 分支只编译前端，不发布 |
+| `.github/workflows/release.yml` | 推 v* tag 后构建、打包、创建 Release |
 
 ---
 
@@ -231,19 +235,29 @@ runtime/update/preserve.txt
 
 ## 六、发布流程
 
-普通 push：
+日常开发（默认）：
 
 ```bash
-git push origin main
+git checkout dev
+git push origin dev
 ```
 
-不会构建、不会打 tag、不会发 Release。
+只触发 `.github/workflows/dev.yml` 编译前端；不打包、不打 tag、不发 Release。
 
-需要发布：
+需要发布时（必须用户明确确认）：
 
 ```bash
-git tag v3.3.11
-git push origin v3.3.11
+# 1. 确认 dev 的 VERSION 已改好
+git checkout dev && git pull
+
+# 2. 合并 dev 到 main
+git checkout main && git pull
+git merge --ff-only dev
+git push origin main
+
+# 3. 推版本 tag，触发 release 工作流
+git tag v3.3.16
+git push origin v3.3.16
 ```
 
 工作流 `.github/workflows/release.yml` 自动：
@@ -303,6 +317,59 @@ npx vite build
 
 ## 八、已知限制 / 待办
 
+### 高优先级：插件源码修改后 reload / 完整重启都不生效
+
+**现象（用户 2026-11-16 反馈，尚未解决）：**
+
+- 修改插件输出/逻辑；
+- WebUI 点「重新加载」、Sys 插件 reload、控制台 reload 都无效；
+- 直接 Ctrl-C 退出再启动，仍然运行旧代码；
+- 只有换掉整个部署/进程才可能生效。
+
+3.3.11 ~ 3.3.15 已做但**没有解决**：
+
+- Swoole master 不提前 Registry::load()；
+- WorkerStart 内加载插件；
+- 插件文件 opcache_invalidate()；
+- 启动横幅在 Swoole master 不再统计插件；
+- reload 延迟给 master 发 SIGUSR1；
+- PdoStore / RedisStore 的 PID 感知重连。
+
+**已排查方向（都没有最终确认）：**
+- 完整重启是否真的换进程（php -S 子进程残留 / Swoole worker 残留）；
+- OPcache / opcache.preload / opcache.file_cache 是否命中旧字节码；
+- 实际加载文件是否就是用户修改的文件（zip 部署、runtime/github 副本、软链）；
+- 运行目录/版本是否就是用户修改目录。
+
+说明问题很可能不在“reload 逻辑”，而在以下方向之一，**接手后先验证，不要继续盲目加重载代码**：
+
+1. **完整重启并没有真正换进程**
+   - php -S 是父进程 + 子进程：没有 pcntl 时 Ctrl-C 只杀父进程，
+     php -S 子进程会继续占端口，看起来“重启了”其实还是旧进程；
+   - 检查：
+     ~~~bash
+     ps -ef | grep -E 'hyper|php -S|swoole'
+     cat runtime/hyper-*.pid runtime/hyper-*.child 2>/dev/null
+     ss -ltnp | grep <端口>
+     ~~~
+2. **OPcache / preload / file_cache 命中旧字节码**
+   - 检查：
+     ~~~bash
+     php -i | grep -E 'opcache.enable_cli|opcache.validate_timestamps|opcache.preload|opcache.file_cache'
+     ~~~
+   - 若 validate_timestamps=0 或有 opcache.preload，需要显式清 OPcache 或调整配置。
+3. **改的不是实际加载的文件**
+   - 部署可能是 zip/release 产物，或插件从 runtime/github 加载；
+   - 用反射确认实际文件：
+     ~~~bash
+     php -r 'require "Include.php"; \Core\App::boot()->loadPlugins(); $r=new ReflectionClass("App\\Plugins\\group"); echo $r->getFileName(), PHP_EOL;'
+     ~~~
+   - 对比 md5sum 与实际加载路径。
+4. **运行的版本/目录不是正在改的目录**
+   - 对比 pwd、readlink -f .、cat VERSION、WebUI 系统页版本。
+
+### 其他已知限制
+
 - **Webhook 订阅、RSS、定时任务、消息日志、Config.ini 协议级配置、插件全局启停**
   仍是全局一份，没有按账号隔离；
 - QQ 官方：
@@ -317,46 +384,18 @@ npx vite build
 
 ---
 
-## 九、给下一个 AI 的提示词（直接复制）
+## 九、给下一个 AI 的交接提示词
 
-```text
-你是接手 Hyper Bot 项目的 AI 编码代理。
+完整可复制版本在根目录 `HANDOFF_PROMPT.md`，直接整段粘贴给接手的 AI 即可。
 
-工作目录：
-/storage/emulated/0/model/hyper.lkaa.top
+提示词已经包含：
 
-仓库：OIAPI/hyper-bot
-当前版本：3.3.10
-当前发布 tag：v3.3.10（17f246f）
-
-开始任务前必须：
-1. 先完整执行 git log --oneline，读完整个提交历史，不要只看最近几条；
-2. 读项目根目录 HANDOFF.md、CHANGELOG.md、README.md；
-3. 执行 git status --porcelain，确认工作区没有需要保留的未提交改动；
-4. 阅读与任务相关的源码后再改，不要凭记忆猜结构。
-
-硬性规则：
-- 没有用户明确同意，绝对不要 git push、不要推 tag、不要触发 release；
-- 提交信息必须完整详细，写清改了什么、为什么改、影响范围；
-- 不要为了通过测试而放宽校验或写死结果；
-- 不要覆盖用户本地修改的插件；更新逻辑已有 preserve 机制，改它时要保留；
-- 账号作用域是核心架构：群配置、群插件开关、成员权限、订阅覆盖、事件流、
-  插件 $Redis 数据都按 acct:{账号}: 前缀隔离；单账号有 legacy 回退；
-- 发布：普通 push 不构建；只有推 v<版本> tag 才自动构建发布。
-
-验证要求：
-- 后端改动至少跑相关 tests/*.php，并跑 static_class_test；
-- 前端改动跑 npx vue-tsc --noEmit 和构建；
-- 涉及账号/群/权限/更新逻辑时，必须跑 account_scope_test、permissions_test、
-  webui_api_test、update_preserve_test。
-
-当前任务：
-[在这里写具体任务]
-
-完成后：
-- 汇总改动、测试结果、未验证项；
-- 不要自行 push；询问用户是否 push / 是否发布 tag。
-```
+- 项目路径、仓库、当前版本/tag；
+- dev / main 分支规则与发布流程；
+- 「没有明确同意不 push / 不发版」的硬性约束；
+- 当前未解决的插件热更新问题，以及接手后的验证顺序；
+- 账号作用域、存储、PID 重连等架构约束；
+- 测试与构建命令。
 
 ---
 
@@ -375,6 +414,9 @@ php tests/account_scope_test.php
 cd ui && npx vue-tsc --noEmit && npx vite build
 
 # 发布（需用户明确同意）
-git tag v3.3.11
-git push origin v3.3.11
+git checkout dev && git pull
+git checkout main && git pull
+git merge --ff-only dev && git push origin main
+git tag v3.3.16
+git push origin v3.3.16
 ```

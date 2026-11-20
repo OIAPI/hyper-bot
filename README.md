@@ -8,7 +8,7 @@
 - 面板：Vue 3 + 四套组件库可热切换（Element / Ant Design / Naive / Arco）
 - 存储：文件存储开箱即用；可选 Redis，或 MySQL / PostgreSQL 持久层 + Redis 读缓存
 
-版本与变更见 [CHANGELOG.md](CHANGELOG.md)，当前发布版本 **3.3.8**（仓库 VERSION 3.3.9 为发布流程与文档变更，尚未出包）。
+版本与变更见 [CHANGELOG.md](CHANGELOG.md)，当前发布版本 **3.3.15**。
 
 ---
 

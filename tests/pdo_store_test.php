@@ -65,6 +65,160 @@ $check('缓存命中返回旧值（预期缓存语义）', $cached->get('a') ===
 $cached->del('a');
 $check('删除同时清缓存', $cached->get('a') === null && $primary->get('a') === null);
 
+// ---------------------------------------------------------------------------
+// 断线自愈：MySQL wait_timeout / 服务端重启 后长连接永久失效
+//
+// 真实故障（用户反馈）：长时间运行后每个事件都报
+//   SQLSTATE[HY000]: General error: 2006 MySQL server has gone away
+// 必须重启进程才恢复 —— 因为 PDO 不会自己重连，而 PdoStore 原先只处理了
+// 「Swoole worker fork 导致 PID 变化」，没有处理「同一进程内连接被服务端断开」。
+//
+// 用 PDO 子类模拟一条「先正常、之后永久断线」的连接：断了以后任何语句都抛
+// 2006，只有换成新对象才恢复 —— 和真实 MySQL 的行为一致。
+// ---------------------------------------------------------------------------
+final class FlakyPdo extends \PDO
+{
+    /** @var \PDO|null 真实连接（null 表示这条连接已断） */
+    public static ?\PDO $real = null;
+    public static int $opened = 0;
+    /**
+     * 模拟「链路已断」：为 true 时**已存在的**连接对象一律抛 2006，
+     * 就像 MySQL wait_timeout 到点后服务端掐断长连接那样。
+     * 新建的连接对象（factory 重连出来的）会把它复位，代表服务端已恢复接受连接。
+     */
+    public static bool $dead = false;
+
+    public function __construct()
+    {
+        self::$opened++;
+    }
+
+    private function live(): \PDO
+    {
+        if (self::$dead || self::$real === null) {
+            throw new PDOException(
+                'SQLSTATE[HY000]: General error: 2006 MySQL server has gone away',
+                2006
+            );
+        }
+        return self::$real;
+    }
+
+    public function prepare(string $query, array $options = []): PDOStatement|false
+    {
+        return $this->live()->prepare($query, $options);
+    }
+
+    public function exec(string $statement): int|false
+    {
+        return $this->live()->exec($statement);
+    }
+
+    public function getAttribute(int $attribute): mixed
+    {
+        // 连接断了也要能报出驱动名，否则 configure()/init() 无法重建
+        return self::$real?->getAttribute($attribute) ?? 'sqlite';
+    }
+
+    public function setAttribute(int $attribute, mixed $value): bool
+    {
+        return self::$real?->setAttribute($attribute, $value) ?? true;
+    }
+
+    public function beginTransaction(): bool
+    {
+        return $this->live()->beginTransaction();
+    }
+
+    public function commit(): bool
+    {
+        return $this->live()->commit();
+    }
+
+    public function rollBack(): bool
+    {
+        return $this->live()->rollBack();
+    }
+
+    public function inTransaction(): bool
+    {
+        try {
+            return $this->live()->inTransaction();
+        } catch (PDOException) {
+            return false;
+        }
+    }
+}
+
+$file4 = sys_get_temp_dir() . '/hyper-pdo-reconnect-' . getmypid() . '.sqlite';
+@unlink($file4);
+FlakyPdo::$real = new \PDO('sqlite:' . $file4);
+FlakyPdo::$dead = false;
+FlakyPdo::$opened = 0;
+
+// factory 代表「重连」：新建一条可用连接（服务端已恢复）
+$flakyFactory = static function (): \PDO {
+    FlakyPdo::$dead = false;
+    return new FlakyPdo();
+};
+$reconnecting = new PdoStore(new FlakyPdo(), 'rc_', $flakyFactory);
+$check('断线测试：初始可写', $reconnecting->set('r1', 'v1'));
+$check('断线测试：初始可读', $reconnecting->get('r1') === 'v1');
+
+// 模拟 MySQL wait_timeout 到点：连接被服务端掐断，此后永远 2006
+FlakyPdo::$dead = true;
+$check('断线测试：连接已断时 get 不抛异常（自动重连）', $reconnecting->get('r1') === 'v1');
+$check('断线测试：重连后 set 正常', $reconnecting->set('r2', 'v2') === true);
+$check('断线测试：重连后读回新值', $reconnecting->get('r2') === 'v2');
+$check('断线测试：确实新建过连接', FlakyPdo::$opened >= 1);
+$check('断线测试：has/keys 也走重连', $reconnecting->has('r2') && in_array('r2', $reconnecting->keys('r*'), true));
+$check('断线测试：incr 走重连', $reconnecting->incr('rcnt', 2) === 2);
+$check('断线测试：zadd/zrange 走重连',
+    $reconnecting->zadd('rz', 1.0, 'a') && $reconnecting->zrange('rz', 0, 5) === ['a']);
+$check('断线测试：zcard/ztrim 走重连',
+    $reconnecting->zcard('rz') === 1 && $reconnecting->ztrim('rz', 1) === 0);
+$check('断线测试：del 走重连', $reconnecting->del('r2') === 1);
+
+// 没有 factory 时无法重连：必须把真实错误抛出去，而不是静默返回空值
+// 注意：连接必须先建成（构造时要建表），再模拟「之后链路断掉」
+FlakyPdo::$real = new \PDO('sqlite:' . $file4);
+FlakyPdo::$dead = false;
+FlakyPdo::$opened = 0;
+$noFactory = new PdoStore(new FlakyPdo(), 'nof_');
+FlakyPdo::$dead = true;
+$threw = false;
+try {
+    $noFactory->get('whatever');
+} catch (\Throwable $e) {
+    $threw = str_contains($e->getMessage(), 'gone away') || $e->getCode() == 2006;
+}
+$check('断线测试：无 factory 时如实抛出断线错误', $threw);
+
+// 非连接类错误不应被当成断线吞掉重试
+final class BrokenPdo extends \PDO
+{
+    public function __construct() {}
+    public function prepare(string $query, array $options = []): PDOStatement|false
+    {
+        throw new PDOException('SQLSTATE[42S02]: Base table or view not found', 42);
+    }
+    public function getAttribute(int $attribute): mixed { return 'sqlite'; }
+    public function setAttribute(int $attribute, mixed $value): bool { return true; }
+    public function exec(string $statement): int|false { return 0; }
+}
+$broken = new PdoStore(new BrokenPdo(), 'brk_');
+$propagated = false;
+try {
+    $broken->get('x');
+} catch (\Throwable $e) {
+    $propagated = str_contains($e->getMessage(), 'Base table');
+}
+$check('断线测试：SQL 错误照常抛出（不误判为断线）', $propagated);
+
+FlakyPdo::$dead = false;
+FlakyPdo::$real = null;
+@unlink($file4);
+
 @unlink($file);
 echo PHP_EOL . ($fail === 0 ? '全部通过' : "失败 {$fail} 项") . "，通过 {$pass} 项" . PHP_EOL;
 exit($fail === 0 ? 0 : 1);

@@ -317,7 +317,57 @@ npx vite build
 
 ## 八、已知限制 / 待办
 
-### 高优先级：插件源码修改后 reload / 完整重启都不生效
+### 已解决/已证伪：插件源码修改后 reload / 完整重启都不生效
+
+**结论（2026-11-20 复核）：这是测试方式造成的误判，不是代码缺陷。**
+
+用户后续确认：「插件 reload 没问题，是我测试的时候分开测试的，没发现」。
+独立验证也全部通过：
+
+| 交接时怀疑的方向 | 实测结果 |
+|---|---|
+| 重启没真正换进程 | **排除**。`--arch=php` 下给父进程发 SIGINT，父子进程都退出、端口释放、pid 文件清理 |
+| php -S 子进程残留旧代码 | **排除**。改完插件文件后，同一进程的下一次请求就读到新代码 |
+| OPcache 命中旧字节码 | **排除**。`opcache.enable_cli = Off`、`validate_timestamps = On`、无 preload、无 file_cache |
+| 加载的不是修改的文件 | **排除**。反射确认加载的就是 `app/Plugins/Group.php` 本体；`runtime/github` 为空 |
+| 运行目录 ≠ 修改目录 | **排除**。pwd / readlink -f / VERSION 3.3.15 一致 |
+
+复现方式（改一个插件元数据，看新进程是否读到）：
+
+```bash
+php -r 'require "Include.php"; \Core\Bootstrap::run(["quiet"=>true]);
+  $p=\Core\App::boot()->registry->plugin("App\Plugins\Demo");
+  echo $p["description"], PHP_EOL;'
+```
+
+**重要**：本机没有 `ext-swoole`，`Config.ini` 写的 `arch = swoole` 会**自动降级**
+为 php 内置服务器。也就是说 3.3.11 / 3.3.12 那批 Swoole master 相关改动在没有
+Swoole 的环境里根本不参与运行，不可能是本问题的原因。排查此类问题时先
+`php -r '...Runtime::fromConfig()...'` 确认真实架构，别对着没生效的代码路径找。
+
+### 测试必须用可加锁的 TMPDIR（本机特有）
+
+`/storage/emulated`（FUSE）**不支持 flock**，`file_put_contents(..., LOCK_EX)`
+直接返回 false 且不写入。用默认 TMPDIR 跑测试会出现假失败
+（log_test、schedule_test 各挂几项）：
+
+```bash
+# 会假失败
+TMPDIR=/storage/emulated/0/model/.tmp_phptest php tests/log_test.php
+
+# 正确做法：指向可 flock 的目录
+mkdir -p /data/data/com.dsharnessmobile.shell/files/home/.tmp_phptest
+TMPDIR=/data/data/com.dsharnessmobile.shell/files/home/.tmp_phptest php tests/log_test.php
+```
+
+换到可加锁目录后全量 35 个测试脚本全部通过。
+
+> 注意：`utils/Logger.php` 与 `utils/MessageLog.php` 直接用
+> `file_put_contents(..., FILE_APPEND | LOCK_EX)`，在 `/storage` 上部署时
+> **日志会静默丢失**（只把错误打到 stderr）。`core/Fs.php` 已有正确的降级逻辑，
+> 但这两个文件没走它。若要在 FUSE 文件系统上部署，这是待修项。
+
+### 原「高优先级：插件源码修改后 reload / 完整重启都不生效」记录（保留备查）
 
 **现象（用户 2026-11-16 反馈，尚未解决）：**
 

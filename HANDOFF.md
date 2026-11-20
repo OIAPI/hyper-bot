@@ -1,9 +1,9 @@
 # Hyper Bot 交接文档
 
-> 当前发布版本：**3.3.15**
+> 当前发布版本：**3.3.16**
 > 仓库：`OIAPI/hyper-bot`，日常分支 `dev`，发布分支 `main`
-> 发布 tag：`v3.3.15` → `ac188ff`
-> 本地 HEAD：`ac188ff`（dev / main 已同步）
+> 发布 tag：`v3.3.16`（本次修复 MySQL 断线自愈）
+> 上一发布：`v3.3.15` → `ac188ff`
 > 工作目录：`/storage/emulated/0/model/hyper.lkaa.top`
 > 最后更新：2026-11-20
 >
@@ -63,7 +63,7 @@
 | `tests/` | 41 个自检脚本，大部分不需要 Swoole / Redis |
 | `runtime/` | 运行时数据，升级永远不覆盖 |
 | `docs/` | 架构、协议、部署、WebUI 细节 |
-| `CHANGELOG.md` | 3.3.0 ~ 3.3.15 变更记录 |
+| `CHANGELOG.md` | 3.3.0 ~ 3.3.16 变更记录 |
 | `.github/workflows/dev.yml` | dev 分支只编译前端，不发布 |
 | `.github/workflows/release.yml` | 推 v* tag 后构建、打包、创建 Release |
 
